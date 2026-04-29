@@ -9,25 +9,6 @@ from typing import Any, Iterable
 
 from .datasets import BenchmarkRecord
 
-try:
-    from workspace.conformabench_judge import (
-        ConformaBenchDependencyError,
-        ConformaBenchJudgeError,
-        ensure_rdkit_available,
-        evaluate_submission as evaluate_conformabench_submission,
-        load_hidden_judge_spec,
-        resolve_hidden_judge_spec_path,
-    )
-except ModuleNotFoundError:  # pragma: no cover - script-style import fallback
-    from conformabench_judge import (
-        ConformaBenchDependencyError,
-        ConformaBenchJudgeError,
-        ensure_rdkit_available,
-        evaluate_submission as evaluate_conformabench_submission,
-        load_hidden_judge_spec,
-        resolve_hidden_judge_spec_path,
-    )
-
 
 FINAL_ANSWER_RE = re.compile(r"^\s*FINAL\s+ANSWER\s*[:：-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
@@ -458,90 +439,6 @@ def parse_frontierscience_research_rubric(text: str) -> list[dict[str, Any]]:
         description = "\n".join(part for part in description_parts if part is not None).strip()
         items.append({"points": points, "description": description})
     return items
-
-
-def evaluate_conformabench_constructive(
-    record: BenchmarkRecord,
-    *,
-    short_answer_text: str,
-    full_response_text: str,
-    judge: Any,
-    ensure_rdkit_available_fn: Any = ensure_rdkit_available,
-    resolve_hidden_judge_spec_path_fn: Any = resolve_hidden_judge_spec_path,
-    load_hidden_judge_spec_fn: Any = load_hidden_judge_spec,
-    evaluate_conformabench_submission_fn: Any = evaluate_conformabench_submission,
-    dependency_error_cls: type[BaseException] = ConformaBenchDependencyError,
-    judge_error_cls: type[BaseException] = ConformaBenchJudgeError,
-) -> EvaluationResult:
-    short_text, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    final_answer = extract_final_answer_line(full_text) or short_text
-    hidden_ref = str(record.grading.config.get("hidden_judge_spec_ref") or record.payload.get("hidden_judge_spec_ref") or "").strip()
-    if not hidden_ref:
-        raise EvaluationError(f"ConformaBench record is missing hidden_judge_spec_ref: {record.record_id}")
-    try:
-        ensure_rdkit_available_fn()
-        hidden_path = resolve_hidden_judge_spec_path_fn(record.source_file, hidden_ref)
-        hidden_spec = load_hidden_judge_spec_fn(hidden_path)
-        gate_details = evaluate_conformabench_submission_fn(final_answer_smiles=final_answer, hidden_spec=hidden_spec)
-    except dependency_error_cls as exc:
-        raise EvaluationError(str(exc)) from exc
-    except judge_error_cls as exc:
-        raise EvaluationError(f"ConformaBench judge failed for `{record.record_id}`: {exc}") from exc
-
-    passed = bool(gate_details.get("passed"))
-    score = 1.0 if passed else 0.0
-    details = {
-        "method": "conformabench_rdkit_gate",
-        "hidden_judge_spec_ref": hidden_ref,
-        "hidden_judge_spec_path": str(hidden_path),
-        **gate_details,
-    }
-
-    rubric_items = parse_frontierscience_research_rubric(record.grading.reference_answer)
-    if passed and rubric_items:
-        rubric_lines = [f"{idx + 1}. [{item['points']} points] {item['description']}" for idx, item in enumerate(rubric_items)]
-        max_score = float(sum(item["points"] for item in rubric_items))
-        candidate_response = full_text or short_text
-        prompt = f"""
-You are grading a chemistry benchmark explanation against a point rubric.
-The submitted molecule has already passed a deterministic RDKit structure/geometry gate.
-For each rubric item, award either 0 or the item's full points only.
-Return strict JSON only.
-
-Required JSON schema:
-{{
-  "items": [
-    {{"index": 1, "awarded": 1.0, "max_points": 1.0, "met": true, "rationale": "brief"}}
-  ],
-  "total_awarded": 0.0,
-  "max_points": {max_score},
-  "summary": "brief overall summary"
-}}
-
-QUESTION:
-{record.prompt}
-
-RUBRIC ITEMS:
-{os.linesep.join(rubric_lines)}
-
-CANDIDATE ANSWER:
-{candidate_response}
-""".strip()
-        try:
-            details["rubric"] = judge.evaluate_json(prompt)
-        except Exception as exc:
-            details["rubric_error"] = str(exc)
-
-    return EvaluationResult(
-        eval_kind=record.eval_kind,
-        score=score,
-        max_score=1.0,
-        normalized_score=score,
-        passed=passed,
-        primary_metric="rdkit_gate_pass",
-        primary_metric_direction="higher_is_better",
-        details=details,
-    )
 
 
 def evaluate_frontierscience_research(

@@ -242,7 +242,7 @@ class BenchmarkCleanroomTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_root = Path(tmpdir) / "out"
             scratch_dir = output_root / "generated" / "artifacts" / "demo-run"
-            archive_dir = output_root / "artifacts" / "chemqa_web_on" / "conformabench-0001" / "demo-run"
+            archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / "demo-run"
             scratch_dir.mkdir(parents=True, exist_ok=True)
             archive_dir.mkdir(parents=True, exist_ok=True)
             (scratch_dir / "qa_result.json").write_text("{}", encoding="utf-8")

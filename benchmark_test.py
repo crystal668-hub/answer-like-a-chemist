@@ -44,7 +44,6 @@ try:
         EvaluationResult,
         build_execution_error_evaluation as _shared_build_execution_error_evaluation,
         evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
-        evaluate_conformabench_constructive as _shared_evaluate_conformabench_constructive,
         evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
         evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
         evaluate_generic_semantic as _shared_evaluate_generic_semantic,
@@ -113,7 +112,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         EvaluationResult,
         build_execution_error_evaluation as _shared_build_execution_error_evaluation,
         evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
-        evaluate_conformabench_constructive as _shared_evaluate_conformabench_constructive,
         evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
         evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
         evaluate_generic_semantic as _shared_evaluate_generic_semantic,
@@ -168,24 +166,8 @@ _runner_factory = build_runner
 
 try:
     from workspace import runtime_paths
-    from workspace.conformabench_judge import (
-        ConformaBenchDependencyError,
-        ConformaBenchJudgeError,
-        ensure_rdkit_available,
-        evaluate_submission as evaluate_conformabench_submission,
-        load_hidden_judge_spec,
-        resolve_hidden_judge_spec_path,
-    )
 except ModuleNotFoundError:  # pragma: no cover - script entry fallback
     import runtime_paths
-    from conformabench_judge import (
-        ConformaBenchDependencyError,
-        ConformaBenchJudgeError,
-        ensure_rdkit_available,
-        evaluate_submission as evaluate_conformabench_submission,
-        load_hidden_judge_spec,
-        resolve_hidden_judge_spec_path,
-    )
 
 
 DEFAULT_WORKSPACE = runtime_paths.project_root
@@ -246,7 +228,6 @@ def current_python() -> str:
     return str(Path(sys.executable).expanduser())
 SUBSET_ORDER = (
     "chembench",
-    "conformabench",
     "frontierscience_Olympiad",
     "frontierscience_Research",
     "superchem_multimodal",
@@ -1278,30 +1259,6 @@ def evaluate_frontierscience_olympiad(
         raise BenchmarkError(str(exc)) from exc
 
 
-def evaluate_conformabench_constructive(
-    record: BenchmarkRecord,
-    *,
-    short_answer_text: str,
-    full_response_text: str,
-    judge: JudgeClient,
-) -> EvaluationResult:
-    try:
-        return _shared_evaluate_conformabench_constructive(
-            record,
-            short_answer_text=short_answer_text,
-            full_response_text=full_response_text,
-            judge=judge,
-            ensure_rdkit_available_fn=ensure_rdkit_available,
-            resolve_hidden_judge_spec_path_fn=resolve_hidden_judge_spec_path,
-            load_hidden_judge_spec_fn=load_hidden_judge_spec,
-            evaluate_conformabench_submission_fn=evaluate_conformabench_submission,
-            dependency_error_cls=ConformaBenchDependencyError,
-            judge_error_cls=ConformaBenchJudgeError,
-        )
-    except EvaluationError as exc:
-        raise BenchmarkError(str(exc)) from exc
-
-
 def evaluate_frontierscience_research(
     record: BenchmarkRecord,
     *,
@@ -1372,7 +1329,6 @@ def evaluate_answer(
 
 
 register_evaluator("chembench_open_ended", evaluate_chembench_open_ended)
-register_evaluator("conformabench_constructive", evaluate_conformabench_constructive)
 register_evaluator("frontierscience_olympiad", evaluate_frontierscience_olympiad)
 register_evaluator("frontierscience_research", evaluate_frontierscience_research)
 register_evaluator("superchem_multiple_choice_rpf", evaluate_superchem_multiple_choice_rpf)

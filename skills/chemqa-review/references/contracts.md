@@ -31,17 +31,3 @@ The bridge scripts generate:
 
 The debate coordinator is expected to provide `chemqa_review_protocol.json`.
 `collect_artifacts.py` then rebuilds a `react_reviewed`-compatible artifact set.
-
-## Authoring References
-
-Authoring templates for the geometry-construction benchmark live under:
-
-```text
-references/conformabench/
-```
-
-This authoring bundle defines:
-
-- a public open-question schema shown to the solver
-- a hidden RDKit judge schema used only on the evaluation side
-- a compiled record template targeting `frontierscience_research`

@@ -43,8 +43,6 @@ def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
         return "multi_part_research_answer"
     if eval_kind == "superchem_multiple_choice_rpf":
         return "multiple_choice"
-    if eval_kind == "conformabench_constructive":
-        return "structure_answer"
     if dataset == "superchem" and isinstance(config.get("options") or payload.get("options"), dict):
         return "multiple_choice"
     return "generic_semantic_answer"
@@ -78,8 +76,6 @@ def build_single_llm_prompt(
         instructions.append("Show brief reasoning if needed, then end with exactly one line formatted as: FINAL ANSWER: <answer>.")
     elif record.eval_kind == "frontierscience_olympiad":
         instructions.append("End with exactly one line formatted as: FINAL ANSWER: <answer>.")
-    elif record.eval_kind == "conformabench_constructive":
-        instructions.append("Propose one chemically valid molecule and end with exactly one line formatted as: FINAL ANSWER: <SMILES>.")
     else:
         instructions.append("Provide a complete answer. If you include a final answer line, use: FINAL ANSWER: <answer>.")
 
@@ -107,8 +103,6 @@ def build_chemqa_goal(
         if input_bundle is not None:
             instructions.append(f"Use the local file bundle at `{input_bundle.bundle_dir}`.")
             instructions.append(f"Open `{input_bundle.question_markdown}` first and inspect any referenced images.")
-    elif record.eval_kind == "conformabench_constructive":
-        instructions.append("End with exactly one line `FINAL ANSWER: <SMILES>`.")
     elif record.eval_kind in {"chembench_open_ended", "frontierscience_olympiad"}:
         instructions.append("If appropriate, end with a line `FINAL ANSWER: <answer>`.")
     instructions.append(f"ChemQA Artifact Flow answer kind: {resolve_chemqa_answer_kind(record)}.")

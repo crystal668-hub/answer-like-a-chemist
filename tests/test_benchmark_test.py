@@ -932,31 +932,6 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_classify_subset_conformabench(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
-            record_id="cb-1",
-            dataset="conformabench",
-            source_file="/tmp/conformabench.jsonl",
-            eval_kind="conformabench_constructive",
-            prompt="Q",
-            reference_answer="A",
-            payload={},
-        )
-        self.assertEqual("conformabench", benchmark_test.classify_subset(record))
-
-    def test_build_single_llm_prompt_conformabench_requires_smiles_final_line(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
-            record_id="cb-1",
-            dataset="conformabench",
-            source_file="/tmp/conformabench.jsonl",
-            eval_kind="conformabench_constructive",
-            prompt="Design a molecule.",
-            reference_answer="Points: 1.0, Item: ok",
-            payload={},
-        )
-        prompt = benchmark_test.build_single_llm_prompt(record, websearch_enabled=False, input_bundle=None)
-        self.assertIn("FINAL ANSWER: <SMILES>", prompt)
-
     def test_build_single_llm_prompt_does_not_inject_provider_skill_routing(self) -> None:
         records = [
             benchmark_test.BenchmarkRecord(
@@ -979,11 +954,11 @@ Points: 0.5, Item: Second criterion
             ),
             benchmark_test.BenchmarkRecord(
                 record_id="cb-1",
-                dataset="conformabench",
-                source_file="/tmp/conformabench.jsonl",
-                eval_kind="conformabench_constructive",
-                prompt="Design a molecule.",
-                reference_answer="Points: 1.0, Item: ok",
+                dataset="chembench",
+                source_file="/tmp/chembench.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="Calculate the value.",
+                reference_answer="42",
                 payload={},
             ),
         ]
@@ -1000,86 +975,6 @@ Points: 0.5, Item: Second criterion
                 self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "rdkit"), prompt)
                 self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "opsin"), prompt)
                 self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "pubchem"), prompt)
-
-    def test_build_chemqa_goal_conformabench_requires_smiles_final_line(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
-            record_id="cb-1",
-            dataset="conformabench",
-            source_file="/tmp/conformabench.jsonl",
-            eval_kind="conformabench_constructive",
-            prompt="Design a molecule.",
-            reference_answer="Points: 1.0, Item: ok",
-            payload={},
-        )
-        goal = benchmark_test.build_chemqa_goal(record, websearch_enabled=True, input_bundle=None)
-        self.assertIn("FINAL ANSWER: <SMILES>", goal)
-
-    def test_evaluate_conformabench_constructive_handles_current_rdkit_environment(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
-            record_id="conformabench-0001",
-            dataset="conformabench",
-            source_file=str(
-                Path(__file__).resolve().parents[2] / "benchmarks" / "conformabench" / "data" / "conformabench_pool.jsonl"
-            ),
-            eval_kind="conformabench_constructive",
-            prompt="Design one molecule.",
-            reference_answer="Points: 1.0, Item: Submitted a chemically valid molecule in parseable SMILES form.",
-            payload={"hidden_judge_spec_ref": "conformabench-0001"},
-        )
-        try:
-            import rdkit  # noqa: F401
-        except ModuleNotFoundError:
-            with self.assertRaises(benchmark_test.BenchmarkError) as exc:
-                benchmark_test.evaluate_answer(
-                    record,
-                    short_answer_text="c1ccccc1O",
-                    full_response_text="Reasoning\nFINAL ANSWER: c1ccccc1O",
-                    judge=JudgeStub({}),
-                )
-            self.assertIn("optional `rdkit` dependency", str(exc.exception))
-            return
-
-        hidden_path = benchmark_test.resolve_hidden_judge_spec_path(record.source_file, str(record.payload.get("hidden_judge_spec_ref") or ""))
-        if not hidden_path.is_file():
-            self.skipTest(f"Hidden judge spec fixture not present: {hidden_path}")
-
-        result = benchmark_test.evaluate_answer(
-            record,
-            short_answer_text="Nc1ccccc1O",
-            full_response_text="Reasoning\nFINAL ANSWER: Nc1ccccc1O",
-            judge=JudgeStub({}),
-        )
-        self.assertEqual("rdkit_gate_pass", result.primary_metric)
-        self.assertEqual("conformabench_rdkit_gate", result.details["method"])
-        self.assertIn("canonical_smiles", result.details)
-        self.assertIn("topology_predicates", result.details)
-        self.assertIn("seed_runs", result.details)
-
-    def test_evaluate_conformabench_constructive_invokes_submission_once(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
-            record_id="conformabench-0002",
-            dataset="conformabench",
-            source_file="/tmp/conformabench/data/conformabench_pool.jsonl",
-            eval_kind="conformabench_constructive",
-            prompt="Design one molecule.",
-            reference_answer="Points: 1.0, Item: Submitted a chemically valid molecule in parseable SMILES form.",
-            payload={"hidden_judge_spec_ref": "conformabench-0002"},
-        )
-        hidden_path = Path("/tmp/conformabench/items/conformabench-0002/hidden_judge_spec.yaml")
-        gate_payload = {"passed": False, "canonical_smiles": "c1ccccc1"}
-        with mock.patch.object(benchmark_test, "ensure_rdkit_available", return_value=None), \
-            mock.patch.object(benchmark_test, "resolve_hidden_judge_spec_path", return_value=hidden_path), \
-            mock.patch.object(benchmark_test, "load_hidden_judge_spec", return_value={"normalization": {}}), \
-            mock.patch.object(benchmark_test, "evaluate_conformabench_submission", return_value=gate_payload) as evaluate_mock:
-            result = benchmark_test.evaluate_answer(
-                record,
-                short_answer_text="c1ccccc1",
-                full_response_text="Reasoning\nFINAL ANSWER: c1ccccc1",
-                judge=JudgeStub({}),
-            )
-
-        evaluate_mock.assert_called_once_with(final_answer_smiles="c1ccccc1", hidden_spec={"normalization": {}})
-        self.assertFalse(result.passed)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []
@@ -2002,12 +1897,12 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
                 out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
@@ -2026,7 +1921,7 @@ Points: 0.5, Item: Second criterion
                 self.assertNotEqual(str(Path.home() / ".clawteam" / "templates"), str(template_dir))
                 env = captured["env"]
                 assert isinstance(env, dict)
-                self.assertEqual(str(launch_root / "chemqa_web_on" / "conformabench-0001" / "home"), env["HOME"])
+                self.assertEqual(str(launch_root / "chemqa_web_on" / "chembench-0001" / "home"), env["HOME"])
                 self.assertEqual(str(benchmark_test.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
@@ -2100,19 +1995,19 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
 
                 out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "conformabench-0001" / out.runner_meta["run_id"]
+                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / out.runner_meta["run_id"]
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "qa_result.json"), out.runner_meta["qa_result_path"])
                 self.assertEqual(str(archive_dir / "chemqa_review_protocol.yaml"), out.runner_meta["archived_protocol_path"])
@@ -2287,15 +2182,15 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-conformabench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2307,7 +2202,7 @@ Points: 0.5, Item: Second criterion
                 out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "conformabench-0001" / run_id
+                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / run_id
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "chemqa_review_protocol.yaml"), out.runner_meta["archived_protocol_path"])
                 self.assertEqual("ok", out.runner_meta["artifact_archive_status"])
@@ -2706,15 +2601,15 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-conformabench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2731,7 +2626,7 @@ Points: 0.5, Item: Second criterion
                 self.assertEqual("rejected", out.runner_meta["acceptance_status"])
                 self.assertEqual("completed", out.runner_meta["terminal_state"])
                 self.assertEqual("stalled", out.runner_meta["terminal_reason_code"])
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "conformabench-0001" / run_id
+                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / run_id
                 self.assertTrue((archive_dir / "chemqa_review_protocol.yaml").is_file())
                 self.assertTrue((archive_dir / "qa_result.json").is_file())
         finally:
@@ -2809,15 +2704,15 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-conformabench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2899,12 +2794,12 @@ Points: 0.5, Item: Second criterion
                     launch_workspace_root=launch_root,
                 )
                 record = benchmark_test.BenchmarkRecord(
-                    record_id="conformabench-0001",
-                    dataset="conformabench",
+                    record_id="chembench-0001",
+                    dataset="chembench",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="conformabench_constructive",
-                    prompt="Design a molecule.",
-                    reference_answer="Points: 1.0, Item: ok",
+                    eval_kind="chembench_open_ended",
+                    prompt="Calculate the value.",
+                    reference_answer="42",
                     payload={},
                 )
                 stamps = iter(["20260424-000001", "20260424-000002"])

@@ -7,21 +7,6 @@ from benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, res
 
 
 class BenchmarkPromptsTests(unittest.TestCase):
-    def test_conformabench_prompts_require_smiles_final_answer(self) -> None:
-        record = BenchmarkRecord(
-            record_id="cb-1",
-            dataset="conformabench",
-            source_file="/tmp/conformabench.jsonl",
-            eval_kind="conformabench_constructive",
-            prompt="Design a molecule.",
-            reference_answer="Points: 1.0, Item: ok",
-            payload={},
-        )
-
-        self.assertEqual("structure_answer", resolve_chemqa_answer_kind(record))
-        self.assertIn("FINAL ANSWER: <SMILES>", build_single_llm_prompt(record, websearch_enabled=False))
-        self.assertIn("FINAL ANSWER: <SMILES>", build_chemqa_goal(record, websearch_enabled=True))
-
     def test_frontierscience_olympiad_uses_numeric_answer_kind(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",

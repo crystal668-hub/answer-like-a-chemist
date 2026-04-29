@@ -8,7 +8,7 @@
 - Current capabilities (ONLY what works)
   - `DONE`: Run benchmark batches across four experiment groups: `chemqa_web_on`, `chemqa_web_off`, `single_llm_web_on`, `single_llm_web_off` via `workspace/benchmark_test.py`.
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
-  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, ConformaBench, SuperChem, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
+  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
   - `DONE`: Run a single-agent OpenClaw baseline by shelling out to `openclaw agent` via `workspace/benchmarking/runners/single_llm.py`.
   - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
@@ -77,8 +77,6 @@
   - `workspace/benchmark_test.py`
     - Main four-group benchmark CLI.
     - Also contains runtime bundle helpers, cleanup registration, runner wiring, and compatibility wrappers for runtime config and evaluator helpers.
-  - `workspace/conformabench_judge.py`
-    - RDKit-based hidden judge for constructive molecular answers.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
 
@@ -100,9 +98,6 @@
   - `workspace/benchmarks/chembench/extract_open_ended_reasoning_pool.py`
   - `workspace/benchmarks/frontierscience/extract_chemistry_pool.py`
   - `workspace/benchmarks/superchem/extract_superchem_pool.py`
-  - `workspace/benchmarks/conformabench/`
-    - Contains prepared pool/manifests/tests, but no extractor script in this repo.
-
 - Module interactions
   - `benchmark_test.py` -> `benchmarking/*`
     - Uses dataset loading, runtime config orchestration, runner construction, and reporting.
@@ -181,14 +176,6 @@
     - Input: record + answer text.
     - Output: `EvaluationResult`.
   - Implementation location: `workspace/benchmarking/evaluators.py`
-  - Status: `DONE`
-
-- Name: ConformaBench hidden judge
-  - Description: Parses SMILES, applies RDKit normalization/topology predicates, embeds conformers, optimizes force fields, checks geometric predicates.
-  - Input / Output:
-    - Input: final answer SMILES + hidden judge spec.
-    - Output: detailed pass/fail payload.
-  - Implementation location: `workspace/conformabench_judge.py`
   - Status: `DONE`
 
 - Name: Run-scoped OpenClaw config orchestration
@@ -423,14 +410,6 @@
   - Implementation location: `workspace/benchmarks/superchem/extract_superchem_pool.py`
   - Status: `DONE`
 
-- Name: ConformaBench pool generation
-  - Description: Prepared data/manifests/tests exist in-repo.
-  - Input / Output:
-    - Input: N/A in current repo.
-    - Output: `workspace/benchmarks/conformabench/data/*`.
-  - Implementation location: `workspace/benchmarks/conformabench/data/*`, `workspace/benchmarks/conformabench/tests/*`
-  - Status: `PARTIAL`
-
 - Name: Web UI / API server
   - Description: Optional dependencies suggest planned FastAPI/Gradio/OpenAI-based UI surfaces.
   - Input / Output:
@@ -510,7 +489,6 @@
 ## 5. Gap Analysis
 - Missing features
   - `NOT_IMPLEMENTED`: No actual FastAPI/Gradio/uvicorn application code despite optional `web-ui` dependencies in `workspace/pyproject.toml`.
-  - `NOT_IMPLEMENTED`: No source-side ConformaBench pool extractor script in `workspace/benchmarks/conformabench/`; only prepared data/tests are present.
   - `NOT_IMPLEMENTED`: No active code path that uses `workflow_loader.py` to load `chemqa-review` native workflow packages.
 
 - Incomplete implementations
@@ -525,9 +503,6 @@
     - Declares the inactive scaffold package and parameters, while the operational runtime explicitly depends on `debate_state.py` and driver scripts.
   - `PARTIAL`: `workspace/skills/debateclaw-v1/scripts/workflow_loader.py`
     - Implemented loader/validator, but repository search shows no active caller.
-  - `PARTIAL`: `workspace/benchmarks/conformabench/`
-    - Data and tests exist, but generation pipeline is absent from this repo.
-
 - Architectural inconsistencies
   - Intended architecture suggests package-based workflows and reusable modules.
   - Actual behavior is still script-heavy and subprocess-heavy:
@@ -569,7 +544,6 @@
   - Move generated workspaces, logs, DBs, and mutable OpenClaw runtime state outside the analyzed source tree or document them as runtime-only roots.
 - Remove or implement misleading declared surfaces:
   - Either add a real web UI/API module for the `web-ui` extras or drop those extras from the project metadata.
-  - Either add a ConformaBench pool extraction script or document the dataset as imported/static.
 - Harden artifact and cleanup flows:
   - Continue reducing filename/path guessing in legacy ChemQA artifact recovery paths now that canonical Artifact Flow paths exist.
   - Centralize run manifest/session/process metadata contracts used by runners, drivers, and cleanup.

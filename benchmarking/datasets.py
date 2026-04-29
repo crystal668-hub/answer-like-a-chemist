@@ -23,7 +23,6 @@ def _grading_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "track": _deep_copy_jsonish(payload.get("track")),
         "options": _deep_copy_jsonish(payload.get("options")),
         "reference_reasoning": _deep_copy_jsonish(payload.get("reference_reasoning")),
-        "hidden_judge_spec_ref": _deep_copy_jsonish(payload.get("hidden_judge_spec_ref")),
         "modality": _deep_copy_jsonish(payload.get("modality")),
         "source_uuid": _deep_copy_jsonish(payload.get("source_uuid")),
     }
@@ -110,8 +109,6 @@ def classify_subset(record: BenchmarkRecord) -> str:
     config = record.grading.config
     if record.dataset == "chembench":
         return "chembench"
-    if record.dataset == "conformabench":
-        return "conformabench"
     if record.dataset == "frontierscience":
         track = str(config.get("track") or record.payload.get("track") or "").strip().lower()
         if track == "olympiad" or record.grading.kind == "frontierscience_olympiad":

@@ -88,14 +88,12 @@ def resolve_answer_kind(metadata: dict[str, Any] | None) -> str:
         return "multi_part_research_answer"
     if eval_kind == "superchem_multiple_choice_rpf" or "multiple_choice" in eval_kind:
         return "multiple_choice"
-    if eval_kind == "conformabench_constructive" or final_answer_kind in {"single_smiles", "smiles", "structure"}:
+    if final_answer_kind in {"single_smiles", "smiles", "structure"}:
         return "structure_answer"
     if dataset == "chembench":
         return "numeric_short_answer"
     if dataset == "superchem" and isinstance(payload.get("options"), dict):
         return "multiple_choice"
-    if dataset == "conformabench":
-        return "structure_answer"
     return "generic_semantic_answer"
 
 

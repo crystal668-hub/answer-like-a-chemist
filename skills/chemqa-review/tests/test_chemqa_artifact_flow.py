@@ -58,10 +58,6 @@ class AnswerKindResolutionTest(unittest.TestCase):
             artifact_flow.resolve_answer_kind({"eval_kind": "superchem_multiple_choice_rpf", "dataset": "superchem"}),
         )
         self.assertEqual(
-            "structure_answer",
-            artifact_flow.resolve_answer_kind({"eval_kind": "conformabench_constructive", "dataset": "conformabench"}),
-        )
-        self.assertEqual(
             "generic_semantic_answer",
             artifact_flow.resolve_answer_kind({"eval_kind": "custom_eval", "dataset": "custom"}),
         )
