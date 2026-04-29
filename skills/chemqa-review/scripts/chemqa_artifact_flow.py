@@ -12,12 +12,16 @@ from typing import Any
 
 ANSWER_KINDS = {
     "numeric_short_answer",
+    "formula_short_answer",
     "short_text_answer",
     "multi_part_research_answer",
     "multiple_choice",
     "structure_answer",
     "generic_semantic_answer",
 }
+FORMULA_SIGNAL_RE = re.compile(
+    r"(?:\\\(|\\\[|[A-Za-z]_[A-Za-z0-9]+|\[[A-Za-z0-9_]+\]|\bK_[A-Za-z0-9]+|\bK_M\b|\^|/|=)"
+)
 
 REVIEWER_LANES = ("proposer-2", "proposer-3", "proposer-4", "proposer-5")
 CANDIDATE_OWNER = "proposer-1"
@@ -76,6 +80,8 @@ def resolve_answer_kind(metadata: dict[str, Any] | None) -> str:
     track = clean_text(payload.get("track") or payload.get("subset")).lower()
     final_answer_kind = clean_text(payload.get("final_answer_kind")).lower()
 
+    if eval_kind == "frontierscience_olympiad" and _metadata_looks_like_formula_answer(payload):
+        return "formula_short_answer"
     if eval_kind in {"chembench_open_ended", "frontierscience_olympiad"}:
         return "numeric_short_answer"
     if eval_kind == "frontierscience_research" or (dataset == "frontierscience" and track == "research"):
@@ -157,6 +163,30 @@ def _numeric_value(text: str) -> float | None:
         return None
 
 
+def _looks_like_formula_text(text: str) -> bool:
+    value = clean_text(text)
+    if not value:
+        return False
+    if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", value):
+        return False
+    return bool(FORMULA_SIGNAL_RE.search(value))
+
+
+def _metadata_looks_like_formula_answer(payload: dict[str, Any]) -> bool:
+    reference = clean_text(
+        payload.get("reference_answer")
+        or payload.get("expected_answer")
+        or payload.get("answer")
+        or payload.get("target")
+    )
+    prompt = clean_text(payload.get("prompt") or payload.get("question"))
+    if reference:
+        if re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", reference):
+            return False
+        return _looks_like_formula_text(reference)
+    return _looks_like_formula_text(prompt)
+
+
 def _looks_placeholder(text: str) -> bool:
     lowered = clean_text(text).lower()
     if not lowered:
@@ -180,6 +210,9 @@ def _validate_answer_projection(answer_kind: str, evaluator_answer: str, full_an
     if answer_kind == "numeric_short_answer":
         if _numeric_value(answer) is None:
             errors.append("numeric_short_answer requires a numeric evaluator_answer")
+    elif answer_kind == "formula_short_answer":
+        if not _looks_like_formula_text(answer):
+            errors.append("formula_short_answer requires a symbolic evaluator_answer")
     elif answer_kind == "short_text_answer":
         if _looks_placeholder(answer):
             errors.append("short_text_answer requires a concise non-placeholder evaluator_answer")

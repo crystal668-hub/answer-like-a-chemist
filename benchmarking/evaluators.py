@@ -32,6 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - script-style import fallback
 FINAL_ANSWER_RE = re.compile(r"^\s*FINAL\s+ANSWER\s*[:：-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", re.DOTALL | re.IGNORECASE)
+INVALID_JSON_BACKSLASH_RE = re.compile(r'\\(?!["\\/bfnrtu])')
 SUPERCHM_XML_CHECKPOINT_RE = re.compile(
     r"<\s*checkpoint\b(?P<attrs>[^>]*)>(?P<body>.*?)</\s*checkpoint\s*>",
     re.IGNORECASE | re.DOTALL,
@@ -122,17 +123,26 @@ def parse_numeric_scalar(text: str) -> float | None:
 
 
 def safe_json_extract(text: str) -> Any:
+    def loads_with_repair(candidate: str) -> Any:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            if "Invalid \\escape" not in str(exc):
+                raise
+            repaired = INVALID_JSON_BACKSLASH_RE.sub(r"\\\\", candidate)
+            return json.loads(repaired)
+
     stripped = text.strip()
     if not stripped:
         raise EvaluationError("Cannot extract JSON from empty judge response.")
     for candidate in (stripped,):
         try:
-            return json.loads(candidate)
+            return loads_with_repair(candidate)
         except json.JSONDecodeError:
             pass
     match = JSON_BLOCK_RE.search(stripped)
     if match:
-        return json.loads(match.group(1))
+        return loads_with_repair(match.group(1))
 
     lines = stripped.splitlines()
     for index, line in enumerate(lines):
@@ -141,7 +151,7 @@ def safe_json_extract(text: str) -> Any:
             fragment = "\n".join(lines[index:]).strip()
             for end in range(len(fragment), 0, -1):
                 try:
-                    return json.loads(fragment[:end])
+                    return loads_with_repair(fragment[:end])
                 except json.JSONDecodeError:
                     continue
             break
@@ -151,7 +161,7 @@ def safe_json_extract(text: str) -> Any:
         fragment = stripped[start:]
         for end in range(len(fragment), 0, -1):
             try:
-                return json.loads(fragment[:end])
+                return loads_with_repair(fragment[:end])
             except json.JSONDecodeError:
                 continue
     raise EvaluationError(f"Judge response did not contain parseable JSON:\n{text}")

@@ -6,6 +6,7 @@ from benchmarking.evaluators import (
     evaluate_frontierscience_olympiad,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
+    safe_json_extract,
 )
 
 
@@ -71,6 +72,19 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual([{"points": 1.5, "description": "Identify the limiting reagent.\nExplain the stoichiometric basis."}], items)
 
         self.assertEqual("A|D", parse_superchem_option_answer("Option A and D are correct.", valid_options=("A", "B", "C", "D")))
+
+    def test_safe_json_extract_repairs_unescaped_latex_backslashes(self) -> None:
+        reply = (
+            '{"correct":false,"score":0.0,'
+            '"rationale":"The candidate states \\(K_M = K_s + [S]^2/J_s\\), which differs.",'
+            '"expected_answer":"KM=Ks1+Js[S]2",'
+            '"candidate_answer":"K_M = K_s + [S]^2/J_s"}'
+        )
+
+        parsed = safe_json_extract(reply)
+
+        self.assertEqual(False, parsed["correct"])
+        self.assertIn(r"\(K_M", parsed["rationale"])
 
 
 if __name__ == "__main__":

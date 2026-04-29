@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 from .datasets import BenchmarkRecord
+
+
+FORMULA_SIGNAL_RE = re.compile(
+    r"(?:\\\(|\\\[|[A-Za-z]_[A-Za-z0-9]+|\[[A-Za-z0-9_]+\]|\bK_[A-Za-z0-9]+|\bK_M\b|\^|/|=)"
+)
 
 
 class RuntimeBundleLike(Protocol):
     bundle_dir: Any
     question_markdown: Any
     image_files: list[Any]
+
+
+def _looks_like_formula_answer(record: BenchmarkRecord) -> bool:
+    reference = str(getattr(record, "reference_answer", "") or "")
+    prompt = str(getattr(record, "prompt", "") or "")
+    if reference:
+        if re.fullmatch(r"\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*", reference):
+            return False
+        return bool(FORMULA_SIGNAL_RE.search(reference))
+    return bool(FORMULA_SIGNAL_RE.search(prompt))
 
 
 def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
@@ -19,6 +35,8 @@ def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
     explicit = str(payload.get("answer_kind") or config.get("answer_kind") or "").strip()
     if explicit:
         return explicit
+    if eval_kind == "frontierscience_olympiad" and _looks_like_formula_answer(record):
+        return "formula_short_answer"
     if eval_kind in {"chembench_open_ended", "frontierscience_olympiad"}:
         return "numeric_short_answer"
     if eval_kind == "frontierscience_research" or str(config.get("track") or payload.get("track") or "").strip().lower() == "research":

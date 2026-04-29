@@ -32,7 +32,7 @@ def requirements_for_candidate(
 ) -> list[ProviderTraceRequirement]:
     text = " ".join([answer_kind, eval_kind, dataset, prompt]).lower()
     requirements: list[ProviderTraceRequirement] = []
-    if answer_kind == "numeric_short_answer" or any(
+    if answer_kind in {"numeric_short_answer", "formula_short_answer"} or any(
         token in text
         for token in (
             "stoichiometric",

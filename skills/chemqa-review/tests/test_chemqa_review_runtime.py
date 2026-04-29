@@ -203,6 +203,27 @@ submission_trace:
         self.assertTrue(checked.ok)
         self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
 
+    def test_formula_answer_kind_audits_missing_chem_calculator_trace(self) -> None:
+        candidate = """
+artifact_kind: candidate_submission
+phase: propose
+owner: proposer-1
+direct_answer: "K_s + [S]^2/J_s"
+summary: symbolic expression answer
+submission_trace:
+  - step: reasoning
+    status: success
+    detail: algebraic derivation only
+""".strip()
+        checked = transport.check_candidate_submission(
+            candidate,
+            owner="proposer-1",
+            answer_kind="formula_short_answer",
+            provider_trace_mode="audit",
+        )
+        self.assertTrue(checked.ok)
+        self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
+
     def test_numeric_answer_kind_enforces_valid_chem_calculator_trace(self) -> None:
         candidate = """
 artifact_kind: candidate_submission

@@ -144,7 +144,7 @@
   - Status: `DONE`
 
 - Name: Evaluator registry and dispatch
-  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback.
+  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
   - Input / Output:
     - Input: `BenchmarkRecord`, short/full answer text, judge object.
     - Output: evaluator payload/dataclass.
@@ -160,7 +160,7 @@
   - Status: `DONE`
 
 - Name: FrontierScience Olympiad scoring
-  - Description: Evaluates olympiad-style short answers.
+  - Description: Evaluates olympiad-style short answers, including numeric answers and formula-style symbolic expressions that may require semantic judge comparison.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
@@ -264,7 +264,7 @@
   - Status: `DONE`
 
 - Name: ChemQA Artifact Flow
-  - Description: Validates typed candidate/review/rebuttal artifacts, resolves answer-kind-specific projections, applies answer-revision rebuttals to a current candidate view, tracks review item closure state, writes canonical final/failure artifacts, writes an artifact manifest with hashes, and projects legacy-compatible `qa_result.json`.
+  - Description: Validates typed candidate/review/rebuttal artifacts, resolves answer-kind-specific projections, applies answer-revision rebuttals to a current candidate view, tracks review item closure state, writes canonical final/failure artifacts, writes an artifact manifest with hashes, and projects legacy-compatible `qa_result.json`. Supported answer projections include numeric, formula-style short symbolic expressions, short text, multi-part research, multiple-choice, structure, and generic semantic answers.
   - Input / Output:
     - Input: resolved `answer_kind`, protocol payloads, candidate/review/rebuttal artifacts, finalization metadata.
     - Output: `final_answer_artifact.json` or `failure_artifact.json`, `candidate_view.json`, `validation_summary.json`, `artifact_manifest.json`, `qa_result.json`, and run-status overlay fields.

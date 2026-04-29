@@ -26,6 +26,28 @@ class AnswerKindResolutionTest(unittest.TestCase):
             artifact_flow.resolve_answer_kind({"eval_kind": "frontierscience_olympiad", "dataset": "frontierscience"}),
         )
         self.assertEqual(
+            "formula_short_answer",
+            artifact_flow.resolve_answer_kind(
+                {
+                    "eval_kind": "frontierscience_olympiad",
+                    "dataset": "frontierscience",
+                    "prompt": "Determine \\( K_M \\) in terms of \\( [S] \\).",
+                    "reference_answer": "KM=Ks1+Js[S]2",
+                }
+            ),
+        )
+        self.assertEqual(
+            "numeric_short_answer",
+            artifact_flow.resolve_answer_kind(
+                {
+                    "eval_kind": "frontierscience_olympiad",
+                    "dataset": "frontierscience",
+                    "prompt": "Determine `\\( Sr^{2+} \\)` in micrograms.",
+                    "reference_answer": "7.59",
+                }
+            ),
+        )
+        self.assertEqual(
             "multi_part_research_answer",
             artifact_flow.resolve_answer_kind(
                 {"eval_kind": "frontierscience_research", "dataset": "frontierscience", "track": "research"}
@@ -100,6 +122,36 @@ submission_trace:
 
         self.assertFalse(result.valid)
         self.assertIn("numeric_short_answer requires a numeric evaluator_answer", result.errors)
+
+    def test_formula_answer_accepts_symbolic_expression_projection(self) -> None:
+        candidate = {
+            "artifact_kind": "candidate_submission",
+            "owner": "proposer-1",
+            "evaluator_answer": "K_s + [S]^2/J_s",
+            "display_answer": "K_M = K_s + [S]^2/J_s",
+            "full_answer": "The apparent K_M is K_s + [S]^2/J_s.",
+            "summary": "Derived expression from substrate inhibition rate law.",
+            "submission_trace": [{"step": "derive", "status": "success", "detail": "Matched denominator terms."}],
+        }
+
+        result = artifact_flow.validate_candidate_artifact(candidate, answer_kind="formula_short_answer")
+
+        self.assertTrue(result.valid, result.errors)
+        self.assertEqual("K_s + [S]^2/J_s", result.artifact["payload"]["evaluator_answer"])
+
+    def test_formula_answer_rejects_narrative_projection(self) -> None:
+        candidate = {
+            "artifact_kind": "candidate_submission",
+            "owner": "proposer-1",
+            "direct_answer": "Derived the rate equation for substrate inhibition kinetics.",
+            "summary": "Formula derivation.",
+            "submission_trace": [{"step": "derive", "status": "success", "detail": "Derived expression."}],
+        }
+
+        result = artifact_flow.validate_candidate_artifact(candidate, answer_kind="formula_short_answer")
+
+        self.assertFalse(result.valid)
+        self.assertIn("formula_short_answer requires a symbolic evaluator_answer", result.errors)
 
     def test_answer_revision_rebuttal_updates_current_candidate_view(self) -> None:
         candidate = artifact_flow.validate_candidate_artifact(

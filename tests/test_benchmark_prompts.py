@@ -34,3 +34,33 @@ class BenchmarkPromptsTests(unittest.TestCase):
         )
 
         self.assertEqual("numeric_short_answer", resolve_chemqa_answer_kind(record))
+
+    def test_frontierscience_olympiad_formula_reference_uses_formula_answer_kind(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-formula",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Determine the corresponding \\( K_M \\) in terms of \\( [S] \\) and constants.",
+            reference_answer="The corresponding `\\( K_M \\)` is KM=Ks1+Js[S]2",
+            payload={"track": "olympiad"},
+        )
+
+        self.assertEqual("formula_short_answer", resolve_chemqa_answer_kind(record))
+        self.assertIn(
+            "ChemQA Artifact Flow answer kind: formula_short_answer.",
+            build_chemqa_goal(record, websearch_enabled=True),
+        )
+
+    def test_frontierscience_olympiad_latex_prompt_with_numeric_reference_stays_numeric(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-numeric-latex",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Determine dissolved `\\( Sr^{2+} \\)` in micrograms for `\\( SrF_2 \\)`.",
+            reference_answer="7.59",
+            payload={"track": "olympiad"},
+        )
+
+        self.assertEqual("numeric_short_answer", resolve_chemqa_answer_kind(record))
