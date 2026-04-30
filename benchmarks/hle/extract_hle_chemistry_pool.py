@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 from collections import Counter
@@ -60,11 +61,12 @@ def iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
 
 def iter_hf_rows(*, dataset: str, split: str) -> Iterable[dict[str, Any]]:
     try:
-        from datasets import load_dataset
+        datasets_module = importlib.import_module("datasets")
     except ImportError as exc:
         raise ExtractionError(
             "Loading cais/hle from Hugging Face requires the `datasets` package or --input-jsonl."
         ) from exc
+    load_dataset = getattr(datasets_module, "load_dataset")
     loaded = load_dataset(dataset, split=split)
     for row in loaded:
         if isinstance(row, dict):

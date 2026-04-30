@@ -74,6 +74,11 @@ class HLEChemistryExtractionTests(unittest.TestCase):
             self.assertEqual("hle-chemistry-pool-v1", manifest["field_contract_version"])
             self.assertEqual(2, manifest["counts"]["selected_records"])
 
+    def test_script_avoids_static_datasets_import_for_optional_dependency(self) -> None:
+        source = MODULE_PATH.read_text(encoding="utf-8")
+
+        self.assertNotIn("from datasets import", source)
+
 
 if __name__ == "__main__":
     unittest.main()
