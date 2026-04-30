@@ -218,6 +218,52 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertEqual("42", benchmark_test.extract_final_answer_line(text))
         self.assertEqual("42", benchmark_test.extract_candidate_short_answer(text))
 
+    def test_hle_evaluator_registered_for_benchmark_dispatch(self) -> None:
+        record = benchmark_test.BenchmarkRecord(
+            record_id="hle-demo",
+            dataset="hle",
+            source_file="/tmp/hle.jsonl",
+            eval_kind="hle",
+            prompt="Which reagent oxidizes a primary alcohol to an aldehyde?",
+            reference_answer="PCC",
+            payload={"answer_type": "short-answer", "category": "Chemistry"},
+        )
+        judge = JudgeStub(
+            {
+                "extracted_final_answer": "PCC",
+                "reasoning": "The answer matches.",
+                "correct": "yes",
+                "confidence": 90,
+            }
+        )
+
+        result = benchmark_test.evaluate_answer(
+            record,
+            short_answer_text="PCC",
+            full_response_text="Explanation: short\nAnswer: PCC\nConfidence: 90%",
+            judge=judge,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual("hle_judge_accuracy", result.primary_metric)
+
+    def test_random_subset_sampling_includes_hle_chemistry(self) -> None:
+        records = [
+            benchmark_test.BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="hle",
+                source_file="/tmp/hle.jsonl",
+                eval_kind="hle",
+                prompt="Which reagent oxidizes a primary alcohol to an aldehyde?",
+                reference_answer="PCC",
+                payload={"answer_type": "short-answer", "category": "Chemistry"},
+            )
+        ]
+
+        sampled = benchmark_test.sample_records_per_subset(records, per_subset_count=1, seed=7)
+
+        self.assertEqual(["hle-demo"], [record.record_id for record in sampled])
+
     def test_runner_result_should_score_when_recovery_is_evaluable(self) -> None:
         result = benchmark_test.RunnerResult(
             status=benchmark_test.RunStatus.RECOVERED,

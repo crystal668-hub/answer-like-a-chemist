@@ -8,7 +8,7 @@
 - Current capabilities (ONLY what works)
   - `DONE`: Run benchmark batches across four experiment groups: `chemqa_web_on`, `chemqa_web_off`, `single_llm_web_on`, `single_llm_web_off` via `workspace/benchmark_test.py`.
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
-  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
+  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
   - `DONE`: Run a single-agent OpenClaw baseline by shelling out to `openclaw agent` via `workspace/benchmarking/runners/single_llm.py`.
   - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
@@ -97,6 +97,7 @@
 - Dataset prep modules
   - `workspace/benchmarks/chembench/extract_open_ended_reasoning_pool.py`
   - `workspace/benchmarks/frontierscience/extract_chemistry_pool.py`
+  - `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
   - `workspace/benchmarks/superchem/extract_superchem_pool.py`
 - Module interactions
   - `benchmark_test.py` -> `benchmarking/*`
@@ -138,6 +139,14 @@
   - Implementation location: `workspace/benchmarking/datasets.py`
   - Status: `DONE`
 
+- Name: HLE chemistry pool extraction
+  - Description: Extracts chemistry-related Humanity's Last Exam rows from `cais/hle` into the local benchmark JSONL style under `workspace/benchmarks/hle/data/`, matching records by `category` and `raw_subject`, preserving HLE question/answer/answer_type/image/canary metadata, and writing a manifest with selection counts.
+  - Input / Output:
+    - Input: authenticated Hugging Face `cais/hle` test split or a local HLE JSONL export.
+    - Output: `hle_chemistry_pool.jsonl` plus `hle_chemistry_pool.manifest.json`.
+  - Implementation location: `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
+  - Status: `DONE`
+
 - Name: Evaluator registry and dispatch
   - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
   - Input / Output:
@@ -176,6 +185,14 @@
     - Input: record + answer text.
     - Output: `EvaluationResult`.
   - Implementation location: `workspace/benchmarking/evaluators.py`
+  - Status: `DONE`
+
+- Name: HLE chemistry scoring
+  - Description: Scores Humanity's Last Exam chemistry-subset records with the official HLE-style judge rule: extract the final answer from the response, compare against the precise reference answer with small numeric tolerance allowed by the judge prompt, and return binary accuracy plus confidence metadata.
+  - Input / Output:
+    - Input: HLE chemistry `BenchmarkRecord` plus model response text.
+    - Output: `EvaluationResult` with `primary_metric = hle_judge_accuracy` and judge details including extracted final answer and confidence.
+  - Implementation location: `workspace/benchmarking/evaluators.py`, `workspace/benchmark_test.py`
   - Status: `DONE`
 
 - Name: Run-scoped OpenClaw config orchestration

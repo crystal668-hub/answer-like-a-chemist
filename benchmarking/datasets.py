@@ -25,6 +25,11 @@ def _grading_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "reference_reasoning": _deep_copy_jsonish(payload.get("reference_reasoning")),
         "modality": _deep_copy_jsonish(payload.get("modality")),
         "source_uuid": _deep_copy_jsonish(payload.get("source_uuid")),
+        "answer_type": _deep_copy_jsonish(payload.get("answer_type")),
+        "category": _deep_copy_jsonish(payload.get("category")),
+        "raw_subject": _deep_copy_jsonish(payload.get("raw_subject")),
+        "image": _deep_copy_jsonish(payload.get("image")),
+        "source_id": _deep_copy_jsonish(payload.get("source_id")),
     }
 
 
@@ -117,6 +122,8 @@ def classify_subset(record: BenchmarkRecord) -> str:
             return "frontierscience_Research"
     if record.dataset == "superchem":
         return "superchem_multimodal"
+    if record.dataset == "hle" and record.grading.kind == "hle":
+        return "hle_chemistry"
     return f"{record.dataset}:{record.grading.kind}"
 
 

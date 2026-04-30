@@ -47,6 +47,7 @@ try:
         evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
         evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
         evaluate_generic_semantic as _shared_evaluate_generic_semantic,
+        evaluate_hle as _shared_evaluate_hle,
         evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
         extract_candidate_short_answer,
         extract_final_answer_line,
@@ -115,6 +116,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
         evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
         evaluate_generic_semantic as _shared_evaluate_generic_semantic,
+        evaluate_hle as _shared_evaluate_hle,
         evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
         extract_candidate_short_answer,
         extract_final_answer_line,
@@ -231,6 +233,7 @@ SUBSET_ORDER = (
     "frontierscience_Olympiad",
     "frontierscience_Research",
     "superchem_multimodal",
+    "hle_chemistry",
 )
 SUPERCHEM_SUBSETS = ("superchem_multimodal",)
 RUNTIME_BUNDLE_LOCK = threading.Lock()
@@ -1295,6 +1298,24 @@ def evaluate_superchem_multiple_choice_rpf(
         raise BenchmarkError(str(exc)) from exc
 
 
+def evaluate_hle(
+    record: BenchmarkRecord,
+    *,
+    short_answer_text: str,
+    full_response_text: str,
+    judge: JudgeClient,
+) -> EvaluationResult:
+    try:
+        return _shared_evaluate_hle(
+            record,
+            short_answer_text=short_answer_text,
+            full_response_text=full_response_text,
+            judge=judge,
+        )
+    except EvaluationError as exc:
+        raise BenchmarkError(str(exc)) from exc
+
+
 def evaluate_generic_semantic(
     record: BenchmarkRecord,
     *,
@@ -1332,6 +1353,7 @@ register_evaluator("chembench_open_ended", evaluate_chembench_open_ended)
 register_evaluator("frontierscience_olympiad", evaluate_frontierscience_olympiad)
 register_evaluator("frontierscience_research", evaluate_frontierscience_research)
 register_evaluator("superchem_multiple_choice_rpf", evaluate_superchem_multiple_choice_rpf)
+register_evaluator("hle", evaluate_hle)
 register_evaluator("generic_semantic", evaluate_generic_semantic)
 
 

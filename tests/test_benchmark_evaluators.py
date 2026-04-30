@@ -4,6 +4,7 @@ from benchmarking.datasets import BenchmarkRecord
 from benchmarking.evaluators import (
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
+    evaluate_hle,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
     safe_json_extract,
@@ -65,6 +66,39 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual("heuristic", result.details["method"])
         self.assertEqual([], judge.prompts)
+
+    def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
+        judge = JudgeStub(
+            {
+                "extracted_final_answer": "PCC",
+                "reasoning": "The extracted answer matches.",
+                "correct": "yes",
+                "confidence": 87,
+            }
+        )
+        record = BenchmarkRecord(
+            record_id="hle-demo",
+            dataset="hle",
+            source_file="/tmp/hle.jsonl",
+            eval_kind="hle",
+            prompt="Which reagent oxidizes a primary alcohol to an aldehyde?",
+            reference_answer="PCC",
+            payload={"answer_type": "short-answer", "category": "Chemistry"},
+        )
+
+        result = evaluate_hle(
+            record,
+            short_answer_text="PCC",
+            full_response_text="Explanation: brief\nAnswer: PCC\nConfidence: 87%",
+            judge=judge,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(1.0, result.score)
+        self.assertEqual("hle_judge_accuracy", result.primary_metric)
+        self.assertEqual(87, result.details["confidence"])
+        self.assertIn("extracted_final_answer", judge.prompts[0])
+        self.assertIn("[correct_answer]: PCC", judge.prompts[0])
 
     def test_parse_helpers_cover_research_rubric_and_superchem_options(self) -> None:
         rubric = "Points: 1.5, Item: Identify the limiting reagent.\nExplain the stoichiometric basis."

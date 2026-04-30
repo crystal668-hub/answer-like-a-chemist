@@ -35,6 +35,34 @@ class BenchmarkDatasetsTests(unittest.TestCase):
             self.assertEqual("42", record.grading.reference_answer)
             self.assertEqual(0.1, record.grading.config["relative_tolerance"])
 
+    def test_load_records_builds_hle_chemistry_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "hle" / "data" / "hle_chemistry_pool.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "hle-chemistry-demo",
+                        "question": "Which reagent oxidizes a primary alcohol to an aldehyde?",
+                        "answer": "PCC",
+                        "eval_kind": "hle",
+                        "answer_type": "short-answer",
+                        "category": "Chemistry",
+                        "raw_subject": "Organic chemistry",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            record = load_records([path])[0]
+
+            self.assertEqual("hle", record.dataset)
+            self.assertEqual("hle", record.grading.kind)
+            self.assertEqual("hle_chemistry", record.grading.subset)
+            self.assertEqual("short-answer", record.grading.config["answer_type"])
+            self.assertEqual("Chemistry", record.grading.config["category"])
+
     def test_load_records_missing_prompt_raises_value_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "chembench" / "data" / "sample.jsonl"

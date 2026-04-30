@@ -45,6 +45,11 @@ def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
         return "multiple_choice"
     if dataset == "superchem" and isinstance(config.get("options") or payload.get("options"), dict):
         return "multiple_choice"
+    if eval_kind == "hle":
+        answer_type = str(payload.get("answer_type") or config.get("answer_type") or "").strip().lower()
+        if "multiple" in answer_type or "choice" in answer_type:
+            return "multiple_choice"
+        return "generic_semantic_answer"
     return "generic_semantic_answer"
 
 
@@ -76,6 +81,11 @@ def build_single_llm_prompt(
         instructions.append("Show brief reasoning if needed, then end with exactly one line formatted as: FINAL ANSWER: <answer>.")
     elif record.eval_kind == "frontierscience_olympiad":
         instructions.append("End with exactly one line formatted as: FINAL ANSWER: <answer>.")
+    elif record.eval_kind == "hle":
+        instructions.append("Use the official HLE response format exactly:")
+        instructions.append("Explanation: <your concise explanation>")
+        instructions.append("Answer: <your chosen answer>")
+        instructions.append("Confidence: <your confidence score between 0% and 100%>")
     else:
         instructions.append("Provide a complete answer. If you include a final answer line, use: FINAL ANSWER: <answer>.")
 
@@ -105,5 +115,10 @@ def build_chemqa_goal(
             instructions.append(f"Open `{input_bundle.question_markdown}` first and inspect any referenced images.")
     elif record.eval_kind in {"chembench_open_ended", "frontierscience_olympiad"}:
         instructions.append("If appropriate, end with a line `FINAL ANSWER: <answer>`.")
+    elif record.eval_kind == "hle":
+        instructions.append("Use the official HLE response format exactly:")
+        instructions.append("Explanation: <your concise explanation>")
+        instructions.append("Answer: <your chosen answer>")
+        instructions.append("Confidence: <your confidence score between 0% and 100%>")
     instructions.append(f"ChemQA Artifact Flow answer kind: {resolve_chemqa_answer_kind(record)}.")
     return "\n".join(instructions) + "\n\nQUESTION:\n" + record.prompt.strip()
