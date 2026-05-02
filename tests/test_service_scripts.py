@@ -37,6 +37,7 @@ class ServiceScriptTests(unittest.TestCase):
         self.assertIn("MINERU_API_URL", script)
         self.assertIn("MINERU_MODEL_SOURCE", script)
         self.assertIn("local", script)
+        self.assertIn("accelerate", (ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn("MINERU_DOWNLOAD_SOURCE", script)
         self.assertIn("--source", script)
         self.assertIn("--model_type all", script)
