@@ -23,7 +23,7 @@
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
   - `DONE`: Rerank papers by building GROBID profiles and calling an OpenAI-compatible chat-completions endpoint via `workspace/skills/paper-rerank/scripts/paper_rerank.py`.
   - `DONE`: Clean up benchmark processes, session files, run-scoped artifacts, and leases via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
-  - `DONE`: Manage local Docker-backed GROBID and MinerU services via `workspace/scripts/docker_services.sh`.
+  - `DONE`: Manage local Docker-backed GROBID via `workspace/scripts/docker_services.sh` and native macOS MinerU API via `workspace/scripts/mineru_service.sh`.
   - `PARTIAL`: Native workflow-package support exists for `chemqa-review@1`, but the package implementation is explicitly inactive scaffold metadata and is not the live runtime path.
   - `NOT_IMPLEMENTED`: No actual web UI/server is implemented in the repo despite `web-ui` optional dependencies in `workspace/pyproject.toml`.
 
@@ -395,12 +395,12 @@
   - Implementation location: `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`
   - Status: `DONE`
 
-- Name: Docker service control
-  - Description: Starts/stops/checks GROBID and MinerU API compose projects.
+- Name: Local paper service control
+  - Description: Starts/stops/checks Docker-backed GROBID and native macOS MinerU API services.
   - Input / Output:
-    - Input: subcommand such as `up`, `down`, `health`, `logs`.
-    - Output: compose actions and health checks.
-  - Implementation location: `workspace/scripts/docker_services.sh`
+    - Input: subcommand such as `up`, `down`, `health`, `logs`, `install`, or `download-models`.
+    - Output: Docker Compose actions for GROBID, native process actions for MinerU, and HTTP health checks.
+  - Implementation location: `workspace/scripts/docker_services.sh`, `workspace/scripts/mineru_service.sh`
   - Status: `DONE`
 
 - Name: ChemBench dataset extraction
@@ -493,7 +493,8 @@
   - Retrieval -> access -> parse -> rerank are independent scripts, not a single orchestrated service.
   - `paper-rerank.py` requires already-downloaded local PDFs.
   - `paper-parse.py` can use a long-lived MinerU API URL from env/config or local backend fallback logic.
-  - GROBID and MinerU are treated as required long-lived local HTTP services by the docs and Docker helper.
+  - GROBID is treated as a required long-lived Docker-backed local HTTP service.
+  - MinerU is treated as a required long-lived native macOS local HTTP service when complex PDF parsing/OCR is needed; the service helper installs the native runtime, pre-downloads models, defaults runtime model loading to `MINERU_MODEL_SOURCE=local`, and keeps the Docker packaging only as legacy Linux/reference material.
 
 - Shortcuts, hacks, implicit logic
   - Benchmark scripts duplicate a large amount of logic that also exists in `workspace/benchmarking/*`; the package is not the sole orchestration layer.

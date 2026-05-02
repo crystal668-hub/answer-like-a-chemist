@@ -103,4 +103,5 @@ curl -fsS http://127.0.0.1:8070/api/version
 ## Notes
 
 - The Compose file binds to `127.0.0.1:8070`, so the service is local-only by default.
-- The service can be managed together with `mineru-api` from the repo root via `bash scripts/docker_services.sh ...`.
+- The service can be managed from the repo root via `bash scripts/docker_services.sh ...`.
+- MinerU is managed separately as a native macOS service via `bash scripts/mineru_service.sh ...`.
