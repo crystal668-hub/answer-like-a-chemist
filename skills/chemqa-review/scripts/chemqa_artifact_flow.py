@@ -22,6 +22,23 @@ ANSWER_KINDS = {
 FORMULA_SIGNAL_RE = re.compile(
     r"(?:\\\(|\\\[|[A-Za-z]_[A-Za-z0-9]+|\[[A-Za-z0-9_]+\]|\bK_[A-Za-z0-9]+|\bK_M\b|\^|/|=)"
 )
+NUMERIC_SETUP_MARKERS = (
+    "after mixing",
+    "initial concentration",
+    "initial concentrations",
+    "total volume",
+    "reaction quotient",
+    "using ksp",
+    "let ",
+    "solving the system",
+    "step:",
+    "anchor:",
+)
+FINAL_NUMERIC_ANCHOR_RE = re.compile(
+    r"(?i)(?:final answer|answer is|mass of [^.=:;]+|yields?|therefore|=)\s*[:=]?\s*"
+    r".*?([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*"
+    r"(?:\u00b5g|ug|micrograms?|mg|g|kg|mol|mmol|mM|M|%|percent)?)"
+)
 
 REVIEWER_LANES = ("proposer-2", "proposer-3", "proposer-4", "proposer-5")
 CANDIDATE_OWNER = "proposer-1"
@@ -161,6 +178,78 @@ def _numeric_value(text: str) -> float | None:
         return None
 
 
+def _numeric_tokens(text: str) -> list[str]:
+    return re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", clean_text(text))
+
+
+def _is_numeric_answer_like(text: str) -> bool:
+    value = clean_text(text)
+    if not value:
+        return False
+    if _numeric_value(value) is None:
+        return False
+    lowered = value.lower()
+    if len(value) > 160:
+        return False
+    if sum(value.count(mark) for mark in (".", ";", ":")) > 3:
+        return False
+    if any(marker in lowered for marker in NUMERIC_SETUP_MARKERS):
+        return False
+    if len(_numeric_tokens(value)) >= 3 and not re.search(r"(?i)\b(final answer|answer is|therefore)\b", value):
+        return False
+    return True
+
+
+def _normalize_numeric_answer_candidate(value: str) -> str:
+    answer = clean_text(value)
+    answer = re.sub(r"(?i)\b(?:final answer|answer is|therefore)\b\s*[:=]?\s*", "", answer).strip()
+    return answer.rstrip(" .;")
+
+
+def _extract_numeric_final_answer(text: str) -> str:
+    value = clean_text(text)
+    if not value:
+        return ""
+    matches = list(FINAL_NUMERIC_ANCHOR_RE.finditer(value))
+    for match in reversed(matches):
+        candidate = _normalize_numeric_answer_candidate(match.group(1))
+        if _is_numeric_answer_like(candidate):
+            return candidate
+    final_line_match = re.search(r"(?im)^\s*final answer\s*:\s*(.+?)\s*$", value)
+    if final_line_match:
+        candidate = _normalize_numeric_answer_candidate(final_line_match.group(1))
+        if _is_numeric_answer_like(candidate):
+            return candidate
+    return ""
+
+
+def _project_evaluator_answer(
+    *,
+    answer_kind: str,
+    evaluator_answer: str,
+    display_answer: str,
+    full_answer: str,
+    summary: str,
+) -> tuple[str, str, str, dict[str, Any] | None, list[str]]:
+    raw_evaluator = clean_text(evaluator_answer)
+    raw_display = clean_text(display_answer) or raw_evaluator
+    raw_full = clean_text(full_answer) or clean_text(summary) or raw_evaluator
+    warnings: list[str] = []
+
+    if answer_kind == "numeric_short_answer" and not _is_numeric_answer_like(raw_evaluator):
+        repaired = _extract_numeric_final_answer(raw_full) or _extract_numeric_final_answer(summary)
+        if repaired:
+            metadata = {
+                "source": "full_answer" if repaired in raw_full else "summary",
+                "repair": "numeric_final_answer_extraction",
+                "raw_evaluator_answer": raw_evaluator,
+            }
+            warnings.append("numeric_short_answer evaluator_answer repaired from anchored full answer")
+            return repaired, repaired, raw_full, metadata, warnings
+
+    return raw_evaluator, raw_display, raw_full, None, warnings
+
+
 def _looks_like_formula_text(text: str) -> bool:
     value = clean_text(text)
     if not value:
@@ -206,8 +295,8 @@ def _validate_answer_projection(answer_kind: str, evaluator_answer: str, full_an
     answer = clean_text(evaluator_answer)
     full = clean_text(full_answer)
     if answer_kind == "numeric_short_answer":
-        if _numeric_value(answer) is None:
-            errors.append("numeric_short_answer requires a numeric evaluator_answer")
+        if not _is_numeric_answer_like(answer):
+            errors.append("numeric_short_answer requires a concise numeric evaluator_answer")
     elif answer_kind == "formula_short_answer":
         if not _looks_like_formula_text(answer):
             errors.append("formula_short_answer requires a symbolic evaluator_answer")
@@ -242,16 +331,24 @@ def validate_candidate_artifact(
     role = clean_text(payload.get("role") or payload.get("owner") or CANDIDATE_OWNER) or CANDIDATE_OWNER
     epoch = int(payload.get("epoch") or 1)
     round_number = int(payload.get("round") or payload.get("proposal_round") or 0)
-    evaluator_answer = _first_text(payload, "evaluator_answer", "direct_answer", "answer", "value", "final_answer")
-    display_answer = _first_text(payload, "display_answer") or evaluator_answer
-    full_answer = _first_text(payload, "full_answer", "final_markdown", "final_text") or clean_text(payload.get("summary"))
+    raw_evaluator_answer = _first_text(payload, "evaluator_answer", "direct_answer", "answer", "value", "final_answer")
+    raw_display_answer = _first_text(payload, "display_answer") or raw_evaluator_answer
+    raw_full_answer = _first_text(payload, "full_answer", "final_markdown", "final_text") or clean_text(payload.get("summary"))
     reasoning_summary = clean_text(payload.get("reasoning_summary") or payload.get("summary") or payload.get("justification"))
+    evaluator_answer, display_answer, full_answer, projection_metadata, projection_warnings = _project_evaluator_answer(
+        answer_kind=answer_kind,
+        evaluator_answer=raw_evaluator_answer,
+        display_answer=raw_display_answer,
+        full_answer=raw_full_answer,
+        summary=clean_text(payload.get("summary")),
+    )
     candidate_payload = {
         "answer_kind": answer_kind,
         "evaluator_answer": evaluator_answer,
         "display_answer": display_answer,
         "full_answer": full_answer or evaluator_answer,
         "reasoning_summary": reasoning_summary,
+        "projection_metadata": projection_metadata or {},
         "submission_trace": clone_jsonish(payload.get("submission_trace") or payload.get("trace") or []),
         "claim_anchors": clone_jsonish(payload.get("claim_anchors") or []),
         "evidence_limits": clone_jsonish(payload.get("evidence_limits") or payload.get("limitations") or []),
@@ -269,8 +366,9 @@ def validate_candidate_artifact(
         source_path=source_path,
         payload=candidate_payload,
         errors=errors,
+        warnings=projection_warnings,
     )
-    return ArtifactValidation(artifact=artifact, valid=not errors, errors=errors)
+    return ArtifactValidation(artifact=artifact, valid=not errors, errors=errors, warnings=projection_warnings)
 
 
 def _review_item_key(*, epoch: int, round_number: int, reviewer_lane: str, item: dict[str, Any], index: int) -> str:
@@ -375,15 +473,22 @@ def validate_rebuttal_artifact(
     updated = payload.get("updated_answer")
     if not isinstance(updated, dict):
         updated = {}
-    updated_evaluator = clean_text(
+    raw_updated_evaluator = clean_text(
         updated.get("evaluator_answer")
         or updated.get("direct_answer")
         or payload.get("updated_direct_answer")
         or payload.get("direct_answer")
         or payload.get("final_answer")
     )
-    updated_display = clean_text(updated.get("display_answer")) or updated_evaluator
-    updated_full = clean_text(updated.get("full_answer") or payload.get("updated_full_answer")) or updated_evaluator
+    raw_updated_display = clean_text(updated.get("display_answer")) or raw_updated_evaluator
+    raw_updated_full = clean_text(updated.get("full_answer") or payload.get("updated_full_answer")) or raw_updated_evaluator
+    updated_evaluator, updated_display, updated_full, projection_metadata, projection_warnings = _project_evaluator_answer(
+        answer_kind=answer_kind,
+        evaluator_answer=raw_updated_evaluator,
+        display_answer=raw_updated_display,
+        full_answer=raw_updated_full,
+        summary=clean_text(payload.get("summary") or payload.get("response_summary")),
+    )
     if mode == "answer_revision":
         errors.extend(_validate_answer_projection(answer_kind, updated_evaluator, updated_full))
     rebuttal_payload = {
@@ -396,6 +501,7 @@ def validate_rebuttal_artifact(
             "evaluator_answer": updated_evaluator,
             "display_answer": updated_display,
             "full_answer": updated_full,
+            "projection_metadata": projection_metadata or {},
         }
         if updated_evaluator or updated_full
         else None,
@@ -414,8 +520,9 @@ def validate_rebuttal_artifact(
         source_path=source_path,
         payload=rebuttal_payload,
         errors=errors,
+        warnings=projection_warnings,
     )
-    return ArtifactValidation(artifact=artifact, valid=not errors, errors=errors)
+    return ArtifactValidation(artifact=artifact, valid=not errors, errors=errors, warnings=projection_warnings)
 
 
 def build_current_candidate_view(
@@ -448,8 +555,10 @@ def build_current_candidate_view(
             for key in ("evaluator_answer", "display_answer", "full_answer"):
                 if clean_text(updated.get(key)):
                     payload[key] = clean_text(updated[key])
+            payload["projection_metadata"] = clone_jsonish(updated.get("projection_metadata") or {})
             if rebuttal_payload.get("updated_trace"):
                 payload["submission_trace"] = clone_jsonish(rebuttal_payload["updated_trace"])
+            warnings.extend(rebuttal.get("validation_warnings") or [])
             for key in addressed:
                 if key in review_items and review_items[key].get("status") == "open":
                     review_items[key]["status"] = "addressed_by_revision"
@@ -519,6 +628,7 @@ def finalize_success(
     evaluator_answer = clean_text(candidate_payload.get("evaluator_answer"))
     display_answer = clean_text(candidate_payload.get("display_answer")) or evaluator_answer
     full_answer = clean_text(candidate_payload.get("full_answer")) or display_answer or evaluator_answer
+    projection_metadata = clone_jsonish(candidate_payload.get("projection_metadata") or {})
     terminal_warnings = list(warnings or []) + list(candidate_state.warnings)
     open_items = [
         {**clone_jsonish(item), "status": "unresolved_at_terminal"}
@@ -539,6 +649,7 @@ def finalize_success(
         "display_answer": display_answer,
         "full_answer": full_answer,
         "source_candidate_view_id": candidate_view.get("artifact_id"),
+        "projection_metadata": projection_metadata,
         "acceptance_status": clean_text(acceptance_status) or "rejected",
         "review_summary": {
             "open_review_items": open_items,
@@ -571,6 +682,7 @@ def finalize_success(
             "value": evaluator_answer,
             "display_answer": display_answer,
             "full_answer": full_answer,
+            "projection_metadata": projection_metadata,
         },
         "artifact_paths": {
             "final_answer_artifact": str(final_path),
@@ -741,6 +853,30 @@ def candidate_from_protocol(protocol: dict[str, Any], *, answer_kind: str, run_i
     return validate_candidate_artifact(candidate, answer_kind=answer_kind, run_id=run_id)
 
 
+def rebuttals_from_protocol(protocol: dict[str, Any], *, answer_kind: str, run_id: str = "") -> list[dict[str, Any]]:
+    trajectory = protocol.get("proposer_trajectory")
+    raw_rebuttals: list[Any] = []
+    if isinstance(trajectory, dict):
+        raw_rebuttals.extend(trajectory.get("rebuttals") or [])
+    elif isinstance(trajectory, list):
+        for event in trajectory:
+            if isinstance(event, dict) and (event.get("artifact_kind") == "rebuttal" or event.get("payload")):
+                raw_rebuttals.append(event)
+
+    artifacts: list[dict[str, Any]] = []
+    for item in raw_rebuttals:
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
+        validation = validate_rebuttal_artifact(payload, answer_kind=answer_kind, run_id=run_id)
+        if validation.valid:
+            artifact = validation.artifact
+            if item.get("rebuttal_round") and not artifact.get("round"):
+                artifact["round"] = int(item.get("rebuttal_round") or 0)
+            artifacts.append(artifact)
+    return sorted(artifacts, key=lambda artifact: (int(artifact.get("epoch") or 1), int(artifact.get("round") or 0)))
+
+
 def finalization_from_protocol(
     *,
     protocol: dict[str, Any],
@@ -772,7 +908,7 @@ def finalization_from_protocol(
     candidate_state = build_current_candidate_view(
         candidate_artifact=candidate.artifact,
         review_artifacts=[],
-        rebuttal_artifacts=[],
+        rebuttal_artifacts=rebuttals_from_protocol(protocol, answer_kind=answer_kind, run_id=run_id),
     )
     return finalize_success(
         run_id=run_id,

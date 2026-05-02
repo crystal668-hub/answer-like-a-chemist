@@ -1223,6 +1223,27 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("Catalysis proceeds through the two-step pathway.", short_text)
             self.assertEqual("Detailed pathway rationale.", full_text)
 
+    def test_build_chemqa_full_response_uses_final_artifact_evaluator_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "final_answer_artifact.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "evaluator_answer": "7.59 μg",
+                        "display_answer": "7.59 μg",
+                        "full_answer": "Long derivation ending in 7.59 μg.",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            short, full = benchmark_test.build_chemqa_full_response(
+                qa_result={"artifact_paths": {"final_answer_artifact": str(path)}}
+            )
+
+        self.assertEqual("7.59 μg", short)
+        self.assertEqual("Long derivation ending in 7.59 μg.", full)
+
     def test_build_chemqa_full_response_rejected_blob_does_not_return_blob_as_short_answer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
