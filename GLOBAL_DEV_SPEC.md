@@ -6,7 +6,7 @@
   - The main executable source code lives under `workspace/`.
   - The repo root also stores live runtime state for OpenClaw and ClawTeam: agent configs, generated workspaces, SQLite state, logs, device/auth files, and task/session registries.
 - Current capabilities (ONLY what works)
-  - `DONE`: Run benchmark batches across four experiment groups: `chemqa_web_on`, `chemqa_web_off`, `single_llm_web_on`, `single_llm_web_off` via `workspace/benchmark_test.py`.
+  - `DONE`: Run benchmark batches across three skills experiment groups: `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on` via `workspace/benchmark_test.py`; all groups keep websearch enabled, and the experiment variable is the benchmark skills allowlist.
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
   - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
@@ -61,7 +61,7 @@
     - `experiments.py`
       - Defines `ExperimentSpec`.
     - `config_renderer.py`
-      - Produces run-scoped OpenClaw configs, toggles web search, injects agent entries.
+      - Produces run-scoped OpenClaw configs, toggles web search, injects agent entries, and applies runner-only benchmark skill allowlists.
     - `provisioning.py`
       - Creates slot workspaces and `.debateclaw-slot.json` sentinels.
     - `runtime_config.py`
@@ -76,7 +76,7 @@
       - `single_llm.py`: baseline single-agent runner.
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
   - `workspace/benchmark_test.py`
-    - Main four-group benchmark CLI.
+    - Main three-group skills benchmark CLI.
     - Also contains runtime bundle helpers, cleanup registration, runner wiring, and compatibility wrappers for runtime config and evaluator helpers.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
@@ -118,13 +118,13 @@
     - Expects local PDFs and calls GROBID + OpenAI-compatible LLM endpoint.
 
 ## 3. Feature Matrix
-- Name: Four-group benchmark batch runner
-  - Description: Runs ChemQA and single-agent baselines across websearch on/off groups, wave-batches groups, saves per-record and aggregate outputs.
+- Name: Three-group skills benchmark batch runner
+  - Description: Runs single-agent baselines with and without the benchmark skills allowlist, plus ChemQA with the same skills allowlist. All three groups enable websearch/duckduckgo, wave-batch groups in requested order, and save per-record and aggregate outputs.
   - Input / Output:
     - Input: benchmark root or dataset files, group list, timeouts, config path, model/profile overrides.
     - Output: `results.json`, `results.partial.json`, `runtime-manifest.json`, `runtime-config/*.json`, `per-record/*/*.json`, CSV summaries.
-    - Per-record JSON entries are on schema version `2` and include explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
-    - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, and degraded execution counts.
+    - Per-record JSON entries are on schema version `2` and include `skills_enabled` plus explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
+    - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, and degraded execution counts.
   - Implementation location: `workspace/benchmark_test.py`, `workspace/benchmarking/*`
   - Status: `DONE`
 
@@ -200,7 +200,7 @@
   - Status: `DONE`
 
 - Name: Run-scoped OpenClaw config orchestration
-  - Description: Builds per-group benchmark config payloads, provisions judge/single-agent/ChemQA slot workspaces, toggles web search/plugin state, injects judge/runner agent entries, strips `thinking` from managed agents, and writes pooled runtime config paths.
+  - Description: Builds per-group benchmark config payloads, provisions judge/single-agent/ChemQA slot workspaces, toggles web search/plugin state, injects judge/runner agent entries, writes runner-only benchmark skill allowlists plus `skills.load.extraDirs`, strips `thinking` from managed agents, and writes pooled runtime config paths.
   - Input / Output:
     - Input: base config payload/path, experiment group/spec, runtime roots, model overrides, slot template.
     - Output: modified config payloads and config JSON files under `runtime-config/`.
@@ -456,13 +456,17 @@
   - Status: `NOT_IMPLEMENTED`
 
 ## 4. Actual Behavior
-- Primary execution flow: four-group benchmark
+- Primary execution flow: three-group skills benchmark
   - `workspace/benchmark_test.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided.
   - It normalizes records through `benchmarking.datasets.load_records`.
   - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; `benchmark_test.py` keeps compatibility wrappers around that package module.
+  - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
+  - `BENCHMARK_SKILLS_ALLOWLIST` is loaded from `workspace/skills/chemistry-routing-matrix.json` (`skills[].skill`) and is written to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
+  - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.
   - For `single_llm_*` groups:
     - The runner shells out directly to `openclaw agent --local ... --json`.
     - It does not use a native Python OpenClaw API.
+    - `single_llm_skills_on` includes the compact chemistry routing table in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
   - For `chemqa_*` groups:
     - The runner shells out to ChemQA skill scripts to compile/materialize/launch the run.
     - It monitors run status via files under `chemqa-review/control/run-status/`.

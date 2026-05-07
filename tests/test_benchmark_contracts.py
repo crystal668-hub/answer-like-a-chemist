@@ -60,17 +60,17 @@ class BenchmarkContractsTests(unittest.TestCase):
 
     def test_experiment_spec_resolves_single_agent_override_explicitly(self) -> None:
         spec = ExperimentSpec(
-            id="single_llm_web_off",
+            id="single_llm_skills_off",
             label="Single LLM without web",
             runner_kind="single_llm",
             websearch_enabled=False,
-            single_agent_id="benchmark-single-web-off",
+            single_agent_id="benchmark-single-skills-off",
         )
 
-        self.assertEqual("benchmark-single-web-off", spec.resolve_single_agent_id(None))
+        self.assertEqual("benchmark-single-skills-off", spec.resolve_single_agent_id(None))
         self.assertEqual("custom-single-agent", spec.resolve_single_agent_id("custom-single-agent"))
         self.assertEqual("custom-single-agent", spec.resolve_single_agent_id("  custom-single-agent  "))
-        self.assertEqual("benchmark-single-web-off", spec.resolve_single_agent_id("   "))
+        self.assertEqual("benchmark-single-skills-off", spec.resolve_single_agent_id("   "))
 
     def test_public_package_exports_contract_types(self) -> None:
         import benchmarking

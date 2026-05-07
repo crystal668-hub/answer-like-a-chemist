@@ -20,6 +20,7 @@ def _upsert_agent_entry(
     *,
     provisioned_agent: ProvisionedAgent,
     model: str,
+    skills: list[str] | None = None,
 ) -> None:
     agents = payload.setdefault("agents", {})
     entries = agents.setdefault("list", [])
@@ -34,16 +35,21 @@ def _upsert_agent_entry(
             entry["agentDir"] = normalized_agent_dir
             entry["model"] = model
             entry.pop("thinking", None)
+            if skills is None:
+                entry.pop("skills", None)
+            else:
+                entry["skills"] = list(skills)
             return
-    entries.append(
-        {
-            "id": provisioned_agent.agent_id,
-            "name": provisioned_agent.agent_id,
-            "workspace": normalized_workspace,
-            "agentDir": normalized_agent_dir,
-            "model": model,
-        }
-    )
+    entry = {
+        "id": provisioned_agent.agent_id,
+        "name": provisioned_agent.agent_id,
+        "workspace": normalized_workspace,
+        "agentDir": normalized_agent_dir,
+        "model": model,
+    }
+    if skills is not None:
+        entry["skills"] = list(skills)
+    entries.append(entry)
 
 
 def render_run_config(
@@ -66,7 +72,13 @@ def render_run_config(
     duckduckgo["enabled"] = spec.websearch_enabled
     duckduckgo.setdefault("config", {})
 
-    _upsert_agent_entry(payload, provisioned_agent=provisioned.judge, model=judge_model)
+    _upsert_agent_entry(payload, provisioned_agent=provisioned.judge, model=judge_model, skills=None)
+    runner_skills = list(spec.skill_allowlist or ()) if spec.skills_enabled else []
     for runner_agent in provisioned.runner_agents:
-        _upsert_agent_entry(payload, provisioned_agent=runner_agent, model=runner_model)
+        _upsert_agent_entry(
+            payload,
+            provisioned_agent=runner_agent,
+            model=runner_model,
+            skills=runner_skills,
+        )
     return payload

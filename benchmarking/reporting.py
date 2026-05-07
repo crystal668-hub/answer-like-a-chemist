@@ -33,6 +33,7 @@ class GroupRecordResult:
     scored: bool
     recovery_mode: str
     degraded_execution: bool
+    skills_enabled: bool = False
     execution_error_kind: str | None = None
     error: str | None = None
     short_answer_text: str = ""
@@ -91,6 +92,7 @@ def aggregate_results(results: list[GroupRecordResult]) -> dict[str, Any]:
             "group_label": items[0].group_label,
             "runner": items[0].runner,
             "websearch": items[0].websearch,
+            "skills_enabled": items[0].skills_enabled,
             **bucket,
             "by_eval_kind": {
                 eval_kind: {
@@ -113,6 +115,7 @@ def aggregate_results(results: list[GroupRecordResult]) -> dict[str, Any]:
                 "group_label": items[0].group_label,
                 "runner": items[0].runner,
                 "websearch": items[0].websearch,
+                "skills_enabled": items[0].skills_enabled,
                 "subset": subset,
                 **aggregate_bucket(subset_items),
             }
@@ -162,6 +165,7 @@ def build_error_group_record_result(
         group_label=str(getattr(group, "label", "") or ""),
         runner=str(getattr(group, "runner", "") or ""),
         websearch=bool(getattr(group, "websearch", False)),
+        skills_enabled=bool(getattr(group, "skills_enabled", False)),
         record_id=str(getattr(record, "record_id", "") or ""),
         subset=classify_subset_fn(record),
         dataset=str(getattr(record, "dataset", "") or ""),

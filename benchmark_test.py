@@ -39,6 +39,7 @@ try:
         source_pair_key as record_source_pair_key,
     )
     from benchmarking.evaluation import evaluate_record, register_evaluator
+    from benchmarking.chemistry_routing import load_chemistry_routing_matrix
     from benchmarking.evaluators import (
         EvaluationError,
         EvaluationResult,
@@ -108,6 +109,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         source_pair_key as record_source_pair_key,
     )
     from workspace.benchmarking.evaluation import evaluate_record, register_evaluator
+    from workspace.benchmarking.chemistry_routing import load_chemistry_routing_matrix
     from workspace.benchmarking.evaluators import (
         EvaluationError,
         EvaluationResult,
@@ -179,26 +181,28 @@ DEFAULT_BENCHMARK_CLEANROOM_ROOT = runtime_paths.skills_root / "benchmark-cleanr
 DEFAULT_OPENCLAW_ENV_FILE = runtime_paths.openclaw_env
 DEFAULT_OPENCLAW_CONFIG = runtime_paths.openclaw_config
 DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
-DEFAULT_SINGLE_AGENT = "benchmark-single-web-off"
+DEFAULT_SINGLE_AGENT = "benchmark-single-skills-off"
 DEFAULT_SINGLE_AGENT_MODEL = "qwen3.5-plus"
 DEFAULT_JUDGE_AGENT = "benchmark-judge"
 DEFAULT_JUDGE_MODEL = "su8/gpt-5.4"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
 BASELINE_WORKSPACE_ROOT = runtime_paths.benchmark_runtime_root
+BENCHMARK_SKILLS_ALLOWLIST = [
+    str(entry["skill"])
+    for entry in load_chemistry_routing_matrix().get("skills", [])
+]
 CHEMQA_SLOT_SETS = {
-    "chemqa_web_on": "A",
-    "chemqa_web_off": "B",
+    "chemqa_skills_on": "A",
 }
 BASELINE_AGENT_IDS = {
-    "single_llm_web_on": "benchmark-single-web-on",
-    "single_llm_web_off": "benchmark-single-web-off",
+    "single_llm_skills_on": "benchmark-single-skills-on",
+    "single_llm_skills_off": "benchmark-single-skills-off",
 }
 JUDGE_AGENT_ID = "benchmark-judge"
 BENCHMARK_AGENT_THINKING = "high"
 CHEMQA_WORKSPACE_ROOTS = {
-    "A": BASELINE_WORKSPACE_ROOT / "chemqa_web_on",
-    "B": BASELINE_WORKSPACE_ROOT / "chemqa_web_off",
+    "A": BASELINE_WORKSPACE_ROOT / "chemqa_skills_on",
 }
 
 
@@ -256,62 +260,59 @@ class ExperimentGroup:
     label: str
     runner: str
     websearch: bool
+    skills_enabled: bool = True
 
 
 EXPERIMENT_GROUPS: dict[str, ExperimentGroup] = {
-    "chemqa_web_on": ExperimentGroup(
-        id="chemqa_web_on",
-        label="ChemQA fixed-lane review + 启用 websearch plugin",
-        runner="chemqa",
-        websearch=True,
-    ),
-    "chemqa_web_off": ExperimentGroup(
-        id="chemqa_web_off",
-        label="ChemQA fixed-lane review + 禁用 websearch plugin",
-        runner="chemqa",
-        websearch=False,
-    ),
-    "single_llm_web_on": ExperimentGroup(
-        id="single_llm_web_on",
-        label="单一 LLM + 启用 websearch plugin",
+    "single_llm_skills_on": ExperimentGroup(
+        id="single_llm_skills_on",
+        label="单一 LLM + benchmark skills allowlist",
         runner="single_llm",
         websearch=True,
+        skills_enabled=True,
     ),
-    "single_llm_web_off": ExperimentGroup(
-        id="single_llm_web_off",
-        label="单一 LLM + 禁用 websearch plugin",
+    "single_llm_skills_off": ExperimentGroup(
+        id="single_llm_skills_off",
+        label="单一 LLM + 禁用 skills",
         runner="single_llm",
-        websearch=False,
+        websearch=True,
+        skills_enabled=False,
+    ),
+    "chemqa_skills_on": ExperimentGroup(
+        id="chemqa_skills_on",
+        label="ChemQA fixed-lane review + benchmark skills allowlist",
+        runner="chemqa",
+        websearch=True,
+        skills_enabled=True,
     ),
 }
 EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
-    "chemqa_web_on": ExperimentSpec(
-        id="chemqa_web_on",
-        label=EXPERIMENT_GROUPS["chemqa_web_on"].label,
-        runner_kind="chemqa",
-        websearch_enabled=True,
-        slot_set=CHEMQA_SLOT_SETS["chemqa_web_on"],
-    ),
-    "chemqa_web_off": ExperimentSpec(
-        id="chemqa_web_off",
-        label=EXPERIMENT_GROUPS["chemqa_web_off"].label,
-        runner_kind="chemqa",
-        websearch_enabled=False,
-        slot_set=CHEMQA_SLOT_SETS["chemqa_web_off"],
-    ),
-    "single_llm_web_on": ExperimentSpec(
-        id="single_llm_web_on",
-        label=EXPERIMENT_GROUPS["single_llm_web_on"].label,
+    "single_llm_skills_on": ExperimentSpec(
+        id="single_llm_skills_on",
+        label=EXPERIMENT_GROUPS["single_llm_skills_on"].label,
         runner_kind="single_llm",
         websearch_enabled=True,
-        single_agent_id=BASELINE_AGENT_IDS["single_llm_web_on"],
+        skills_enabled=True,
+        single_agent_id=BASELINE_AGENT_IDS["single_llm_skills_on"],
+        skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
     ),
-    "single_llm_web_off": ExperimentSpec(
-        id="single_llm_web_off",
-        label=EXPERIMENT_GROUPS["single_llm_web_off"].label,
+    "single_llm_skills_off": ExperimentSpec(
+        id="single_llm_skills_off",
+        label=EXPERIMENT_GROUPS["single_llm_skills_off"].label,
         runner_kind="single_llm",
-        websearch_enabled=False,
-        single_agent_id=BASELINE_AGENT_IDS["single_llm_web_off"],
+        websearch_enabled=True,
+        skills_enabled=False,
+        single_agent_id=BASELINE_AGENT_IDS["single_llm_skills_off"],
+        skill_allowlist=(),
+    ),
+    "chemqa_skills_on": ExperimentSpec(
+        id="chemqa_skills_on",
+        label=EXPERIMENT_GROUPS["chemqa_skills_on"].label,
+        runner_kind="chemqa",
+        websearch_enabled=True,
+        skills_enabled=True,
+        slot_set=CHEMQA_SLOT_SETS["chemqa_skills_on"],
+        skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
     ),
 }
 
@@ -364,7 +365,7 @@ except Exception:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run four-group ChemQA / single-LLM benchmark experiments.")
+    parser = argparse.ArgumentParser(description="Run three-group skills benchmark experiments.")
     parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="benchmarks/ 根目录")
     parser.add_argument("--chemqa-root", default=str(DEFAULT_CHEMQA_ROOT), help="chemqa-review skill 根目录")
     parser.add_argument("--openclaw-config", default=str(DEFAULT_OPENCLAW_CONFIG), help="基础 OpenClaw 配置文件")
@@ -381,7 +382,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--groups",
         default=",".join(EXPERIMENT_GROUPS.keys()),
-        help="要运行的实验组，逗号分隔。默认四组全跑",
+        help="要运行的实验组，逗号分隔。默认三组全跑",
     )
     parser.add_argument(
         "--datasets",
@@ -617,6 +618,7 @@ def runtime_config_context() -> RuntimeConfigContext:
         chemqa_slot_sets=CHEMQA_SLOT_SETS,
         experiment_specs=EXPERIMENT_SPECS,
         load_slot_agents_template=load_slot_agents_template,
+        benchmark_skills_root=runtime_paths.skills_root,
     )
 
 
@@ -1379,6 +1381,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "group_id": group_id,
                 "runner": group_summary["runner"],
                 "websearch": group_summary["websearch"],
+                "skills_enabled": group_summary.get("skills_enabled", False),
                 "count": group_summary["count"],
                 "pass_count": group_summary["pass_count"],
                 "run_completed_count": group_summary["run_completed_count"],
@@ -1403,6 +1406,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "group_id",
             "runner",
             "websearch",
+            "skills_enabled",
             "count",
             "pass_count",
             "run_completed_count",
@@ -1429,6 +1433,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "group_id": row["group_id"],
                 "runner": row["runner"],
                 "websearch": row["websearch"],
+                "skills_enabled": row.get("skills_enabled", False),
                 "subset": row["subset"],
                 "count": row["count"],
                 "pass_count": row["pass_count"],
@@ -1454,6 +1459,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "group_id",
             "runner",
             "websearch",
+            "skills_enabled",
             "subset",
             "count",
             "pass_count",
@@ -1531,12 +1537,9 @@ def print_selected_records(records: list[BenchmarkRecord]) -> None:
 def build_group_waves(group_ids: list[str], *, max_concurrent_groups: int) -> list[list[str]]:
     if max_concurrent_groups <= 0:
         raise BenchmarkError("--max-concurrent-groups 必须是正整数")
-    web_on_groups = [group_id for group_id in group_ids if EXPERIMENT_GROUPS[group_id].websearch]
-    web_off_groups = [group_id for group_id in group_ids if not EXPERIMENT_GROUPS[group_id].websearch]
     waves: list[list[str]] = []
-    for bucket in (web_on_groups, web_off_groups):
-        for index in range(0, len(bucket), max_concurrent_groups):
-            waves.append(bucket[index : index + max_concurrent_groups])
+    for index in range(0, len(group_ids), max_concurrent_groups):
+        waves.append(group_ids[index : index + max_concurrent_groups])
     return waves
 
 
@@ -1609,6 +1612,9 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
             "degraded_execution": degraded_execution,
             "execution_error_kind": None if scored else "execution_error",
         }
+    if "skills_enabled" not in payload:
+        group = EXPERIMENT_GROUPS.get(str(payload.get("group_id") or ""))
+        payload["skills_enabled"] = bool(getattr(group, "skills_enabled", False))
     return GroupRecordResult(**payload)
 
 
@@ -1843,6 +1849,7 @@ def run_group(
                     group_label=group.label,
                     runner=group.runner,
                     websearch=group.websearch,
+                    skills_enabled=group.skills_enabled,
                     record_id=record.record_id,
                     subset=classify_subset(record),
                     dataset=record.dataset,

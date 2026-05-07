@@ -42,7 +42,12 @@ class SingleLLMRunner:
 
     def run(self, record: Any, group: Any) -> RunnerResult:
         input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
-        prompt = self._build_single_llm_prompt(record, websearch_enabled=group.websearch, input_bundle=input_bundle)
+        prompt = self._build_single_llm_prompt(
+            record,
+            websearch_enabled=group.websearch,
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            input_bundle=input_bundle,
+        )
         session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
         command = [
             "openclaw",

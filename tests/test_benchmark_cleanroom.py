@@ -154,11 +154,11 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             payload = runtime_lease.build_manifest_payload(
                 run_id="demo-run",
                 benchmark_kind="chemqa",
-                group_id="chemqa_web_off",
+                group_id="chemqa_skills_on",
                 output_root=output_root,
                 launch_home=output_root / "launch-home",
                 clawteam_data_dir=output_root / "clawteam-data",
-                session_assignments={"debateB-1": "demo-session"},
+                session_assignments={"debateA-1": "demo-session"},
                 control_roots=[str(output_root / "control" / "runplans" / "demo-run.json")],
                 generated_roots=[str(output_root / "generated" / "runtime-context" / "demo-run-context.json")],
                 artifact_roots=[str(output_root / "artifacts" / "demo-run")],
@@ -169,14 +169,14 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             loaded = runtime_lease.read_json(path)
             self.assertEqual(runtime_lease.MANIFEST_KIND, loaded["kind"])
             self.assertEqual("demo-run", loaded["run_id"])
-            self.assertEqual("demo-session", loaded["session_assignments"]["debateB-1"])
+            self.assertEqual("demo-session", loaded["session_assignments"]["debateA-1"])
 
     def test_atomic_write_json_handles_long_lease_filename(self) -> None:
-        run_id = "benchmark-chemqa_web_on-chembench-analytical-chemistry--46040d0e-20260429-104631"
+        run_id = "benchmark-chemqa_skills_on-chembench-analytical-chemistry--46040d0e-20260429-104631"
         role = "debate-coordinator"
         slot = "debateA-coordinator"
         session_id = (
-            "chemqa-review-benchmark-chemqa_web_on-chembench-analytical-chemistry-"
+            "chemqa-review-benchmark-chemqa_skills_on-chembench-analytical-chemistry-"
             "46040d0e-20260429-104631-coordinator"
         )
         lease_name = runtime_lease.lease_filename_for_identity(
@@ -197,11 +197,11 @@ class BenchmarkCleanroomTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "sessions.json"
             payload = {
-                "agent:debateB-1:main": {
+                "agent:debateA-1:main": {
                     "sessionId": "demo-session",
                     "sessionFile": "/tmp/demo-session.jsonl",
                 },
-                "agent:debateB-2:main": {
+                "agent:debateA-2:main": {
                     "sessionId": "other-session",
                     "sessionFile": "/tmp/other-session.jsonl",
                 },
@@ -215,8 +215,8 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             )
             self.assertTrue(result["changed"])
             updated = json.loads(store_path.read_text(encoding="utf-8"))
-            self.assertNotIn("agent:debateB-1:main", updated)
-            self.assertIn("agent:debateB-2:main", updated)
+            self.assertNotIn("agent:debateA-1:main", updated)
+            self.assertIn("agent:debateA-2:main", updated)
 
     def test_session_paths_from_manifest_collects_jsonl_checkpoint_and_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -242,7 +242,7 @@ class BenchmarkCleanroomTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_root = Path(tmpdir) / "out"
             scratch_dir = output_root / "generated" / "artifacts" / "demo-run"
-            archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / "demo-run"
+            archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / "demo-run"
             scratch_dir.mkdir(parents=True, exist_ok=True)
             archive_dir.mkdir(parents=True, exist_ok=True)
             (scratch_dir / "qa_result.json").write_text("{}", encoding="utf-8")

@@ -58,13 +58,17 @@ def build_single_llm_prompt(
     record: BenchmarkRecord,
     *,
     websearch_enabled: bool,
+    skills_enabled: bool = True,
     input_bundle: RuntimeBundleLike | None = None,
 ) -> str:
     instructions = [
         "You are answering a chemistry benchmark question.",
         "Be careful, concise, and do not fabricate missing facts.",
-        render_compact_skill_routing_table(),
     ]
+    if skills_enabled:
+        instructions.append(render_compact_skill_routing_table())
+    else:
+        instructions.append("Do not use OpenClaw skills or local skill tools for this run.")
     if websearch_enabled:
         instructions.append("You may use web search if it is genuinely helpful.")
     else:

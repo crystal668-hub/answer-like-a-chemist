@@ -42,8 +42,7 @@ def patched_benchmark_runtime_paths() -> Iterator[None]:
         root = Path(tmpdir)
         benchmark_test.BASELINE_WORKSPACE_ROOT = root / "benchmark-runtime"
         benchmark_test.CHEMQA_WORKSPACE_ROOTS = {
-            "A": benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_web_on",
-            "B": benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_web_off",
+            "A": benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on",
         }
         benchmark_test.runtime_paths.agents_root = root / "agents"
         benchmark_test.load_slot_agents_template = lambda: "# test slot template\n"
@@ -67,6 +66,30 @@ class JudgeStub:
 
 
 class BenchmarkTestModuleTests(unittest.TestCase):
+    def test_default_experiment_groups_are_three_skills_groups(self) -> None:
+        self.assertEqual(
+            ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
+            list(benchmark_test.EXPERIMENT_GROUPS),
+        )
+        self.assertTrue(all(group.websearch for group in benchmark_test.EXPERIMENT_GROUPS.values()))
+        self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
+        self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
+        self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
+
+    def test_benchmark_skills_allowlist_comes_from_routing_matrix(self) -> None:
+        matrix_skills = [
+            str(entry["skill"])
+            for entry in benchmark_test.load_chemistry_routing_matrix().get("skills", [])
+        ]
+
+        self.assertEqual(matrix_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("chem-calculator", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("pymatgen", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("tooluniverse-chemical-safety", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("benchmark-cleanroom", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+
     def test_parse_args_accepts_single_agent_id_override_and_rejects_removed_flags(self) -> None:
         with mock.patch.object(
             sys,
@@ -141,7 +164,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "--exact-output-dir",
                 str(output_root),
                 "--groups",
-                "single_llm_web_off",
+                "single_llm_skills_off",
                 "--single-agent-id-override",
                 "custom-single-agent",
             ]
@@ -314,50 +337,50 @@ Points: 0.5, Item: Second criterion
         self.assertIs(False, disabled["tools"]["web"]["search"]["enabled"])
         self.assertIs(False, disabled["plugins"]["entries"]["duckduckgo"]["enabled"])
 
-    def test_build_group_waves_batches_web_on_then_web_off(self) -> None:
+    def test_build_group_waves_batches_in_selected_order(self) -> None:
         waves = benchmark_test.build_group_waves(
-            ["chemqa_web_on", "chemqa_web_off", "single_llm_web_on", "single_llm_web_off"],
+            ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
             max_concurrent_groups=2,
         )
         self.assertEqual(
-            [["chemqa_web_on", "single_llm_web_on"], ["chemqa_web_off", "single_llm_web_off"]],
+            [["single_llm_skills_on", "single_llm_skills_off"], ["chemqa_skills_on"]],
             waves,
         )
 
     def test_build_group_waves_respects_max_concurrent_groups(self) -> None:
         waves = benchmark_test.build_group_waves(
-            ["chemqa_web_on", "chemqa_web_off", "single_llm_web_on", "single_llm_web_off"],
+            ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
             max_concurrent_groups=1,
         )
         self.assertEqual(
-            [["chemqa_web_on"], ["single_llm_web_on"], ["chemqa_web_off"], ["single_llm_web_off"]],
+            [["single_llm_skills_on"], ["single_llm_skills_off"], ["chemqa_skills_on"]],
             waves,
         )
 
     def test_resolve_aggregate_group_ids_includes_existing_group_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            existing = root / "per-record" / "single_llm_web_on"
+            existing = root / "per-record" / "single_llm_skills_on"
             existing.mkdir(parents=True, exist_ok=True)
             (existing / "demo.json").write_text("{}\n", encoding="utf-8")
             aggregate = benchmark_test.resolve_aggregate_group_ids(
-                ["chemqa_web_on", "chemqa_web_off", "single_llm_web_off"],
+                ["chemqa_skills_on", "single_llm_skills_off"],
                 output_root=root,
                 merge_existing_per_record=True,
             )
             self.assertEqual(
-                ["chemqa_web_on", "chemqa_web_off", "single_llm_web_on", "single_llm_web_off"],
+                ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
                 aggregate,
             )
 
     def test_load_results_from_output_root_reads_existing_per_record_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            group_dir = root / "per-record" / "single_llm_web_on"
+            group_dir = root / "per-record" / "single_llm_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
             payload = benchmark_test.GroupRecordResult(
                 schema_version=2,
-                group_id="single_llm_web_on",
+                group_id="single_llm_skills_on",
                 group_label="单一 LLM + 启用 websearch plugin",
                 runner="single_llm",
                 websearch=True,
@@ -388,7 +411,7 @@ Points: 0.5, Item: Second criterion
                 full_response_text="FINAL ANSWER: A",
             )
             (group_dir / "demo-record.json").write_text(json.dumps(benchmark_test.asdict(payload)), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_web_on"])
+            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
             self.assertEqual(1, len(loaded))
             self.assertEqual("demo-record", loaded[0].record_id)
             self.assertEqual("A", loaded[0].short_answer_text)
@@ -396,10 +419,10 @@ Points: 0.5, Item: Second criterion
     def test_load_results_from_output_root_upconverts_legacy_per_record_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            group_dir = root / "per-record" / "single_llm_web_on"
+            group_dir = root / "per-record" / "single_llm_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
             legacy_payload = {
-                "group_id": "single_llm_web_on",
+                "group_id": "single_llm_skills_on",
                 "group_label": "单一 LLM + 启用 websearch plugin",
                 "runner": "single_llm",
                 "websearch": True,
@@ -429,7 +452,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: A",
             }
             (group_dir / "legacy-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_web_on"])
+            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("legacy-record", entry.record_id)
@@ -448,10 +471,10 @@ Points: 0.5, Item: Second criterion
     def test_load_results_from_output_root_upconverts_legacy_per_record_recovery_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            group_dir = root / "per-record" / "chemqa_web_off"
+            group_dir = root / "per-record" / "chemqa_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
             legacy_payload = {
-                "group_id": "chemqa_web_off",
+                "group_id": "chemqa_skills_on",
                 "group_label": "ChemQA + 禁用 websearch plugin",
                 "runner": "chemqa",
                 "websearch": False,
@@ -484,7 +507,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: fallback-answer",
             }
             (group_dir / "legacy-recovery-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_web_off"])
+            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("completed", entry.run_lifecycle_status)
@@ -499,10 +522,10 @@ Points: 0.5, Item: Second criterion
     def test_load_results_from_output_root_legacy_per_record_prefers_explicit_recovery_hints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            group_dir = root / "per-record" / "chemqa_web_off"
+            group_dir = root / "per-record" / "chemqa_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
             legacy_payload = {
-                "group_id": "chemqa_web_off",
+                "group_id": "chemqa_skills_on",
                 "group_label": "ChemQA + 禁用 websearch plugin",
                 "runner": "chemqa",
                 "websearch": False,
@@ -540,7 +563,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: fallback-answer",
             }
             (group_dir / "legacy-preview-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_web_off"])
+            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("failed", entry.run_lifecycle_status)
@@ -559,7 +582,7 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_web_on"]
+        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"]
         with patched_benchmark_runtime_paths():
             payload = benchmark_test.build_run_scoped_config_payload(
                 base,
@@ -568,10 +591,34 @@ Points: 0.5, Item: Second criterion
                 judge_model="su8/gpt-5.4",
             )
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
-        self.assertEqual("qwen3.5-plus", agents["benchmark-single-web-on"]["model"])
+        self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
-        self.assertNotIn("thinking", agents["benchmark-single-web-on"])
+        self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents["benchmark-single-skills-on"]["skills"])
+        self.assertNotIn("skills", agents["benchmark-judge"])
+        self.assertNotIn("thinking", agents["benchmark-single-skills-on"])
         self.assertNotIn("thinking", agents["benchmark-judge"])
+        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
+        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
+        self.assertIn(str(benchmark_test.runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
+
+    def test_build_run_scoped_config_payload_disables_single_llm_skills_off(self) -> None:
+        base = {
+            "agents": {"list": []},
+            "tools": {"web": {"search": {"enabled": False}}},
+            "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
+        }
+        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"]
+        with patched_benchmark_runtime_paths():
+            payload = benchmark_test.build_run_scoped_config_payload(
+                base,
+                group=group,
+                single_agent_model="qwen3.5-plus",
+                judge_model="su8/gpt-5.4",
+            )
+        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        self.assertEqual([], agents["benchmark-single-skills-off"]["skills"])
+        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
+        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_run_scoped_config_payload_benchmark_judge_runtime_uses_judge_model(self) -> None:
         base = {
@@ -602,7 +649,7 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"]
+        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
             payload = benchmark_test.build_run_scoped_config_payload(
                 base,
@@ -612,11 +659,16 @@ Points: 0.5, Item: Second criterion
             )
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
-        self.assertEqual("qwen3.5-plus", agents["debateB-coordinator"]["model"])
-        self.assertNotIn("thinking", agents["debateB-coordinator"])
-        for slot in ["debateB-1", "debateB-2", "debateB-3", "debateB-4", "debateB-5"]:
+        self.assertEqual("qwen3.5-plus", agents["debateA-coordinator"]["model"])
+        self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents["debateA-coordinator"]["skills"])
+        self.assertNotIn("skills", agents["benchmark-judge"])
+        self.assertNotIn("thinking", agents["debateA-coordinator"])
+        for slot in ["debateA-1", "debateA-2", "debateA-3", "debateA-4", "debateA-5"]:
             self.assertEqual("qwen3.5-plus", agents[slot]["model"])
+            self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents[slot]["skills"])
             self.assertNotIn("thinking", agents[slot])
+        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
+        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_run_scoped_config_payload_chemqa_uses_benchmark_workspace_roots(self) -> None:
         base = {
@@ -624,7 +676,7 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"]
+        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
             payload = benchmark_test.build_run_scoped_config_payload(
                 base,
@@ -632,7 +684,7 @@ Points: 0.5, Item: Second criterion
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-            expected_root = benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_web_on"
+            expected_root = benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on"
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual(str((expected_root / "debateA-coordinator").resolve()), agents["debateA-coordinator"]["workspace"])
         self.assertEqual(str((expected_root / "debateA-1").resolve()), agents["debateA-1"]["workspace"])
@@ -643,7 +695,7 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_web_on"]
+        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"]
 
         with patched_benchmark_runtime_paths():
             with self.assertRaises(benchmark_test.BenchmarkError):
@@ -804,10 +856,10 @@ Points: 0.5, Item: Second criterion
     def test_candidate_protocol_dirs_include_new_benchmark_coordinator_workspace(self) -> None:
         runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
         runner.chemqa_root = Path("/tmp/chemqa-root")
-        runner.slot_set = "B"
+        runner.slot_set = "A"
         candidates = benchmark_test.ChemQARunner._candidate_protocol_dirs(runner, "demo-run", {})
         self.assertIn(
-            benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_web_off" / "debateB-coordinator",
+            benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on" / "debateA-coordinator",
             candidates,
         )
 
@@ -978,49 +1030,37 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_does_not_inject_provider_skill_routing(self) -> None:
-        records = [
-            benchmark_test.BenchmarkRecord(
-                record_id="fs-1",
-                dataset="frontierscience",
-                source_file="/tmp/frontierscience.jsonl",
-                eval_kind="frontierscience_olympiad",
-                prompt="Calculate the pH of a buffer from the supplied concentrations.",
-                reference_answer="4.7",
-                payload={"track": "olympiad"},
-            ),
-            benchmark_test.BenchmarkRecord(
-                record_id="sc-1",
-                dataset="superchem",
-                source_file="/tmp/superchem.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Which option matches the molecule shown?",
-                reference_answer="A",
-                payload={"modality": "text_only"},
-            ),
-            benchmark_test.BenchmarkRecord(
-                record_id="cb-1",
-                dataset="chembench",
-                source_file="/tmp/chembench.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="Calculate the value.",
-                reference_answer="42",
-                payload={},
-            ),
-        ]
+    def test_build_single_llm_prompt_injects_skill_routing_only_when_enabled(self) -> None:
+        record = benchmark_test.BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH of a buffer from the supplied concentrations.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
 
-        for record in records:
-            with self.subTest(eval_kind=record.eval_kind):
-                prompt = benchmark_test.build_single_llm_prompt(record, websearch_enabled=False, input_bundle=None)
-                self.assertNotIn("Chemistry provider skill routing", prompt)
-                self.assertNotIn("must use `chem-calculator`", prompt)
-                self.assertNotIn("must use `rdkit`", prompt)
-                self.assertNotIn("must use `opsin`", prompt)
-                self.assertNotIn("must use `pubchem`", prompt)
-                self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "chem-calculator"), prompt)
-                self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "rdkit"), prompt)
-                self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "opsin"), prompt)
-                self.assertNotIn(str(benchmark_test.runtime_paths.skills_root / "pubchem"), prompt)
+        skills_on = benchmark_test.build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=True,
+            input_bundle=None,
+        )
+        skills_off = benchmark_test.build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=False,
+            input_bundle=None,
+        )
+
+        self.assertIn("Experimental chemistry skill routing rules", skills_on)
+        self.assertIn("`chem-calculator`", skills_on)
+        self.assertIn("`pymatgen`", skills_on)
+        self.assertNotIn("Do not use OpenClaw skills", skills_on)
+        self.assertNotIn("Experimental chemistry skill routing rules", skills_off)
+        self.assertNotIn("`chem-calculator`", skills_off)
+        self.assertIn("Do not use OpenClaw skills", skills_off)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []
@@ -1779,6 +1819,7 @@ Points: 0.5, Item: Second criterion
                     "group_id",
                     "runner",
                     "websearch",
+                    "skills_enabled",
                     "count",
                     "pass_count",
                     "run_completed_count",
@@ -1813,6 +1854,7 @@ Points: 0.5, Item: Second criterion
                     "group_id",
                     "runner",
                     "websearch",
+                    "skills_enabled",
                     "subset",
                     "count",
                     "pass_count",
@@ -1882,7 +1924,7 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = fake_run_subprocess
             benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
             runner = benchmark_test.SingleLLMRunner(
-                agent_id="benchmark-single-web-on",
+                agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
@@ -1896,7 +1938,7 @@ Points: 0.5, Item: Second criterion
                 reference_answer="5",
                 payload={},
             )
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_web_on"])
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
             self.assertEqual("5", out.short_answer_text)
             command = captured["command"]
             assert isinstance(command, list)
@@ -1972,7 +2014,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
                 self.assertEqual("c1ccccc1", out.short_answer_text)
                 command = captured["command"]
                 assert isinstance(command, list)
@@ -1988,7 +2030,7 @@ Points: 0.5, Item: Second criterion
                 self.assertNotEqual(str(Path.home() / ".clawteam" / "templates"), str(template_dir))
                 env = captured["env"]
                 assert isinstance(env, dict)
-                self.assertEqual(str(launch_root / "chemqa_web_on" / "chembench-0001" / "home"), env["HOME"])
+                self.assertEqual(str(launch_root / "chemqa_skills_on" / "chembench-0001" / "home"), env["HOME"])
                 self.assertEqual(str(benchmark_test.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
@@ -2071,10 +2113,10 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / out.runner_meta["run_id"]
+                archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / out.runner_meta["run_id"]
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "qa_result.json"), out.runner_meta["qa_result_path"])
                 self.assertEqual(str(archive_dir / "chemqa_review_protocol.yaml"), out.runner_meta["archived_protocol_path"])
@@ -2178,11 +2220,11 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
                 self.assertEqual("7.59", out.short_answer_text)
-                self.assertEqual(str(output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / out.runner_meta["run_id"] / "qa_result.json"), out.runner_meta["qa_result_path"])
+                self.assertEqual(str(output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / out.runner_meta["run_id"] / "qa_result.json"), out.runner_meta["qa_result_path"])
                 self.assertIn("final_answer_artifact", out.runner_meta["archived_artifact_paths"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
@@ -2257,7 +2299,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_skills_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2266,10 +2308,10 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / run_id
+                archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / run_id
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "chemqa_review_protocol.yaml"), out.runner_meta["archived_protocol_path"])
                 self.assertEqual("ok", out.runner_meta["artifact_archive_status"])
@@ -2336,7 +2378,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="CCO",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-chembench-0001-20260427-000000"
+                run_id = "benchmark-chemqa_skills_on-chembench-0001-20260427-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2373,7 +2415,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
                 self.assertEqual("CCO", out.short_answer_text)
@@ -2448,7 +2490,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="B",
                     payload={"options": {"A": "wrong", "B": "right"}},
                 )
-                run_id = "benchmark-chemqa_web_on-superchem-0001-20260427-000000"
+                run_id = "benchmark-chemqa_skills_on-superchem-0001-20260427-000000"
                 artifact_dir = chemqa_root / "generated" / "artifacts" / run_id
                 artifact_dir.mkdir(parents=True, exist_ok=True)
                 (artifact_dir / "failure_artifact.json").write_text(
@@ -2505,7 +2547,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
                 self.assertEqual("B", out.short_answer_text)
@@ -2575,7 +2617,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="CCO",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-chembench-0001-20260427-000000"
+                run_id = "benchmark-chemqa_skills_on-chembench-0001-20260427-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2592,7 +2634,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
                 self.assertFalse(out.should_score())
@@ -2676,7 +2718,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_skills_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2685,7 +2727,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
@@ -2693,7 +2735,7 @@ Points: 0.5, Item: Second criterion
                 self.assertEqual("rejected", out.runner_meta["acceptance_status"])
                 self.assertEqual("completed", out.runner_meta["terminal_state"])
                 self.assertEqual("stalled", out.runner_meta["terminal_reason_code"])
-                archive_dir = output_root / "artifacts" / "chemqa_web_on" / "chembench-0001" / run_id
+                archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / run_id
                 self.assertTrue((archive_dir / "chemqa_review_protocol.yaml").is_file())
                 self.assertTrue((archive_dir / "qa_result.json").is_file())
         finally:
@@ -2779,7 +2821,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                run_id = "benchmark-chemqa_web_on-chembench-0001-20260424-000000"
+                run_id = "benchmark-chemqa_skills_on-chembench-0001-20260424-000000"
                 protocol_dir = chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
                 protocol_dir.mkdir(parents=True, exist_ok=True)
                 (protocol_dir / "chemqa_review_protocol.yaml").write_text(
@@ -2788,7 +2830,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
@@ -2872,8 +2914,8 @@ Points: 0.5, Item: Second criterion
                 stamps = iter(["20260424-000001", "20260424-000002"])
                 runner._now_stamp = lambda: next(stamps)
 
-                out1 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
-                out2 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_web_on"])
+                out1 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out2 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertNotEqual(out1.runner_meta["run_id"], out2.runner_meta["run_id"])
                 archive1 = Path(out1.runner_meta["archive_dir"])
@@ -2930,14 +2972,14 @@ Points: 0.5, Item: Second criterion
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["single_llm_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
                     records=records,
                     output_root=Path(tmpdir),
                     single_timeout=10,
                     chemqa_timeout=10,
                     judge=JudgeStub({}),
                     config_path=Path(tmpdir) / "cfg.json",
-                    single_agent="benchmark-single-web-off",
+                    single_agent="benchmark-single-skills-off",
                     chemqa_root=Path(tmpdir),
                     chemqa_model_profile="unused",
                     review_rounds=None,
@@ -2947,8 +2989,8 @@ Points: 0.5, Item: Second criterion
                 self.assertIsNotNone(results[0].error)
                 self.assertFalse(results[0].evaluation["passed"])
                 self.assertTrue(results[1].evaluation["passed"])
-                self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_web_off" / "r1.json").exists())
-                self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_web_off" / "r2.json").exists())
+                self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r1.json").exists())
+                self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r2.json").exists())
         finally:
             benchmark_test.SingleLLMRunner = original_runner
 
@@ -2999,14 +3041,14 @@ Points: 0.5, Item: Second criterion
             benchmark_test.evaluate_answer = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
                     chemqa_timeout=10,
                     judge=object(),
                     config_path=Path(tmpdir) / "cfg.json",
-                    single_agent="benchmark-single-web-off",
+                    single_agent="benchmark-single-skills-off",
                     chemqa_root=Path(tmpdir),
                     chemqa_model_profile="unused",
                     review_rounds=None,
@@ -3063,7 +3105,7 @@ Points: 0.5, Item: Second criterion
             benchmark_test.evaluate_answer = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -3168,7 +3210,7 @@ Points: 0.5, Item: Second criterion
             benchmark_test.evaluate_answer = fake_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -3245,14 +3287,14 @@ Points: 0.5, Item: Second criterion
             benchmark_test.evaluate_answer = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
                     chemqa_timeout=10,
                     judge=object(),
                     config_path=Path(tmpdir) / "cfg.json",
-                    single_agent="benchmark-single-web-off",
+                    single_agent="benchmark-single-skills-off",
                     chemqa_root=Path(tmpdir),
                     chemqa_model_profile="unused",
                     review_rounds=None,
@@ -3331,14 +3373,14 @@ Points: 0.5, Item: Second criterion
             benchmark_test.evaluate_answer = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
                     chemqa_timeout=10,
                     judge=object(),
                     config_path=Path(tmpdir) / "cfg.json",
-                    single_agent="benchmark-single-web-off",
+                    single_agent="benchmark-single-skills-off",
                     chemqa_root=Path(tmpdir),
                     chemqa_model_profile="unused",
                     review_rounds=None,
@@ -3385,15 +3427,15 @@ Points: 0.5, Item: Second criterion
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             results = benchmark_test.materialize_group_failure_results(
-                group=benchmark_test.EXPERIMENT_GROUPS["chemqa_web_off"],
+                group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
                 records=records,
                 output_root=Path(tmpdir),
                 error_message="group crashed",
             )
             self.assertEqual(2, len(results))
             self.assertTrue(all(item.error == "group crashed" for item in results))
-            self.assertTrue((Path(tmpdir) / "per-record" / "chemqa_web_off" / "r1.json").exists())
-            self.assertTrue((Path(tmpdir) / "per-record" / "chemqa_web_off" / "r2.json").exists())
+            self.assertTrue((Path(tmpdir) / "per-record" / "chemqa_skills_on" / "r1.json").exists())
+            self.assertTrue((Path(tmpdir) / "per-record" / "chemqa_skills_on" / "r2.json").exists())
 
     def test_benchmark_test_build_error_group_record_result_preserves_legacy_compatibility(self) -> None:
         record = benchmark_test.BenchmarkRecord(
@@ -3410,7 +3452,7 @@ Points: 0.5, Item: Second criterion
             raw_payload={"track": "research"},
         )
         entry = benchmark_test.build_error_group_record_result(
-            group=benchmark_test.EXPERIMENT_GROUPS["single_llm_web_off"],
+            group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
             record=record,
             error_message="boom",
             full_response_text="Reasoning\nFinal conclusion",
@@ -3432,7 +3474,7 @@ Points: 0.5, Item: Second criterion
         )
         with self.assertRaises(TypeError):
             shared_build_error_group_record_result(
-                group=benchmark_test.EXPERIMENT_GROUPS["single_llm_web_off"],
+                group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
                 record=record,
                 error_message="group crashed",
             )

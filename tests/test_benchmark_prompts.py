@@ -61,7 +61,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
             payload={"answer_type": "multiple-choice"},
         )
 
-        single_prompt = build_single_llm_prompt(record, websearch_enabled=False)
+        single_prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
         chemqa_goal = build_chemqa_goal(record, websearch_enabled=True)
 
         self.assertEqual("multiple_choice", resolve_chemqa_answer_kind(record))
@@ -72,3 +72,23 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("Answer:", chemqa_goal)
         self.assertIn("Confidence:", chemqa_goal)
         self.assertIn("ChemQA Artifact Flow answer kind: multiple_choice.", chemqa_goal)
+
+    def test_single_llm_prompt_respects_skills_enabled_flag(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        skills_on = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+        skills_off = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
+
+        self.assertIn("Experimental chemistry skill routing rules", skills_on)
+        self.assertIn("`chem-calculator`", skills_on)
+        self.assertNotIn("Do not use OpenClaw skills", skills_on)
+        self.assertNotIn("Experimental chemistry skill routing rules", skills_off)
+        self.assertIn("Do not use OpenClaw skills", skills_off)

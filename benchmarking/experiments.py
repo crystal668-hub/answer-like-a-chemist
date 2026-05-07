@@ -7,8 +7,10 @@ class ExperimentSpec:
     label: str
     runner_kind: str
     websearch_enabled: bool
+    skills_enabled: bool = True
     single_agent_id: str | None = None
     slot_set: str | None = None
+    skill_allowlist: tuple[str, ...] | None = None
 
     def resolve_single_agent_id(self, override: str | None) -> str | None:
         if override is not None:

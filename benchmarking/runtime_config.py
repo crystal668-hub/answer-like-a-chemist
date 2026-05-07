@@ -21,6 +21,7 @@ class ExperimentGroupLike(Protocol):
     label: str
     runner: str
     websearch: bool
+    skills_enabled: bool
 
 
 class RuntimeConfigError(RuntimeError):
@@ -36,6 +37,7 @@ class RuntimeConfigContext:
     chemqa_slot_sets: Mapping[str, str]
     experiment_specs: Mapping[str, ExperimentSpec]
     load_slot_agents_template: Callable[[], str]
+    benchmark_skills_root: Path
 
 
 def logical_slot_ids() -> tuple[str, ...]:
@@ -87,6 +89,17 @@ def _render_run_config_or_raise(
         raise RuntimeConfigError(str(exc)) from exc
 
 
+def _ensure_benchmark_skills_extra_dir(payload: dict[str, Any], skills_root: Path) -> None:
+    skills = payload.setdefault("skills", {})
+    load = skills.setdefault("load", {})
+    extra_dirs = load.setdefault("extraDirs", [])
+    if not isinstance(extra_dirs, list):
+        raise RuntimeConfigError("OpenClaw config skills.load.extraDirs is not a list")
+    normalized = str(skills_root.resolve())
+    if normalized not in extra_dirs:
+        extra_dirs.append(normalized)
+
+
 def build_run_scoped_config_payload(
     base_payload: dict[str, Any],
     *,
@@ -112,17 +125,20 @@ def build_run_scoped_config_payload(
             label=group.label,
             runner_kind=group.runner,
             websearch_enabled=group.websearch,
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
         ),
     )
 
     if group.id == "benchmark-judge-runtime":
-        return _render_run_config_or_raise(
+        payload = _render_run_config_or_raise(
             base_payload=base_payload,
             spec=spec,
             provisioned=ProvisionedExperiment(judge=judge, runner_agents=()),
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
+        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+        return payload
 
     if group.runner == "single_llm":
         agent_id = spec.resolve_single_agent_id(single_agent_id_override)
@@ -143,18 +159,22 @@ def build_run_scoped_config_payload(
             label=spec.label,
             runner_kind=spec.runner_kind,
             websearch_enabled=spec.websearch_enabled,
+            skills_enabled=spec.skills_enabled,
             single_agent_id=agent_id,
             slot_set=spec.slot_set,
+            skill_allowlist=spec.skill_allowlist,
         )
-        return _render_run_config_or_raise(
+        payload = _render_run_config_or_raise(
             base_payload=base_payload,
             spec=single_spec,
             provisioned=ProvisionedExperiment(judge=judge, runner_agents=tuple(runner_agents)),
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
+        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+        return payload
 
-    slot_set = context.chemqa_slot_sets[group.id]
+    slot_set = spec.slot_set or context.chemqa_slot_sets[group.id]
     workspace_root = context.chemqa_workspace_roots[slot_set]
     slot_map = actual_slot_ids(slot_set)
     agents_template_text = context.load_slot_agents_template()
@@ -176,19 +196,23 @@ def build_run_scoped_config_payload(
             )
         )
     chemqa_spec = ExperimentSpec(
-        id=group.id,
-        label=group.label,
-        runner_kind=group.runner,
-        websearch_enabled=group.websearch,
+        id=spec.id,
+        label=spec.label,
+        runner_kind=spec.runner_kind,
+        websearch_enabled=spec.websearch_enabled,
+        skills_enabled=spec.skills_enabled,
         slot_set=slot_set,
+        skill_allowlist=spec.skill_allowlist,
     )
-    return _render_run_config_or_raise(
+    payload = _render_run_config_or_raise(
         base_payload=base_payload,
         spec=chemqa_spec,
         provisioned=ProvisionedExperiment(judge=judge, runner_agents=tuple(runner_agents)),
         judge_model=judge_model,
         runner_model=single_agent_model,
     )
+    _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+    return payload
 
 
 class ConfigPool:
@@ -268,3 +292,4 @@ class _JudgeExperimentGroup:
     label: str = "benchmark judge runtime"
     runner: str = "single_llm"
     websearch: bool = False
+    skills_enabled: bool = False
