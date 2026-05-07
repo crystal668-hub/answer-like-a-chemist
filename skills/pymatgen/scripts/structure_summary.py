@@ -93,6 +93,13 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
             {"code": "missing_structure_path", "message": "Provide `structure_path` or `structure_fixture`."}
         )
         return payload
+    resolved_structure_path = Path(structure_path).expanduser()
+    if not resolved_structure_path.is_file():
+        payload["errors"].append(
+            {"code": "missing_input_file", "message": f"Structure file does not exist: {structure_path}"}
+        )
+        payload["source_trace"].append({"type": "local_structure_file", "path": structure_path, "status": "missing"})
+        return payload
 
     try:
         import pymatgen  # type: ignore
@@ -105,7 +112,13 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         payload["errors"].append({"code": "missing_dependency", "message": "pymatgen is not installed."})
         return payload
 
-    structure = Structure.from_file(structure_path)
+    try:
+        structure = Structure.from_file(str(resolved_structure_path))
+    except Exception as exc:
+        payload["provider_health"] = _provider_health("available", version=str(getattr(pymatgen, "__version__", "")))
+        payload["errors"].append({"code": "parse_error", "message": str(exc)})
+        payload["source_trace"].append({"type": "local_structure_file", "path": structure_path, "status": "parse_error"})
+        return payload
     payload["status"] = "success"
     payload["provider_health"] = _provider_health("available", version=str(getattr(pymatgen, "__version__", "")))
     payload["primary_result"] = _summarize_pymatgen_structure(structure)

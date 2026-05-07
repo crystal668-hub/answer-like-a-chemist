@@ -57,4 +57,4 @@ class PymatgenWrapperTests(unittest.TestCase):
         if payload["provider_health"].get("pymatgen", {}).get("status") == "missing_dependency":
             self.assertEqual(payload["errors"][0]["code"], "missing_dependency")
         else:
-            self.assertIn(payload["errors"][0]["code"], {"unexpected_error"})
+            self.assertIn(payload["errors"][0]["code"], {"missing_input_file", "parse_error"})

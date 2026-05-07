@@ -106,9 +106,17 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
             {"code": "missing_output_path", "message": "Provide `output_path` or `parsed_fixture`."}
         )
         return payload
+    resolved_output_path = Path(output_path).expanduser()
+    if not resolved_output_path.is_file():
+        payload["errors"].append(
+            {"code": "missing_input_file", "message": f"Output file does not exist: {output_path}"}
+        )
+        payload["source_trace"].append({"type": "local_file", "path": output_path, "status": "missing"})
+        return payload
 
     try:
         import cclib  # type: ignore
+        from cclib.io import ccread  # type: ignore
     except ImportError:
         payload["provider_health"] = _provider_health(
             "missing_dependency",
@@ -117,7 +125,13 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         payload["errors"].append({"code": "missing_dependency", "message": "cclib is not installed."})
         return payload
 
-    parsed = cclib.parser.parse(output_path)
+    try:
+        parsed = ccread(str(resolved_output_path))
+    except Exception as exc:
+        payload["provider_health"] = _provider_health("available", version=str(getattr(cclib, "__version__", "")))
+        payload["errors"].append({"code": "parse_error", "message": str(exc)})
+        payload["source_trace"].append({"type": "local_file", "path": output_path, "status": "parse_error"})
+        return payload
     if parsed is None:
         payload["errors"].append({"code": "parse_failed", "message": f"cclib could not parse {output_path}."})
         return payload
@@ -126,7 +140,7 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     payload["provider_health"] = _provider_health("available", version=str(getattr(cclib, "__version__", "")))
     payload["primary_result"] = _summarize_parsed_data(parsed, source=output_path)
     payload["source_trace"].append({"type": "local_file", "path": output_path})
-    payload["tool_trace"].append({"step": "cclib.parser.parse", "status": "success", "path": output_path})
+    payload["tool_trace"].append({"step": "cclib.io.ccread", "status": "success", "path": output_path})
     return payload
 
 

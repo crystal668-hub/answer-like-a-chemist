@@ -63,10 +63,10 @@ class ChemblWrapperTests(unittest.TestCase):
         self.assertEqual(result["target_chembl_ids"], ["CHEMBL203"])
 
     def test_missing_dependency_is_structured(self) -> None:
-        payload = run_script({"target": "EGFR", "standard_type": "IC50", "max_standard_value": 100})
+        payload = run_script({"target": "", "standard_type": "IC50", "max_standard_value": 100})
 
         self.assertEqual(payload["status"], "error")
         if payload["provider_health"].get("chembl-database", {}).get("status") == "missing_dependency":
             self.assertEqual(payload["errors"][0]["code"], "missing_dependency")
         else:
-            self.assertIn(payload["errors"][0]["code"], {"missing_target", "unexpected_error"})
+            self.assertIn(payload["errors"][0]["code"], {"missing_target", "provider_error"})

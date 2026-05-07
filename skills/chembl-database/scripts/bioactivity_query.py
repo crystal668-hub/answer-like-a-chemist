@@ -102,7 +102,13 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
     target = request.get("target")
     target_chembl_id = request.get("target_chembl_id")
     if not target_chembl_id and isinstance(target, str) and target.strip():
-        targets = list(new_client.target.filter(pref_name__icontains=target.strip())[:5])
+        try:
+            targets = list(new_client.target.filter(pref_name__icontains=target.strip())[:5])
+        except Exception as exc:
+            payload["provider_health"] = _provider_health("available")
+            payload["errors"].append({"code": "provider_error", "message": str(exc)})
+            payload["source_trace"].append({"type": "chembl_target_search", "target": target, "status": "provider_error"})
+            return payload
         payload["source_trace"].append({"type": "chembl_target_search", "target": target, "count": len(targets)})
         if targets:
             target_chembl_id = targets[0].get("target_chembl_id")
@@ -122,7 +128,13 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         filters["standard_value__lte"] = request["max_standard_value"]
 
     limit = int(request.get("limit") or 20)
-    records = list(new_client.activity.filter(**filters)[:limit])
+    try:
+        records = list(new_client.activity.filter(**filters)[:limit])
+    except Exception as exc:
+        payload["provider_health"] = _provider_health("available")
+        payload["errors"].append({"code": "provider_error", "message": str(exc)})
+        payload["source_trace"].append({"type": "chembl_activity_query", "filters": filters, "limit": limit, "status": "provider_error"})
+        return payload
     payload["status"] = "success"
     payload["provider_health"] = _provider_health("available")
     payload["primary_result"] = _summarize_activities(records, request | {"target_chembl_id": target_chembl_id})

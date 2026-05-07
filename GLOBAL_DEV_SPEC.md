@@ -93,6 +93,7 @@
   - `chemistry-routing-matrix.json`
     - Experimental compact route source for medium-or-higher-value chemistry skills. It includes existing provider skills plus copied Downloads skill bundles such as `pymatgen`, `ase`, `cclib`, `datamol`, `molfeat`, `chembl-database`, `zinc-database`, `materials-project`, `cod`, `oqmd`, `jarvis`, `cccbdb`, `molssi-qca`, `molecular-dynamics`, `openmm`, `open-forcefield-toolkit`, ToolUniverse chemistry skills, HPC chemistry software skills, spectra/format skills, atomistic ML/generative materials skills, materials/molecular ML skills, existing paper pipeline skills, and workflow/database helpers.
     - Route selection is implemented by `workspace/benchmarking/chemistry_routing.py`; prompts receive compact grouped route summaries, while agents read full `SKILL.md` files only after a route is selected.
+    - Core executable wrappers for `cclib`, `pymatgen`, `molecular-dynamics`, and `chembl-database` return structured error payloads for missing dependencies, missing input files, parse failures, and provider/API failures instead of crashing.
   - `benchmark-cleanroom/`
     - Run-scoped cleanup manifests and lease management plus cleanup executor.
   - `paper-retrieval/`, `paper-access/`, `paper-parse/`, `paper-rerank/`

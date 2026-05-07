@@ -93,6 +93,24 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
             {"code": "missing_trajectory_inputs", "message": "Provide topology_path and trajectory_path, or trajectory_fixture."}
         )
         return payload
+    missing_paths = [
+        str(path)
+        for path in (topology_path, trajectory_path)
+        if not Path(path).expanduser().is_file()
+    ]
+    if missing_paths:
+        payload["errors"].append(
+            {"code": "missing_input_file", "message": f"Trajectory input file(s) do not exist: {', '.join(missing_paths)}"}
+        )
+        payload["source_trace"].append(
+            {
+                "type": "trajectory",
+                "topology_path": topology_path,
+                "trajectory_path": trajectory_path,
+                "status": "missing",
+            }
+        )
+        return payload
 
     try:
         import MDAnalysis as mda  # type: ignore
@@ -104,7 +122,20 @@ def run(request: dict[str, Any]) -> dict[str, Any]:
         payload["errors"].append({"code": "missing_dependency", "message": "MDAnalysis is not installed."})
         return payload
 
-    universe = mda.Universe(topology_path, trajectory_path)
+    try:
+        universe = mda.Universe(topology_path, trajectory_path)
+    except Exception as exc:
+        payload["provider_health"] = _provider_health("available", version=str(getattr(mda, "__version__", "")))
+        payload["errors"].append({"code": "parse_error", "message": str(exc)})
+        payload["source_trace"].append(
+            {
+                "type": "trajectory",
+                "topology_path": topology_path,
+                "trajectory_path": trajectory_path,
+                "status": "parse_error",
+            }
+        )
+        return payload
     payload["status"] = "success"
     payload["provider_health"] = _provider_health("available", version=str(getattr(mda, "__version__", "")))
     payload["primary_result"] = {
