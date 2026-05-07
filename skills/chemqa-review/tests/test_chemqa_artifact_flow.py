@@ -117,7 +117,7 @@ submission_trace:
         result = artifact_flow.validate_candidate_artifact(candidate, answer_kind="numeric_short_answer")
 
         self.assertFalse(result.valid)
-        self.assertIn("numeric_short_answer requires a numeric evaluator_answer", result.errors)
+        self.assertIn("numeric_short_answer requires a concise numeric evaluator_answer", result.errors)
 
     def test_formula_answer_accepts_symbolic_expression_projection(self) -> None:
         candidate = {

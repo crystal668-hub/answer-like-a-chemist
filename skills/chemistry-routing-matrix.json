@@ -1,0 +1,1261 @@
+{
+  "version": 2,
+  "mode": "experimental_mid_plus",
+  "description": "Experimental chemistry skill matrix for medium-or-higher value chemistry skills selected from Downloads plus existing paper-provider routes. Keep prompt rendering compact; use full SKILL.md only after a route is selected.",
+  "skills": [
+    {
+      "skill": "open-forcefield-toolkit",
+      "tier": "core",
+      "route_summary": "SMIRNOFF, AM1-BCC, partial charges, small-molecule force-field parameterization, and force-field interchange.",
+      "primary_triggers": [
+        "smirnoff",
+        "am1-bcc",
+        "am1bcc",
+        "partial charge",
+        "partial charges",
+        "force-field parameter",
+        "force field parameter",
+        "parameterization",
+        "parameterize",
+        "interchange"
+      ],
+      "avoid_when": [
+        "MD trajectory analysis",
+        "ordinary molecular descriptors"
+      ]
+    },
+    {
+      "skill": "molecular-dynamics",
+      "tier": "core",
+      "route_summary": "MD workflow and trajectory analysis: RMSD, RMSF, contact maps, production MD, protein-ligand MD.",
+      "primary_triggers": [
+        "mdanalysis",
+        "molecular dynamics",
+        "md trajectory",
+        "trajectory",
+        "rmsd",
+        "rmsf",
+        "contact map",
+        "production md",
+        "protein-ligand md"
+      ],
+      "avoid_when": [
+        "standalone OpenMM setup",
+        "standalone OpenFF parameterization"
+      ]
+    },
+    {
+      "skill": "openmm",
+      "tier": "core",
+      "route_summary": "OpenMM simulation setup/debugging: systems, integrators, platforms, solvation, reporters.",
+      "primary_triggers": [
+        "openmm",
+        "openmm simulation",
+        "openmm system",
+        "openmm trajectory",
+        "openmm platform",
+        "openmm integrator",
+        "pdbfixer"
+      ],
+      "avoid_when": [
+        "generic MD concepts without OpenMM-specific setup"
+      ]
+    },
+    {
+      "skill": "zinc-database",
+      "tier": "core",
+      "route_summary": "ZINC purchasable compounds, 3D-ready structures, analog discovery, virtual screening sources.",
+      "primary_triggers": [
+        "zinc",
+        "zinc id",
+        "purchasable compound",
+        "purchasable analog",
+        "virtual screening library",
+        "3d-ready"
+      ],
+      "avoid_when": [
+        "bioactivity target queries"
+      ]
+    },
+    {
+      "skill": "chembl-database",
+      "tier": "core",
+      "route_summary": "ChEMBL target, bioactivity, IC50, Ki, EC50, mechanism, indication, inhibitor, and SAR queries.",
+      "primary_triggers": [
+        "chembl",
+        "ic50",
+        "ki",
+        "ec50",
+        "pchembl",
+        "bioactivity",
+        "protein target",
+        "drug target",
+        "inhibitor",
+        "agonist",
+        "antagonist",
+        "sar",
+        "mechanism of action",
+        "moa"
+      ],
+      "avoid_when": [
+        "basic PubChem CID or synonym lookup"
+      ]
+    },
+    {
+      "skill": "tooluniverse-chemical-safety",
+      "tier": "core",
+      "route_summary": "Chemical safety, toxicology, ADMET, FDA label, DrugBank, CTD, STITCH evidence assessment.",
+      "primary_triggers": [
+        "chemical safety",
+        "toxicology",
+        "toxicity",
+        "admet",
+        "fda label",
+        "drugbank safety",
+        "ctd",
+        "stitch",
+        "adverse event"
+      ],
+      "avoid_when": [
+        "plain compound identity lookup"
+      ]
+    },
+    {
+      "skill": "tooluniverse-small-molecule-discovery",
+      "tier": "core",
+      "route_summary": "Small-molecule discovery chain: identity, activity, ADMET, target prediction, sourcing.",
+      "primary_triggers": [
+        "small molecule discovery",
+        "target prediction",
+        "virtual screening workflow",
+        "lead discovery",
+        "hit discovery"
+      ],
+      "avoid_when": [
+        "single database lookup"
+      ]
+    },
+    {
+      "skill": "tooluniverse-chemical-compound-retrieval",
+      "tier": "core",
+      "route_summary": "PubChem and ChEMBL cross-validated compound profile and identity disambiguation.",
+      "primary_triggers": [
+        "compound profile",
+        "cross-reference pubchem chembl",
+        "compound retrieval",
+        "identity disambiguation"
+      ],
+      "avoid_when": [
+        "simple PubChem-only lookup"
+      ]
+    },
+    {
+      "skill": "materials-project",
+      "tier": "core",
+      "route_summary": "Materials Project DFT data: structures, band gaps, phase diagrams, energy above hull, mp-id.",
+      "primary_triggers": [
+        "materials project",
+        "mp-",
+        "mp id",
+        "mp-id",
+        "band gap"
+      ],
+      "avoid_when": [
+        "general local crystal manipulation"
+      ]
+    },
+    {
+      "skill": "cod",
+      "tier": "database",
+      "route_summary": "Crystallography Open Database crystal structures and CIF retrieval.",
+      "primary_triggers": [
+        "crystallography open database",
+        "cod entry",
+        "cod cif",
+        "open crystallographic data"
+      ],
+      "avoid_when": [
+        "computed DFT material properties"
+      ]
+    },
+    {
+      "skill": "oqmd",
+      "tier": "database",
+      "route_summary": "OQMD open quantum materials data, formation energies, phase stability.",
+      "primary_triggers": [
+        "oqmd",
+        "oqmd formation energy",
+        "oqmd phase stability"
+      ],
+      "avoid_when": [
+        "Materials Project-specific queries"
+      ]
+    },
+    {
+      "skill": "jarvis",
+      "tier": "database",
+      "route_summary": "JARVIS computed materials properties, 2D materials, NIST materials datasets.",
+      "primary_triggers": [
+        "jarvis",
+        "jarvis 2d",
+        "exfoliation energy",
+        "nist materials"
+      ],
+      "avoid_when": [
+        "Materials Project mp-id lookup"
+      ]
+    },
+    {
+      "skill": "pymatgen",
+      "tier": "core",
+      "route_summary": "Materials and crystal analysis: CIF, POSCAR, space group, lattice, coordination polyhedra, phase diagrams, energy above hull.",
+      "primary_triggers": [
+        "cif crystal",
+        "poscar",
+        "space group",
+        "coordination polyhedra",
+        "coordination polyhedron",
+        "lattice",
+        "unit cell",
+        "phase diagram",
+        "energy above hull"
+      ],
+      "avoid_when": [
+        "small-molecule SMILES descriptors",
+        "quantum chemistry log parsing"
+      ]
+    },
+    {
+      "skill": "ase",
+      "tier": "core",
+      "route_summary": "Atomistic structure construction and simulation workflows: slabs, adsorption, NEB, vibrations, calculators.",
+      "primary_triggers": [
+        "ase",
+        "atomic simulation environment",
+        "slab",
+        "adsorption",
+        "adsorbate",
+        "neb",
+        "nudged elastic band",
+        "ase calculator"
+      ],
+      "avoid_when": [
+        "CIF-only crystallographic parsing"
+      ]
+    },
+    {
+      "skill": "cclib",
+      "tier": "core",
+      "route_summary": "Quantum chemistry output parsing: Gaussian, ORCA, Q-Chem, SCF energies, orbitals, frequencies.",
+      "primary_triggers": [
+        "gaussian output",
+        "orca output",
+        "q-chem output",
+        "qchem output",
+        "quantum chemistry output",
+        "scf energy",
+        "homo/lumo",
+        "homo lumo",
+        "vibrational frequencies",
+        "vibrational frequency",
+        "orbital energies"
+      ],
+      "avoid_when": [
+        "input-file authoring",
+        "CIF/POSCAR crystal analysis"
+      ]
+    },
+    {
+      "skill": "datamol",
+      "tier": "core",
+      "route_summary": "Batch molecular standardization, descriptors, fingerprints, scaffolds, clustering, conformers.",
+      "primary_triggers": [
+        "datamol",
+        "bemis-murcko",
+        "murcko",
+        "scaffold",
+        "molecule batch",
+        "standardize molecules",
+        "molecular clustering",
+        "conformer ensemble"
+      ],
+      "avoid_when": [
+        "single simple RDKit descriptor"
+      ]
+    },
+    {
+      "skill": "molfeat",
+      "tier": "core",
+      "route_summary": "Molecular ML featurization: QSAR features, fingerprints, molecular embeddings, chemical space.",
+      "primary_triggers": [
+        "molfeat",
+        "qsar",
+        "molecular embeddings",
+        "molecular embedding",
+        "molecular featurization",
+        "ecfp",
+        "maccs",
+        "chemical space"
+      ],
+      "avoid_when": [
+        "basic descriptors already covered by RDKit/datamol"
+      ]
+    },
+    {
+      "skill": "rdkit",
+      "tier": "existing",
+      "route_summary": "Local small-molecule structure reasoning: SMILES/InChI normalization, descriptors, substructure, stereochemistry, reactions, NMR heuristics.",
+      "primary_triggers": [
+        "smiles",
+        "inchi",
+        "smarts",
+        "descriptor",
+        "functional group",
+        "substructure",
+        "ring",
+        "aromatic",
+        "stereochemistry",
+        "chiral",
+        "chirality",
+        "nmr",
+        "reaction smarts"
+      ],
+      "avoid_when": [
+        "OpenFF parameterization",
+        "CIF crystal analysis",
+        "bioactivity database queries"
+      ]
+    },
+    {
+      "skill": "opsin",
+      "tier": "existing",
+      "route_summary": "Systematic or IUPAC-like name-to-structure parsing, followed by RDKit validation when needed.",
+      "primary_triggers": [
+        "iupac",
+        "systematic name",
+        "systematic chemical name",
+        "opsin"
+      ],
+      "avoid_when": [
+        "common names or synonyms"
+      ]
+    },
+    {
+      "skill": "pubchem",
+      "tier": "existing",
+      "route_summary": "PubChem PUG REST identity and metadata: common names, CID, synonyms, formula hints, properties.",
+      "primary_triggers": [
+        "pubchem",
+        "cid",
+        "common name",
+        "trivial name",
+        "synonym",
+        "synonyms",
+        "molecular formula"
+      ],
+      "avoid_when": [
+        "ChEMBL bioactivity",
+        "ZINC purchasability"
+      ]
+    },
+    {
+      "skill": "chem-calculator",
+      "tier": "existing",
+      "route_summary": "Deterministic numeric chemistry: molar mass, stoichiometry, concentration, Ksp, pH, gas laws, thermo, redox, Nernst.",
+      "primary_triggers": [
+        "ksp",
+        "ph",
+        "poh",
+        "nernst",
+        "stoichiometry",
+        "stoichiometric",
+        "molar mass",
+        "concentration",
+        "acid-base",
+        "gas law",
+        "oxidation state",
+        "redox",
+        "faraday"
+      ],
+      "avoid_when": [
+        "materials phase diagrams",
+        "database facts"
+      ]
+    },
+    {
+      "skill": "q-chem",
+      "tier": "software",
+      "route_summary": "Q-Chem input/workflow guidance: $rem, job types, basis sets, SCF convergence, TDDFT, PCM.",
+      "primary_triggers": [
+        "q-chem input",
+        "qchem input",
+        "$rem",
+        "q-chem tddft",
+        "q-chem scf",
+        "q-chem pcm"
+      ],
+      "avoid_when": [
+        "output parsing only; use cclib"
+      ]
+    },
+    {
+      "skill": "hpc-orca",
+      "tier": "software",
+      "route_summary": "ORCA input/workflow guidance: DFT, TDDFT, DLPNO, frequencies, solvation, convergence.",
+      "primary_triggers": [
+        "orca input",
+        "orca calculation",
+        "dlpno",
+        "orca tddft",
+        "orca frequency",
+        "orca convergence"
+      ],
+      "avoid_when": [
+        "output parsing only; use cclib"
+      ]
+    },
+    {
+      "skill": "hpc-gaussian",
+      "tier": "software",
+      "route_summary": "Gaussian input/workflow guidance: route sections, opt/freq, TDDFT, checkpoint, solvation, SCF.",
+      "primary_triggers": [
+        "gaussian input",
+        "gaussian route",
+        "gaussian calculation",
+        "gjf",
+        "g16",
+        "gaussian scf"
+      ],
+      "avoid_when": [
+        "output parsing only; use cclib"
+      ]
+    },
+    {
+      "skill": "hpc-pyscf",
+      "tier": "software",
+      "route_summary": "PySCF electronic-structure workflows: HF, DFT, MP2, CCSD, CASSCF, custom Python pipelines.",
+      "primary_triggers": [
+        "pyscf",
+        "casscf",
+        "ccsd",
+        "mp2",
+        "hartree-fock",
+        "custom quantum chemistry workflow"
+      ],
+      "avoid_when": [
+        "package output parsing"
+      ]
+    },
+    {
+      "skill": "hpc-xtb",
+      "tier": "software",
+      "route_summary": "xTB and CREST workflows: GFN-xTB optimization, conformer search, solvation, fast screening.",
+      "primary_triggers": [
+        "xtb",
+        "gfn-xtb",
+        "crest",
+        "conformer search",
+        "semiempirical optimization"
+      ],
+      "avoid_when": [
+        "OpenFF force field parameterization"
+      ]
+    },
+    {
+      "skill": "hpc-vasp",
+      "tier": "software",
+      "route_summary": "VASP workflows: INCAR, POSCAR, KPOINTS, POTCAR, relax/static/DOS/bands, convergence.",
+      "primary_triggers": [
+        "vasp",
+        "incar",
+        "kpoints",
+        "potcar",
+        "poscar vasp",
+        "vasp dos",
+        "vasp band"
+      ],
+      "avoid_when": [
+        "general Materials Project lookup"
+      ]
+    },
+    {
+      "skill": "hpc-nwchem",
+      "tier": "software",
+      "route_summary": "NWChem workflows: DFT, MP2, CCSD(T), TDDFT, CASSCF, periodic jobs.",
+      "primary_triggers": [
+        "nwchem",
+        "nwchem input",
+        "nwchem calculation"
+      ],
+      "avoid_when": [
+        "generic quantum output parsing"
+      ]
+    },
+    {
+      "skill": "hpc-cp2k",
+      "tier": "software",
+      "route_summary": "CP2K workflows: periodic DFT, AIMD, geometry optimization, hybrid DFT, input/debugging.",
+      "primary_triggers": [
+        "cp2k",
+        "cp2k input",
+        "aimd",
+        "ab initio molecular dynamics"
+      ],
+      "avoid_when": [
+        "classical OpenMM MD"
+      ]
+    },
+    {
+      "skill": "hpc-quantum-espresso",
+      "tier": "software",
+      "route_summary": "Quantum ESPRESSO workflows: pw.x, pseudopotentials, cutoffs, SCF/relax/bands.",
+      "primary_triggers": [
+        "quantum espresso",
+        "pw.x",
+        "qe input",
+        "qe scf",
+        "qe bands",
+        "pseudopotential"
+      ],
+      "avoid_when": [
+        "VASP-specific input"
+      ]
+    },
+    {
+      "skill": "qc-output-analysis",
+      "tier": "software",
+      "route_summary": "Structured Gaussian/ORCA output extraction for spectra, scans, TS, energies, polarizability.",
+      "primary_triggers": [
+        "qc output analysis",
+        "gaussian or orca output",
+        "transition state output",
+        "potential energy scan output"
+      ],
+      "avoid_when": [
+        "standard cclib-supported parsing"
+      ]
+    },
+    {
+      "skill": "cccbdb",
+      "tier": "database",
+      "route_summary": "CCCBDB computational chemistry benchmarks, thermochemistry, spectroscopy reference data.",
+      "primary_triggers": [
+        "cccbdb",
+        "reference thermochemistry",
+        "computational chemistry benchmark",
+        "spectroscopic constants"
+      ],
+      "avoid_when": [
+        "new quantum calculation setup"
+      ]
+    },
+    {
+      "skill": "molssi-qca",
+      "tier": "database",
+      "route_summary": "MolSSI Quantum Chemistry Archive benchmark datasets and quantum chemistry reference calculations.",
+      "primary_triggers": [
+        "molssi qca",
+        "quantum chemistry archive",
+        "qcarchive",
+        "qca benchmark"
+      ],
+      "avoid_when": [
+        "ChEMBL/PubChem database queries"
+      ]
+    },
+    {
+      "skill": "pubchem-database",
+      "tier": "database",
+      "route_summary": "Expanded PubChemPy/PUG-REST, bioassay, similarity/substructure, compound retrieval.",
+      "primary_triggers": [
+        "pubchempy",
+        "pubchem bioassay",
+        "pubchem similarity",
+        "pubchem substructure"
+      ],
+      "avoid_when": [
+        "basic existing PubChem route is enough"
+      ]
+    },
+    {
+      "skill": "pdb-database",
+      "tier": "database",
+      "route_summary": "RCSB PDB protein/nucleic acid structure search, coordinate download, metadata.",
+      "primary_triggers": [
+        "rcsb",
+        "pdb id",
+        "protein structure",
+        "mmcif",
+        "pdb database"
+      ],
+      "avoid_when": [
+        "predicted AlphaFold-only structure"
+      ]
+    },
+    {
+      "skill": "alphafold-database",
+      "tier": "database",
+      "route_summary": "AlphaFold predicted protein structures, UniProt lookup, pLDDT/PAE confidence.",
+      "primary_triggers": [
+        "alphafold",
+        "plddt",
+        "pae",
+        "uniprot structure",
+        "predicted protein structure"
+      ],
+      "avoid_when": [
+        "experimental PDB structure lookup"
+      ]
+    },
+    {
+      "skill": "reactome-database",
+      "tier": "database",
+      "route_summary": "Reactome pathways, enrichment, gene-pathway mapping, molecular interactions.",
+      "primary_triggers": [
+        "reactome",
+        "pathway enrichment",
+        "gene pathway",
+        "disease pathway"
+      ],
+      "avoid_when": [
+        "compound bioactivity"
+      ]
+    },
+    {
+      "skill": "pubmed-database",
+      "tier": "database",
+      "route_summary": "PubMed E-utilities, MeSH/Boolean literature lookup and citation retrieval.",
+      "primary_triggers": [
+        "pubmed",
+        "mesh",
+        "e-utilities",
+        "pmid"
+      ],
+      "avoid_when": [
+        "broad multi-database review"
+      ]
+    },
+    {
+      "skill": "openalex-database",
+      "tier": "database",
+      "route_summary": "OpenAlex scholarly literature search, authors/institutions, research trends.",
+      "primary_triggers": [
+        "openalex",
+        "works by author",
+        "research trend",
+        "scholarly literature"
+      ],
+      "avoid_when": [
+        "PubMed-specific biomedical search"
+      ]
+    },
+    {
+      "skill": "cif",
+      "tier": "format",
+      "route_summary": "CIF format syntax, crystallographic data parsing and interoperability.",
+      "primary_triggers": [
+        "cif format",
+        "cif parser",
+        "cif file",
+        "_cell_length",
+        "_symmetry"
+      ],
+      "avoid_when": [
+        "full crystal analysis; use pymatgen"
+      ]
+    },
+    {
+      "skill": "jcamp-dx",
+      "tier": "format",
+      "route_summary": "JCAMP-DX spectroscopy data exchange and archiving format.",
+      "primary_triggers": [
+        "jcamp",
+        "jcamp-dx",
+        "dx spectrum"
+      ],
+      "avoid_when": [
+        "interpreting spectrum chemistry without file-format issue"
+      ]
+    },
+    {
+      "skill": "cml",
+      "tier": "format",
+      "route_summary": "Chemical Markup Language molecular/reaction/spectra interoperability.",
+      "primary_triggers": [
+        "cml",
+        "chemical markup language",
+        "cml reaction"
+      ],
+      "avoid_when": [
+        "simple SMILES/InChI"
+      ]
+    },
+    {
+      "skill": "spectral-analysis",
+      "tier": "format",
+      "route_summary": "Experimental XRD/IR analysis: peaks, phase prediction, Rietveld, functional-group spectra.",
+      "primary_triggers": [
+        "xrd",
+        "rietveld",
+        "ir spectrum",
+        "infrared spectrum",
+        "spectral analysis",
+        "phase identification"
+      ],
+      "avoid_when": [
+        "quantum output frequency parsing"
+      ]
+    },
+    {
+      "skill": "crystal-viewer",
+      "tier": "format",
+      "route_summary": "Interactive 3D HTML crystal viewer generation from CIF.",
+      "primary_triggers": [
+        "crystal viewer",
+        "3dmol",
+        "interactive crystal",
+        "view cif"
+      ],
+      "avoid_when": [
+        "numeric crystal analysis"
+      ]
+    },
+    {
+      "skill": "xtal2png",
+      "tier": "format",
+      "route_summary": "Crystal structure encoding/decoding to PNG for image-based ML workflows.",
+      "primary_triggers": [
+        "xtal2png",
+        "crystal to png",
+        "png crystal",
+        "image-based crystal"
+      ],
+      "avoid_when": [
+        "ordinary visualization"
+      ]
+    },
+    {
+      "skill": "doped-perovskite-structure-analysis",
+      "tier": "materials-specialist",
+      "route_summary": "Doped perovskite/SrTiO3 structure construction, XRD validation, VASP input preparation.",
+      "primary_triggers": [
+        "doped perovskite",
+        "srtio3",
+        "ba-doped",
+        "perovskite xrd"
+      ],
+      "avoid_when": [
+        "general CIF parsing"
+      ]
+    },
+    {
+      "skill": "mace",
+      "tier": "ml-potential",
+      "route_summary": "MACE ML potentials for crystal stability screening and energy ranking.",
+      "primary_triggers": [
+        "mace",
+        "mace potential",
+        "mace ml",
+        "csp screening"
+      ],
+      "avoid_when": [
+        "generic force-field parameterization"
+      ]
+    },
+    {
+      "skill": "chgnet",
+      "tier": "ml-potential",
+      "route_summary": "CHGNet universal neural potential for relaxation, energy, force, stress, MD.",
+      "primary_triggers": [
+        "chgnet",
+        "crystal hamiltonian graph",
+        "ml potential relax"
+      ],
+      "avoid_when": [
+        "classical OpenMM MD"
+      ]
+    },
+    {
+      "skill": "mattersim",
+      "tier": "ml-potential",
+      "route_summary": "MatterSim materials simulation model for property prediction and accelerated materials discovery.",
+      "primary_triggers": [
+        "mattersim",
+        "matter sim"
+      ],
+      "avoid_when": [
+        "non-ML DFT workflow"
+      ]
+    },
+    {
+      "skill": "schnet",
+      "tier": "ml-potential",
+      "route_summary": "SchNet molecular quantum-property prediction and graph neural network modeling.",
+      "primary_triggers": [
+        "schnet",
+        "homo/lumo prediction",
+        "molecular quantum property prediction"
+      ],
+      "avoid_when": [
+        "materials crystal graph prediction"
+      ]
+    },
+    {
+      "skill": "nequip",
+      "tier": "ml-potential",
+      "route_summary": "NequIP equivariant interatomic potentials and molecular potential prediction.",
+      "primary_triggers": [
+        "nequip",
+        "equivariant interatomic potential",
+        "e(3)-equivariant"
+      ],
+      "avoid_when": [
+        "non-ML simulation setup"
+      ]
+    },
+    {
+      "skill": "orb",
+      "tier": "ml-potential",
+      "route_summary": "Orb universal ML force field for geometry optimization and molecular dynamics.",
+      "primary_triggers": [
+        "orb force field",
+        "orb mlff",
+        "orb model"
+      ],
+      "avoid_when": [
+        "OpenFF SMIRNOFF"
+      ]
+    },
+    {
+      "skill": "reann",
+      "tier": "ml-potential",
+      "route_summary": "REANN recursive atomic neural network potential training and PES fitting.",
+      "primary_triggers": [
+        "reann",
+        "recursive atomic neural network",
+        "pes fitting"
+      ],
+      "avoid_when": [
+        "general ML property prediction"
+      ]
+    },
+    {
+      "skill": "torchmd-net",
+      "tier": "ml-potential",
+      "route_summary": "TorchMD-Net equivariant molecular simulation/property prediction from checkpoints.",
+      "primary_triggers": [
+        "torchmd-net",
+        "torchmd",
+        "molecular checkpoint",
+        "equivariant molecular simulation"
+      ],
+      "avoid_when": [
+        "classical MD analysis"
+      ]
+    },
+    {
+      "skill": "mattergen",
+      "tier": "generative-materials",
+      "route_summary": "MatterGen diffusion-based inorganic materials generation and property-conditioned design.",
+      "primary_triggers": [
+        "mattergen",
+        "generative materials",
+        "materials generation"
+      ],
+      "avoid_when": [
+        "retrieve known structure"
+      ]
+    },
+    {
+      "skill": "diffcsp",
+      "tier": "generative-materials",
+      "route_summary": "DiffCSP diffusion crystal structure prediction and generative CSP.",
+      "primary_triggers": [
+        "diffcsp",
+        "diffusion csp",
+        "crystal structure prediction"
+      ],
+      "avoid_when": [
+        "known structure analysis"
+      ]
+    },
+    {
+      "skill": "crystalflow",
+      "tier": "generative-materials",
+      "route_summary": "CrystalFlow flow-based crystal structure generation and CSP.",
+      "primary_triggers": [
+        "crystalflow",
+        "flow-based crystal",
+        "crystal generation"
+      ],
+      "avoid_when": [
+        "known structure analysis"
+      ]
+    },
+    {
+      "skill": "chemprop",
+      "tier": "molecular-ml",
+      "route_summary": "Chemprop GNN model training/prediction for molecular properties and toxicity.",
+      "primary_triggers": [
+        "chemprop",
+        "tox21",
+        "molecular property model",
+        "gnn molecular"
+      ],
+      "avoid_when": [
+        "hand descriptors only"
+      ]
+    },
+    {
+      "skill": "matformer",
+      "tier": "materials-ml",
+      "route_summary": "Matformer crystal graph transformer for materials property prediction.",
+      "primary_triggers": [
+        "matformer",
+        "crystal graph transformer"
+      ],
+      "avoid_when": [
+        "composition-only models"
+      ]
+    },
+    {
+      "skill": "matminer",
+      "tier": "materials-ml",
+      "route_summary": "Matminer materials featurizers, datasets, descriptors for materials ML.",
+      "primary_triggers": [
+        "matminer",
+        "materials featurizer",
+        "composition descriptor"
+      ],
+      "avoid_when": [
+        "single formula arithmetic"
+      ]
+    },
+    {
+      "skill": "matbench",
+      "tier": "materials-ml",
+      "route_summary": "Matbench benchmark datasets and materials ML evaluation.",
+      "primary_triggers": [
+        "matbench",
+        "materials benchmark",
+        "matbench dataset"
+      ],
+      "avoid_when": [
+        "new model training outside benchmark"
+      ]
+    },
+    {
+      "skill": "modnet",
+      "tier": "materials-ml",
+      "route_summary": "MODNet materials property prediction from composition or structure.",
+      "primary_triggers": [
+        "modnet",
+        "material optimal descriptor network"
+      ],
+      "avoid_when": [
+        "deep crystal graph route is explicit"
+      ]
+    },
+    {
+      "skill": "crabnet",
+      "tier": "materials-ml",
+      "route_summary": "CrabNet/Roost composition-only materials property prediction.",
+      "primary_triggers": [
+        "crabnet",
+        "roost",
+        "composition-only property"
+      ],
+      "avoid_when": [
+        "structure-based materials model"
+      ]
+    },
+    {
+      "skill": "xenonpy",
+      "tier": "materials-ml",
+      "route_summary": "XenonPy materials informatics descriptors, pretrained models, transfer learning.",
+      "primary_triggers": [
+        "xenonpy",
+        "materials informatics descriptor"
+      ],
+      "avoid_when": [
+        "Matminer-specific featurization"
+      ]
+    },
+    {
+      "skill": "optimade",
+      "tier": "workflow",
+      "route_summary": "OPTIMADE federated materials database query standard and interoperability.",
+      "primary_triggers": [
+        "optimade",
+        "federated materials database"
+      ],
+      "avoid_when": [
+        "single provider API"
+      ]
+    },
+    {
+      "skill": "optimade-python-tools",
+      "tier": "workflow",
+      "route_summary": "Python tools for OPTIMADE API clients/servers and data conversion.",
+      "primary_triggers": [
+        "optimade python",
+        "optimade-python-tools",
+        "optimade api"
+      ],
+      "avoid_when": [
+        "plain OPTIMADE concept"
+      ]
+    },
+    {
+      "skill": "aiida",
+      "tier": "workflow",
+      "route_summary": "AiiDA provenance-preserving computational workflow and data management.",
+      "primary_triggers": [
+        "aiida",
+        "provenance workflow",
+        "ab-initio design"
+      ],
+      "avoid_when": [
+        "simple local calculation"
+      ]
+    },
+    {
+      "skill": "atomate",
+      "tier": "workflow",
+      "route_summary": "Atomate high-throughput materials workflows built on FireWorks/pymatgen.",
+      "primary_triggers": [
+        "atomate",
+        "atomate workflow"
+      ],
+      "avoid_when": [
+        "generic FireWorks workflow"
+      ]
+    },
+    {
+      "skill": "fireworks",
+      "tier": "workflow",
+      "route_summary": "FireWorks dynamic workflow engine for high-throughput computational jobs.",
+      "primary_triggers": [
+        "fireworks workflow",
+        "firetask",
+        "launchpad"
+      ],
+      "avoid_when": [
+        "workflow package not FireWorks"
+      ]
+    },
+    {
+      "skill": "custodian",
+      "tier": "workflow",
+      "route_summary": "Custodian error recovery for computational chemistry/materials jobs.",
+      "primary_triggers": [
+        "custodian",
+        "automatic error recovery",
+        "vasp error handler"
+      ],
+      "avoid_when": [
+        "manual input setup"
+      ]
+    },
+    {
+      "skill": "quacc",
+      "tier": "workflow",
+      "route_summary": "Quacc high-throughput materials and quantum chemistry workflow automation.",
+      "primary_triggers": [
+        "quacc",
+        "quacc workflow"
+      ],
+      "avoid_when": [
+        "AiiDA-specific workflow"
+      ]
+    },
+    {
+      "skill": "pyiron",
+      "tier": "workflow",
+      "route_summary": "Pyiron computational materials IDE and high-throughput simulation protocols.",
+      "primary_triggers": [
+        "pyiron",
+        "interactive materials workflow"
+      ],
+      "avoid_when": [
+        "non-pyiron workflow"
+      ]
+    },
+    {
+      "skill": "qmflows",
+      "tier": "workflow",
+      "route_summary": "QMFlows input generation and workflow automation for quantum chemistry.",
+      "primary_triggers": [
+        "qmflows",
+        "quantum chemistry pipeline"
+      ],
+      "avoid_when": [
+        "single package input"
+      ]
+    },
+    {
+      "skill": "qmforge",
+      "tier": "workflow",
+      "route_summary": "QMForge quantum chemistry result visualization: orbitals, density, DFT/ab initio properties.",
+      "primary_triggers": [
+        "qmforge",
+        "molecular orbital visualization",
+        "electron density visualization"
+      ],
+      "avoid_when": [
+        "text-only output parsing"
+      ]
+    },
+    {
+      "skill": "blue-obelisk",
+      "tier": "workflow",
+      "route_summary": "Open chemistry standards, interoperability, reproducibility, and tool ecosystem guidance.",
+      "primary_triggers": [
+        "blue obelisk",
+        "open chemistry standard",
+        "chemistry interoperability"
+      ],
+      "avoid_when": [
+        "specific format/tool route exists"
+      ]
+    },
+    {
+      "skill": "chemistry-query",
+      "tier": "extended",
+      "route_summary": "One-stop PubChem/RDKit/BRICS/ADMET helper for compound lookup and simple retrosynthesis.",
+      "primary_triggers": [
+        "chemistry-query",
+        "brics",
+        "simple retrosynthesis",
+        "compound image"
+      ],
+      "avoid_when": [
+        "existing provider route is more specific"
+      ]
+    },
+    {
+      "skill": "medchem",
+      "tier": "extended",
+      "route_summary": "Medicinal chemistry filters: Lipinski, Veber, PAINS, structural alerts, drug-likeness.",
+      "primary_triggers": [
+        "lipinski",
+        "veber",
+        "pains",
+        "drug-likeness",
+        "structural alert"
+      ],
+      "avoid_when": [
+        "bioactivity database query"
+      ]
+    },
+    {
+      "skill": "atb",
+      "tier": "extended",
+      "route_summary": "Automated Topology Builder for topology files and molecular simulation parameters.",
+      "primary_triggers": [
+        "automated topology builder",
+        "atb topology",
+        "gromos topology"
+      ],
+      "avoid_when": [
+        "OpenFF SMIRNOFF parameterization"
+      ]
+    },
+    {
+      "skill": "literature-review",
+      "tier": "extended",
+      "route_summary": "Systematic literature reviews across academic databases.",
+      "primary_triggers": [
+        "systematic literature review",
+        "literature review",
+        "review protocol"
+      ],
+      "avoid_when": [
+        "single paper retrieval"
+      ]
+    },
+    {
+      "skill": "paper-retrieval",
+      "tier": "workflow",
+      "route_summary": "Scholarly API paper search, normalized metadata, deduplicated candidate lists.",
+      "primary_triggers": [
+        "paper retrieval",
+        "scholarly api",
+        "literature candidates",
+        "search papers",
+        "find papers",
+        "candidate papers",
+        "paper metadata"
+      ],
+      "avoid_when": [
+        "OpenAlex-only or PubMed-only database query",
+        "already downloaded local paper"
+      ]
+    },
+    {
+      "skill": "paper-access",
+      "tier": "workflow",
+      "route_summary": "Resolve DOI/OA URLs, verify PDF endpoints, and download local paper artifacts.",
+      "primary_triggers": [
+        "paper access",
+        "open access pdf",
+        "oa pdf",
+        "download paper",
+        "resolve doi",
+        "resolve oa",
+        "pdf endpoint"
+      ],
+      "avoid_when": [
+        "remote paper search",
+        "local fulltext parsing"
+      ]
+    },
+    {
+      "skill": "paper-parse",
+      "tier": "workflow",
+      "route_summary": "Parse local paper PDFs/text into fulltext, sections, snippets, and extraction reports.",
+      "primary_triggers": [
+        "paper parse",
+        "parse paper pdf",
+        "local paper pdf",
+        "fulltext extraction",
+        "extract sections",
+        "mineru",
+        "pymupdf"
+      ],
+      "avoid_when": [
+        "remote paper search",
+        "PDF download"
+      ]
+    },
+    {
+      "skill": "paper-rerank",
+      "tier": "workflow",
+      "route_summary": "Build paper profiles from local PDFs and run explicit listwise LLM reranking.",
+      "primary_triggers": [
+        "paper rerank",
+        "rerank papers",
+        "paper profile",
+        "grobid",
+        "listwise rerank",
+        "rank candidate papers"
+      ],
+      "avoid_when": [
+        "remote paper search",
+        "simple citation lookup"
+      ]
+    },
+    {
+      "skill": "synthesize-literature",
+      "tier": "extended",
+      "route_summary": "Structured synthesis of literature into a comprehensive review report.",
+      "primary_triggers": [
+        "synthesize literature",
+        "comprehensive review report"
+      ],
+      "avoid_when": [
+        "simple citation lookup"
+      ]
+    }
+  ]
+}

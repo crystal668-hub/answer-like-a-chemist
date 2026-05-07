@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
+from .chemistry_routing import render_compact_skill_routing_table
 from .datasets import BenchmarkRecord
 
 
@@ -62,6 +63,7 @@ def build_single_llm_prompt(
     instructions = [
         "You are answering a chemistry benchmark question.",
         "Be careful, concise, and do not fabricate missing facts.",
+        render_compact_skill_routing_table(),
     ]
     if websearch_enabled:
         instructions.append("You may use web search if it is genuinely helpful.")

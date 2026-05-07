@@ -3,10 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import Any
 
 
 PROVIDER_TRACE_MODES = {"off", "audit", "enforce"}
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from benchmarking.chemistry_routing import requirements_for_text  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -30,10 +36,10 @@ def requirements_for_candidate(
     eval_kind: str = "",
     dataset: str = "",
 ) -> list[ProviderTraceRequirement]:
-    text = " ".join([answer_kind, eval_kind, dataset, prompt]).lower()
+    text = " ".join([answer_kind, eval_kind, dataset, prompt])
     requirements: list[ProviderTraceRequirement] = []
     if answer_kind in {"numeric_short_answer", "formula_short_answer"} or any(
-        token in text
+        token in text.lower()
         for token in (
             "stoichiometric",
             "stoichiometry",
@@ -54,48 +60,12 @@ def requirements_for_candidate(
                 "Numeric or formula-math answer requires deterministic calculation trace.",
             )
         )
-    if any(
-        token in text
-        for token in (
-            "smiles",
-            "inchi",
-            "stereochemistry",
-            "substructure",
-            "conformer",
-            "ring count",
-            "chirality",
-            "unsaturation",
-            "structure-constraint",
-        )
-    ):
+    for requirement in requirements_for_text(text):
         requirements.append(
             ProviderTraceRequirement(
-                "rdkit",
-                "structure_check",
-                "Structure-sensitive answer requires deterministic RDKit trace.",
-            )
-        )
-    if any(token in text for token in ("iupac", "systematic name")):
-        requirements.append(
-            ProviderTraceRequirement(
-                "opsin",
-                "systematic_name",
-                "Systematic-name answer requires OPSIN trace.",
-            )
-        )
-        requirements.append(
-            ProviderTraceRequirement(
-                "rdkit",
-                "opsin_structure_validation",
-                "OPSIN-derived structures require RDKit validation trace.",
-            )
-        )
-    if any(token in text for token in ("pubchem", "cid", "synonym", "common name")):
-        requirements.append(
-            ProviderTraceRequirement(
-                "pubchem",
-                "public_compound_lookup",
-                "Public compound identity/property answer requires PubChem trace.",
+                requirement["skill"],
+                requirement["trigger"],
+                requirement["reason"],
             )
         )
     return _dedupe_requirements(requirements)

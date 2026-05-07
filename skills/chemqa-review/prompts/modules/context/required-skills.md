@@ -5,20 +5,181 @@ Required sibling skills:
 - `paper-access`
 - `paper-parse`
 - `paper-rerank`
+- `open-forcefield-toolkit`
+- `molecular-dynamics`
+- `openmm`
+- `zinc-database`
+- `chembl-database`
+- `tooluniverse-chemical-safety`
+- `tooluniverse-small-molecule-discovery`
+- `tooluniverse-chemical-compound-retrieval`
+- `materials-project`
+- `cod`
+- `oqmd`
+- `jarvis`
+- `pymatgen`
+- `ase`
+- `cclib`
+- `datamol`
+- `molfeat`
 - `rdkit`
-- `pubchem`
 - `opsin`
+- `pubchem`
 - `chem-calculator`
+- `q-chem`
+- `hpc-orca`
+- `hpc-gaussian`
+- `hpc-pyscf`
+- `hpc-xtb`
+- `hpc-vasp`
+- `hpc-nwchem`
+- `hpc-cp2k`
+- `hpc-quantum-espresso`
+- `qc-output-analysis`
+- `cccbdb`
+- `molssi-qca`
+- `pubchem-database`
+- `pdb-database`
+- `alphafold-database`
+- `reactome-database`
+- `pubmed-database`
+- `openalex-database`
+- `cif`
+- `jcamp-dx`
+- `cml`
+- `spectral-analysis`
+- `crystal-viewer`
+- `xtal2png`
+- `doped-perovskite-structure-analysis`
+- `mace`
+- `chgnet`
+- `mattersim`
+- `schnet`
+- `nequip`
+- `orb`
+- `reann`
+- `torchmd-net`
+- `mattergen`
+- `diffcsp`
+- `crystalflow`
+- `chemprop`
+- `matformer`
+- `matminer`
+- `matbench`
+- `modnet`
+- `crabnet`
+- `xenonpy`
+- `optimade`
+- `optimade-python-tools`
+- `aiida`
+- `atomate`
+- `fireworks`
+- `custodian`
+- `quacc`
+- `pyiron`
+- `qmflows`
+- `qmforge`
+- `blue-obelisk`
+- `chemistry-query`
+- `medchem`
+- `atb`
+- `literature-review`
+- `synthesize-literature`
 
-Resolve these bundles from the same parent `skills/` directory as this bundle.
-Do not assume repository-relative paths.
+Resolve these bundles from the same parent `skills/` directory as this bundle. Do not assume repository-relative paths.
 
-Routing table:
+Experimental chemistry skill routing rules are sourced from `skills/chemistry-routing-matrix.json`.
+The benchmark prompt injects only the compact matrix rendered by `benchmarking.chemistry_routing.render_compact_skill_routing_table()`.
+Read full `SKILL.md` files only after a route is selected, so the expanded experimental set does not flood default context.
 
-- numeric / stoichiometric / equilibrium / unit / concentration / acid-base / gas-law / electrochemistry / formula-math trigger -> `chem-calculator`
-- SMILES / formula / ring / unsaturation / chirality / stereochemistry / substructure / conformer / structure-constraint trigger -> `rdkit`
-- IUPAC / systematic name trigger -> `opsin`, then `rdkit` for structure-sensitive validation
-- common name / CID / synonym / property / public compound identifier trigger -> `pubchem`, then `rdkit` for structure-sensitive validation
-- literature or external-fact trigger not covered by local chemistry providers -> `paper-retrieval` -> `paper-access` -> `paper-rerank` -> `paper-parse`
+Routing policy:
+- Use the first matching primary route from the matrix as the main skill.
+- Prefer explicit database/software names over broader local analysis routes.
+- If a triggered route is skipped, record `status: skipped`, `trigger`, `reason`, and residual `risk`.
+- Literature or external-fact triggers not covered by local chemistry providers route to `paper-retrieval` -> `paper-access` -> `paper-rerank` -> `paper-parse`.
 
-When a route is triggered, use the listed skill instead of relying only on unaided reasoning. Record the generated provider result JSON artifact path or a structured `tool_trace` entry. If you skip a triggered route, record a `submission_trace` entry with `status: skipped`, the `trigger`, the `reason`, and the residual `risk`.
+Compact route inventory:
+- `open-forcefield-toolkit` (core): SMIRNOFF, AM1-BCC, partial charges, small-molecule force-field parameterization, and force-field interchange.
+- `molecular-dynamics` (core): MD workflow and trajectory analysis: RMSD, RMSF, contact maps, production MD, protein-ligand MD.
+- `openmm` (core): OpenMM simulation setup/debugging: systems, integrators, platforms, solvation, reporters.
+- `zinc-database` (core): ZINC purchasable compounds, 3D-ready structures, analog discovery, virtual screening sources.
+- `chembl-database` (core): ChEMBL target, bioactivity, IC50, Ki, EC50, mechanism, indication, inhibitor, and SAR queries.
+- `tooluniverse-chemical-safety` (core): Chemical safety, toxicology, ADMET, FDA label, DrugBank, CTD, STITCH evidence assessment.
+- `tooluniverse-small-molecule-discovery` (core): Small-molecule discovery chain: identity, activity, ADMET, target prediction, sourcing.
+- `tooluniverse-chemical-compound-retrieval` (core): PubChem and ChEMBL cross-validated compound profile and identity disambiguation.
+- `materials-project` (core): Materials Project DFT data: structures, band gaps, phase diagrams, energy above hull, mp-id.
+- `cod` (database): Crystallography Open Database crystal structures and CIF retrieval.
+- `oqmd` (database): OQMD open quantum materials data, formation energies, phase stability.
+- `jarvis` (database): JARVIS computed materials properties, 2D materials, NIST materials datasets.
+- `pymatgen` (core): Materials and crystal analysis: CIF, POSCAR, space group, lattice, coordination polyhedra, phase diagrams, energy above hull.
+- `ase` (core): Atomistic structure construction and simulation workflows: slabs, adsorption, NEB, vibrations, calculators.
+- `cclib` (core): Quantum chemistry output parsing: Gaussian, ORCA, Q-Chem, SCF energies, orbitals, frequencies.
+- `datamol` (core): Batch molecular standardization, descriptors, fingerprints, scaffolds, clustering, conformers.
+- `molfeat` (core): Molecular ML featurization: QSAR features, fingerprints, molecular embeddings, chemical space.
+- `rdkit` (existing): Local small-molecule structure reasoning: SMILES/InChI normalization, descriptors, substructure, stereochemistry, reactions, NMR heuristics.
+- `opsin` (existing): Systematic or IUPAC-like name-to-structure parsing, followed by RDKit validation when needed.
+- `pubchem` (existing): PubChem PUG REST identity and metadata: common names, CID, synonyms, formula hints, properties.
+- `chem-calculator` (existing): Deterministic numeric chemistry: molar mass, stoichiometry, concentration, Ksp, pH, gas laws, thermo, redox, Nernst.
+- `q-chem` (software): Q-Chem input/workflow guidance: $rem, job types, basis sets, SCF convergence, TDDFT, PCM.
+- `hpc-orca` (software): ORCA input/workflow guidance: DFT, TDDFT, DLPNO, frequencies, solvation, convergence.
+- `hpc-gaussian` (software): Gaussian input/workflow guidance: route sections, opt/freq, TDDFT, checkpoint, solvation, SCF.
+- `hpc-pyscf` (software): PySCF electronic-structure workflows: HF, DFT, MP2, CCSD, CASSCF, custom Python pipelines.
+- `hpc-xtb` (software): xTB and CREST workflows: GFN-xTB optimization, conformer search, solvation, fast screening.
+- `hpc-vasp` (software): VASP workflows: INCAR, POSCAR, KPOINTS, POTCAR, relax/static/DOS/bands, convergence.
+- `hpc-nwchem` (software): NWChem workflows: DFT, MP2, CCSD(T), TDDFT, CASSCF, periodic jobs.
+- `hpc-cp2k` (software): CP2K workflows: periodic DFT, AIMD, geometry optimization, hybrid DFT, input/debugging.
+- `hpc-quantum-espresso` (software): Quantum ESPRESSO workflows: pw.x, pseudopotentials, cutoffs, SCF/relax/bands.
+- `qc-output-analysis` (software): Structured Gaussian/ORCA output extraction for spectra, scans, TS, energies, polarizability.
+- `cccbdb` (database): CCCBDB computational chemistry benchmarks, thermochemistry, spectroscopy reference data.
+- `molssi-qca` (database): MolSSI Quantum Chemistry Archive benchmark datasets and quantum chemistry reference calculations.
+- `pubchem-database` (database): Expanded PubChemPy/PUG-REST, bioassay, similarity/substructure, compound retrieval.
+- `pdb-database` (database): RCSB PDB protein/nucleic acid structure search, coordinate download, metadata.
+- `alphafold-database` (database): AlphaFold predicted protein structures, UniProt lookup, pLDDT/PAE confidence.
+- `reactome-database` (database): Reactome pathways, enrichment, gene-pathway mapping, molecular interactions.
+- `pubmed-database` (database): PubMed E-utilities, MeSH/Boolean literature lookup and citation retrieval.
+- `openalex-database` (database): OpenAlex scholarly literature search, authors/institutions, research trends.
+- `cif` (format): CIF format syntax, crystallographic data parsing and interoperability.
+- `jcamp-dx` (format): JCAMP-DX spectroscopy data exchange and archiving format.
+- `cml` (format): Chemical Markup Language molecular/reaction/spectra interoperability.
+- `spectral-analysis` (format): Experimental XRD/IR analysis: peaks, phase prediction, Rietveld, functional-group spectra.
+- `crystal-viewer` (format): Interactive 3D HTML crystal viewer generation from CIF.
+- `xtal2png` (format): Crystal structure encoding/decoding to PNG for image-based ML workflows.
+- `doped-perovskite-structure-analysis` (materials-specialist): Doped perovskite/SrTiO3 structure construction, XRD validation, VASP input preparation.
+- `mace` (ml-potential): MACE ML potentials for crystal stability screening and energy ranking.
+- `chgnet` (ml-potential): CHGNet universal neural potential for relaxation, energy, force, stress, MD.
+- `mattersim` (ml-potential): MatterSim materials simulation model for property prediction and accelerated materials discovery.
+- `schnet` (ml-potential): SchNet molecular quantum-property prediction and graph neural network modeling.
+- `nequip` (ml-potential): NequIP equivariant interatomic potentials and molecular potential prediction.
+- `orb` (ml-potential): Orb universal ML force field for geometry optimization and molecular dynamics.
+- `reann` (ml-potential): REANN recursive atomic neural network potential training and PES fitting.
+- `torchmd-net` (ml-potential): TorchMD-Net equivariant molecular simulation/property prediction from checkpoints.
+- `mattergen` (generative-materials): MatterGen diffusion-based inorganic materials generation and property-conditioned design.
+- `diffcsp` (generative-materials): DiffCSP diffusion crystal structure prediction and generative CSP.
+- `crystalflow` (generative-materials): CrystalFlow flow-based crystal structure generation and CSP.
+- `chemprop` (molecular-ml): Chemprop GNN model training/prediction for molecular properties and toxicity.
+- `matformer` (materials-ml): Matformer crystal graph transformer for materials property prediction.
+- `matminer` (materials-ml): Matminer materials featurizers, datasets, descriptors for materials ML.
+- `matbench` (materials-ml): Matbench benchmark datasets and materials ML evaluation.
+- `modnet` (materials-ml): MODNet materials property prediction from composition or structure.
+- `crabnet` (materials-ml): CrabNet/Roost composition-only materials property prediction.
+- `xenonpy` (materials-ml): XenonPy materials informatics descriptors, pretrained models, transfer learning.
+- `optimade` (workflow): OPTIMADE federated materials database query standard and interoperability.
+- `optimade-python-tools` (workflow): Python tools for OPTIMADE API clients/servers and data conversion.
+- `aiida` (workflow): AiiDA provenance-preserving computational workflow and data management.
+- `atomate` (workflow): Atomate high-throughput materials workflows built on FireWorks/pymatgen.
+- `fireworks` (workflow): FireWorks dynamic workflow engine for high-throughput computational jobs.
+- `custodian` (workflow): Custodian error recovery for computational chemistry/materials jobs.
+- `quacc` (workflow): Quacc high-throughput materials and quantum chemistry workflow automation.
+- `pyiron` (workflow): Pyiron computational materials IDE and high-throughput simulation protocols.
+- `qmflows` (workflow): QMFlows input generation and workflow automation for quantum chemistry.
+- `qmforge` (workflow): QMForge quantum chemistry result visualization: orbitals, density, DFT/ab initio properties.
+- `blue-obelisk` (workflow): Open chemistry standards, interoperability, reproducibility, and tool ecosystem guidance.
+- `chemistry-query` (extended): One-stop PubChem/RDKit/BRICS/ADMET helper for compound lookup and simple retrosynthesis.
+- `medchem` (extended): Medicinal chemistry filters: Lipinski, Veber, PAINS, structural alerts, drug-likeness.
+- `atb` (extended): Automated Topology Builder for topology files and molecular simulation parameters.
+- `literature-review` (extended): Systematic literature reviews across academic databases.
+- `paper-retrieval` (workflow): Scholarly API paper search, normalized metadata, deduplicated candidate lists.
+- `paper-access` (workflow): Resolve DOI/OA URLs, verify PDF endpoints, and download local paper artifacts.
+- `paper-parse` (workflow): Parse local paper PDFs/text into fulltext, sections, snippets, and extraction reports.
+- `paper-rerank` (workflow): Build paper profiles from local PDFs and run explicit listwise LLM reranking.
+- `synthesize-literature` (extended): Structured synthesis of literature into a comprehensive review report.

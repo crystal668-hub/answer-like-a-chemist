@@ -269,6 +269,72 @@ submission_trace:
         )
         self.assertTrue(checked.ok)
 
+    def test_experimental_matrix_audits_materials_route(self) -> None:
+        candidate = """
+artifact_kind: candidate_submission
+phase: propose
+owner: proposer-1
+direct_answer: "Al, Re2Al13"
+summary: crystal coordination answer
+submission_trace:
+  - step: reasoning
+    status: success
+    detail: visual inspection only
+""".strip()
+        checked = transport.check_candidate_submission(
+            candidate,
+            owner="proposer-1",
+            answer_kind="generic_semantic_answer",
+            provider_trace_mode="audit",
+            prompt="What coordination polyhedra does this CIF crystal structure contain?",
+        )
+        self.assertTrue(checked.ok)
+        self.assertTrue(any("pymatgen" in warning for warning in checked.warnings))
+
+    def test_experimental_matrix_audits_bioactivity_route(self) -> None:
+        candidate = """
+artifact_kind: candidate_submission
+phase: propose
+owner: proposer-1
+direct_answer: "EGFR inhibitor candidates"
+summary: medicinal chemistry answer
+submission_trace:
+  - step: reasoning
+    status: success
+    detail: recalled likely inhibitors
+""".strip()
+        checked = transport.check_candidate_submission(
+            candidate,
+            owner="proposer-1",
+            answer_kind="generic_semantic_answer",
+            provider_trace_mode="audit",
+            prompt="Find EGFR inhibitors with IC50 below 100 nM and summarize SAR.",
+        )
+        self.assertTrue(checked.ok)
+        self.assertTrue(any("chembl-database" in warning for warning in checked.warnings))
+
+    def test_experimental_matrix_audits_safety_route(self) -> None:
+        candidate = """
+artifact_kind: candidate_submission
+phase: propose
+owner: proposer-1
+direct_answer: "requires safety review"
+summary: safety answer
+submission_trace:
+  - step: reasoning
+    status: success
+    detail: unaided safety assessment
+""".strip()
+        checked = transport.check_candidate_submission(
+            candidate,
+            owner="proposer-1",
+            answer_kind="generic_semantic_answer",
+            provider_trace_mode="audit",
+            prompt="Assess chemical safety with ADMET, FDA labels, CTD, and STITCH evidence.",
+        )
+        self.assertTrue(checked.ok)
+        self.assertTrue(any("tooluniverse-chemical-safety" in warning for warning in checked.warnings))
+
     def test_formal_review_prose_recovers_summary_and_review_items(self) -> None:
         review = """
 artifact_kind: formal_review
@@ -1129,17 +1195,15 @@ class ClawteamResolutionTest(unittest.TestCase):
 
 class ChemProviderIntegrationTest(unittest.TestCase):
     def test_required_skills_include_chem_provider_bundles(self) -> None:
+        matrix = json.loads((PROJECT_ROOT / "skills" / "chemistry-routing-matrix.json").read_text(encoding="utf-8"))
         expected = {
             "debateclaw-v1",
             "paper-retrieval",
             "paper-access",
             "paper-parse",
             "paper-rerank",
-            "rdkit",
-            "pubchem",
-            "opsin",
-            "chem-calculator",
         }
+        expected.update(entry["skill"] for entry in matrix["skills"])
         self.assertEqual(expected, set(bundle_common.REQUIRED_SKILLS))
 
         report = bundle_common.dependency_report(SKILL_ROOT)
@@ -1160,6 +1224,12 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         required_skills = (SKILL_ROOT / "prompts" / "modules" / "context" / "required-skills.md").read_text(
             encoding="utf-8"
         )
+        listed_required_skills = [
+            line.strip()[3:-1]
+            for line in required_skills.splitlines()
+            if line.startswith("- `") and "` (" not in line
+        ]
+        self.assertEqual(len(listed_required_skills), len(set(listed_required_skills)))
 
         self.assertIn("chem-calculator", proposer)
         self.assertIn("FrontierScience", proposer)
@@ -1195,11 +1265,14 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertIn("pubchem", required_skills)
         self.assertIn("opsin", required_skills)
         self.assertIn("chem-calculator", required_skills)
-        self.assertIn("Routing table", required_skills)
-        self.assertIn("numeric / stoichiometric / equilibrium / unit", required_skills)
-        self.assertIn("SMILES / formula / ring / unsaturation / chirality", required_skills)
-        self.assertIn("IUPAC / systematic name", required_skills)
-        self.assertIn("common name / CID / synonym / property", required_skills)
+        self.assertIn("Experimental chemistry skill routing rules", required_skills)
+        self.assertIn("Compact route inventory", required_skills)
+        self.assertIn("first matching primary route", required_skills)
+        self.assertIn("pymatgen", required_skills)
+        self.assertIn("cclib", required_skills)
+        self.assertIn("chembl-database", required_skills)
+        self.assertIn("open-forcefield-toolkit", required_skills)
+        self.assertIn("tooluniverse-chemical-safety", required_skills)
 
 
 class OpenClawResolutionTest(unittest.TestCase):

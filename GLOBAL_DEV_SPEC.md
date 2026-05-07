@@ -17,7 +17,8 @@
   - `DONE`: Drive ChemQA reviewer/proposer/coordinator loops on top of DebateClaw state via `workspace/skills/chemqa-review/scripts/chemqa_review_openclaw_driver.py`, including phase-scoped multi-turn artifact production, role-phase run-status diagnostics, and deterministic coordinator fallback when model refinement aborts or leaves no valid protocol rewrite.
   - `DONE`: Recover stalled ChemQA runs, respawn dead workers, and repair invalid protocol state via `workspace/skills/chemqa-review/scripts/recover_run.py`.
   - `DONE`: Collect ChemQA protocol outputs through Artifact Flow into canonical terminal artifacts, `artifact_manifest.json`, and legacy-compatible `qa_result.json` via `workspace/skills/chemqa-review/scripts/chemqa_artifact_flow.py` and `collect_artifacts.py`; finalization applies structured `answer_revision` rebuttals and repairs numeric short-answer projections from anchored final values in the full answer when the raw direct answer is a setup/process sentence.
-  - `DONE`: Provide deterministic chemistry provider skills for local structure reasoning, name resolution, public compound lookup, and numeric chemistry calculations via `workspace/skills/rdkit`, `workspace/skills/opsin`, `workspace/skills/pubchem`, and `workspace/skills/chem-calculator`.
+  - `DONE`: Provide deterministic first-batch chemistry provider skills for local structure reasoning, name resolution, public compound lookup, and numeric chemistry calculations via `workspace/skills/rdkit`, `workspace/skills/opsin`, `workspace/skills/pubchem`, and `workspace/skills/chem-calculator`.
+  - `DONE`: Provide an experimental medium-or-higher-value chemistry skill routing matrix via `workspace/skills/chemistry-routing-matrix.json`, covering 84 local skill routes from structure/materials, atomistic simulation, quantum chemistry, bioactivity/safety, molecular/materials ML, databases, spectra/formats, paper retrieval/access/parse/rerank, and workflow automation. The compact matrix is rendered into both single-agent benchmark prompts and ChemQA provider-trace policy without injecting full skill documents by default.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
@@ -89,6 +90,9 @@
     - Owns ChemQA launch pipeline, driver loop, artifact reconstruction, liveness/recovery tooling, an inactive native workflow-package scaffold, and prompt/runtime dependency wiring for sibling chemistry provider skills.
   - `rdkit/`, `pubchem/`, `opsin/`, `chem-calculator/`
     - First-batch chemistry provider bundles used for deterministic structure, nomenclature, compound lookup, and numeric subproblems.
+  - `chemistry-routing-matrix.json`
+    - Experimental compact route source for medium-or-higher-value chemistry skills. It includes existing provider skills plus copied Downloads skill bundles such as `pymatgen`, `ase`, `cclib`, `datamol`, `molfeat`, `chembl-database`, `zinc-database`, `materials-project`, `cod`, `oqmd`, `jarvis`, `cccbdb`, `molssi-qca`, `molecular-dynamics`, `openmm`, `open-forcefield-toolkit`, ToolUniverse chemistry skills, HPC chemistry software skills, spectra/format skills, atomistic ML/generative materials skills, materials/molecular ML skills, existing paper pipeline skills, and workflow/database helpers.
+    - Route selection is implemented by `workspace/benchmarking/chemistry_routing.py`; prompts receive compact grouped route summaries, while agents read full `SKILL.md` files only after a route is selected.
   - `benchmark-cleanroom/`
     - Run-scoped cleanup manifests and lease management plus cleanup executor.
   - `paper-retrieval/`, `paper-access/`, `paper-parse/`, `paper-rerank/`
@@ -331,6 +335,22 @@
   - Implementation location: `workspace/skills/chem-calculator/*`
   - Status: `DONE`
 
+- Name: Experimental chemistry skill routing matrix
+  - Description: Central compact router for all medium-or-higher-value chemistry skills selected from local Downloads skill bundles. It preserves first-batch deterministic providers and adds experimental routes for materials/crystal analysis, atomistic simulation, quantum chemistry packages/output parsing, bioactivity/safety, compound databases, spectra/file formats, molecular/materials ML, generative materials, and workflow automation. The matrix intentionally separates route selection from full skill documentation to limit default prompt context and enable benchmark-driven pruning.
+  - Input / Output:
+    - Input: prompt text or ChemQA candidate metadata plus `workspace/skills/chemistry-routing-matrix.json`.
+    - Output: selected primary skill, provider-trace requirements, or compact grouped routing table.
+  - Implementation location: `workspace/skills/chemistry-routing-matrix.json`, `workspace/benchmarking/chemistry_routing.py`
+  - Status: `DONE_EXPERIMENTAL`
+
+- Name: Experimental chemistry skill optional dependencies
+  - Description: Declares installable optional dependency groups for the subset of experimental chemistry skills that have stable Python-package dependencies. These extras support benchmark trials without making heavy materials, MD, ML, database, or workflow packages part of the default runtime.
+  - Input / Output:
+    - Input: `chemqa[chem-materials]`, `chemqa[chem-quantum-parse]`, `chemqa[chem-bioactivity]`, `chemqa[chem-md]`, `chemqa[chem-cheminformatics-ml]`, `chemqa[chem-materials-ml]`, `chemqa[chem-workflows]`, or aggregate `chemqa[chem-experimental]`.
+    - Output: Optional Python package dependencies for route-selected skill scripts and examples where packages are resolvable through PyPI/uv.
+  - Implementation location: `workspace/pyproject.toml`, `workspace/uv.lock`
+  - Status: `DONE_EXPERIMENTAL`
+
 - Name: Native ChemQA workflow package
   - Description: Declares an inactive scaffold class with hooks for initialize/next-action/submit/advance/status/summary/finalize. It is retained only as future workflow-package metadata; live ChemQA runs do not load it as the control plane.
   - Input / Output:
@@ -464,10 +484,12 @@
   - When DebateClaw reports protocol terminal conditions, the driver publishes `artifact_flow_state=finalizing` while keeping legacy `status=running`; after `collect_artifacts.py` / Artifact Flow writes terminal artifacts, run status carries `artifact_flow_state=finalized|finalization_failed`, `benchmark_terminal_state`, canonical paths, and legacy-compatible terminal fields.
   - Coordinator protocol generation treats the deterministic protocol scaffold as primary; model refinement is optional quality improvement and falls back to the deterministic scaffold when the refinement turn aborts, times out without a valid rewrite, or leaves invalid protocol output.
   - Rebuttal artifacts now carry explicit `mode`: `response_only`, `answer_revision`, or `concession`. Only `answer_revision` updates the Artifact Flow current candidate view.
-  - `chemqa-review/scripts/bundle_common.py` and the prompt pack now treat `rdkit`, `pubchem`, `opsin`, and `chem-calculator` as required sibling skills alongside DebateClaw and the paper pipeline.
-  - Prompt routing now tells `proposer-1` to treat chemistry provider routes as execution requirements: numeric / stoichiometric / equilibrium / unit work triggers `chem-calculator`; SMILES / formula / ring / unsaturation / chirality / structural checks trigger `rdkit`; IUPAC/systematic names trigger `opsin` with RDKit validation; common names/CIDs/synonyms/properties trigger `pubchem` with RDKit validation where structure matters.
+  - `chemqa-review/scripts/bundle_common.py` and the prompt pack now treat all skills listed in `skills/chemistry-routing-matrix.json` as required sibling skills alongside DebateClaw and the paper pipeline.
+  - Prompt routing now tells `proposer-1` to treat chemistry provider routes as execution requirements using the compact experimental matrix: existing deterministic routes cover `chem-calculator`, `rdkit`, `opsin`, and `pubchem`; experimental routes cover materials/crystal skills, atomistic/MD/OpenFF skills, quantum chemistry software and output parsers, bioactivity/safety/database skills, spectra/file-format skills, ML/generative-materials skills, and workflow helpers.
+  - `benchmarking/prompts.py` injects the same compact matrix into single-agent benchmark prompts, so single-agent and ChemQA runs share one route source.
+  - `pyproject.toml` exposes optional experimental chemistry extras for PyPI-resolvable dependency families. `chemqa[chem-experimental]` aggregates those families but is intentionally not included in `chemqa[full]`, and OpenFF/tooluniverse/HPC executable stacks remain conda, preinstalled, API, or external-service dependencies described by their skill docs rather than default pip dependencies.
   - The shared ChemQA prompt module is named for the fixed-lane protocol rather than native workflow-package execution, so prompt assembly does not imply that `ChemQAWorkflow` is active.
-  - ChemQA candidate submissions are validated in provider-trace audit mode by default. Triggered provider routes produce validation warnings unless the candidate cites a provider result JSON artifact path or structured `tool_trace` entry; skipped triggered routes must include `status: skipped`, `trigger`, `reason`, and residual `risk`.
+  - ChemQA candidate submissions are validated in provider-trace audit mode by default. Triggered provider routes are derived from `benchmarking.chemistry_routing.requirements_for_text()` and produce validation warnings unless the candidate cites a provider result JSON artifact path or structured `tool_trace` entry; skipped triggered routes must include `status: skipped`, `trigger`, `reason`, and residual `risk`.
   - Materialized role commands can pass `--provider-trace-mode off|audit|enforce`, and `CHEMQA_PROVIDER_TRACE_MODE` is a fallback when the flag is absent. `enforce` turns high-confidence deterministic provider requirements such as numeric `chem-calculator` traces into candidate artifact validation errors.
   - Reviewer prompt contracts now treat missing required provider traces as blocking findings for triggered numeric and structural checks unless the candidate records a valid skipped-route explanation.
   - This integration phase does not add a dedicated image-reading or OCSR skill to ChemQA prompt routing.

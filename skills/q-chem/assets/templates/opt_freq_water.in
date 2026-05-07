@@ -1,0 +1,37 @@
+$comment
+Water geometry optimization followed by frequency calculation
+Method: B3LYP/6-31G*
+$end
+
+$molecule
+0 1
+O    0.000000   0.000000   0.000000
+H    0.000000   0.950000   0.000000
+H    0.000000  -0.950000   0.000000
+$end
+
+$rem
+   JOBTYPE          opt
+   METHOD           b3lyp
+   BASIS            6-31g*
+   SCF_GUESS        sad
+   GEOMETRY_OPTIMIZE true
+   MAX_OPT_CYCLES   50
+$end
+
+@@@
+
+$comment
+Frequency calculation at optimized geometry
+$end
+
+$molecule
+read
+$end
+
+$rem
+   JOBTYPE          freq
+   METHOD           b3lyp
+   BASIS            6-31g*
+   SCF_GUESS        read
+$end

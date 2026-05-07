@@ -13,6 +13,44 @@ dependencies = [
 chem = [
     "rdkit==2026.3.1",
 ]
+chem-materials = [
+    "pymatgen==2026.5.4",
+    "mp-api==0.46.1",
+    "ase==3.28.0",
+]
+chem-quantum-parse = [
+    "cclib==1.8.1",
+]
+chem-bioactivity = [
+    "chembl_webresource_client==0.10.9",
+    "pubchempy==1.0.5",
+]
+chem-md = [
+    "openmm==8.5.1",
+    "MDAnalysis==2.10.0",
+]
+chem-cheminformatics-ml = [
+    "datamol==0.12.5",
+    "molfeat==0.11.0",
+]
+chem-materials-ml = [
+    "matminer==0.10.1",
+    "jarvis-tools==2026.4.2",
+]
+chem-workflows = [
+    "custodian==2025.12.14",
+    "fireworks==2.1.3",
+    "quacc==1.2.6",
+]
+chem-experimental = [
+    "chemqa[chem-materials]",
+    "chemqa[chem-quantum-parse]",
+    "chemqa[chem-bioactivity]",
+    "chemqa[chem-md]",
+    "chemqa[chem-cheminformatics-ml]",
+    "chemqa[chem-materials-ml]",
+    "chemqa[chem-workflows]",
+]
 paper-parse = [
     "PyMuPDF==1.27.2.2",
 ]
