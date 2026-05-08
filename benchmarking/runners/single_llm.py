@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
-from ..contracts import AnswerPayload, RunnerResult, RunStatus
+from ..contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
 from ..skill_audit import build_skill_use_audit
 
 
@@ -52,12 +53,14 @@ class SingleLLMRunner:
             input_bundle=input_bundle,
         )
         session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
+        wrapper_path = Path(__file__).resolve().parents[1] / "single_llm_openclaw_wrapper.py"
         command = [
-            "openclaw",
-            "agent",
-            "--local",
+            sys.executable,
+            str(wrapper_path),
             "--agent",
             self.agent_id,
+            "--config-file",
+            str(self.config_path),
             "--session-id",
             session_id,
             "--message",
@@ -85,6 +88,29 @@ class SingleLLMRunner:
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        session_isolation = runner_meta.get("session_isolation")
+        if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
+            actual_session = str(session_isolation.get("postflight_entry_session_id") or "")
+            requested_session = str(session_isolation.get("requested_session_id") or session_id)
+            message = (
+                "Single-LLM OpenClaw session isolation failed: "
+                f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
+            )
+            runner_meta["error"] = message
+            return RunnerResult(
+                status=RunStatus.FAILED,
+                answer=AnswerPayload(
+                    short_answer_text=short_answer_text,
+                    full_response_text=full_response_text,
+                ),
+                raw=payload,
+                runner_meta=runner_meta,
+                failure=FailureInfo(
+                    code="session_isolation_failed",
+                    message=message,
+                    details=dict(session_isolation),
+                ),
+            )
         return RunnerResult(
             status=RunStatus.COMPLETED,
             answer=AnswerPayload(

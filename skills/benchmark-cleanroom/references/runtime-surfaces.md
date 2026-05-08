@@ -50,9 +50,15 @@ OpenClaw activity heuristically.
 
 ## Cleanup Targets
 
-The cleaner removes run-scoped state only:
+The cleaner terminates run-scoped processes only:
 
 - processes referenced by leases or explicit run/session ids
+
+It must not delete:
+
+- shared `agents/*/agent` configs
+- shared model/profile definitions
+- unrelated slot workspaces
 - `clawteam-data/teams/<run_id>`
 - `clawteam-data/tasks/<run_id>`
 - run session jsonl/checkpoint/lock files
@@ -61,8 +67,6 @@ The cleaner removes run-scoped state only:
 - run-scoped artifact directories
 - manifest / lease / cleanup report files under the output root
 
-It must not delete:
-
-- shared `agents/*/agent` configs
-- shared model/profile definitions
-- unrelated slot workspaces
+`cleanup_benchmark_run.py` keeps the historical `session_store_scrub` and
+`removed_paths` fields in reports for compatibility, but normal cleanup leaves
+them empty.

@@ -10,7 +10,7 @@
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
   - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
-  - `DONE`: Run a single-agent OpenClaw baseline by shelling out to `openclaw agent` via `workspace/benchmarking/runners/single_llm.py`.
+  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py` and `workspace/benchmarking/single_llm_openclaw_wrapper.py`.
   - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
   - `DONE`: Manage DebateClaw V1 runtime, slot provisioning, prompt/materialization, and launch commands via `workspace/skills/debateclaw-v1/scripts/*.py`.
   - `DONE`: Maintain live debate protocol state in SQLite and expose CLI commands for init/status/next-action/submit/advance via `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
@@ -24,7 +24,7 @@
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
   - `DONE`: Rerank papers by building GROBID profiles and calling an OpenAI-compatible chat-completions endpoint via `workspace/skills/paper-rerank/scripts/paper_rerank.py`.
-  - `DONE`: Clean up benchmark processes, session files, run-scoped artifacts, and leases via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
+  - `DONE`: Terminate benchmark-owned leftover processes from manifests/leases while preserving session files, session stores, run-scoped artifacts, manifests, and cleanup reports via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
   - `DONE`: Manage local Docker-backed GROBID via `workspace/scripts/docker_services.sh` and native macOS MinerU API via `workspace/scripts/mineru_service.sh`.
   - `PARTIAL`: Native workflow-package support exists for `chemqa-review@1`, but the package implementation is explicitly inactive scaffold metadata and is not the live runtime path.
   - `NOT_IMPLEMENTED`: No actual web UI/server is implemented in the repo despite `web-ui` optional dependencies in `workspace/pyproject.toml`.
@@ -77,6 +77,8 @@
       - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata and final answer text.
     - `status.py`
       - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
+    - `single_llm_openclaw_wrapper.py`
+      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, and emits session isolation audit metadata.
     - `runners/`
       - `single_llm.py`: baseline single-agent runner.
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
@@ -102,7 +104,7 @@
     - Post-run reporting records actual tool-use audit metadata such as tool-call counts, model-declared skipped traces, and no-tool-call outcomes. Skipped traces are diagnostic only and do not count as executed skill use.
     - Core executable wrappers for `cclib`, `pymatgen`, `molecular-dynamics`, and `chembl-database` return structured error payloads for missing dependencies, missing input files, parse failures, and provider/API failures instead of crashing.
   - `benchmark-cleanroom/`
-    - Run-scoped cleanup manifests and lease management plus cleanup executor.
+    - Run-scoped cleanup manifests and lease management plus a process-only cleanup executor that intentionally preserves benchmark session and artifact state.
   - `paper-retrieval/`, `paper-access/`, `paper-parse/`, `paper-rerank/`
     - Standalone paper-processing pipeline stages.
 
@@ -117,7 +119,7 @@
   - `benchmark_test.py` -> `skills/chemqa-review`
     - Launches ChemQA preset flow, passes resolved `answer_kind`, polls benchmark-visible run status, prefers canonical Artifact Flow paths, archives outputs.
   - `benchmark_test.py` -> `skills/benchmark-cleanroom`
-    - Writes cleanup manifests and runs cleanup hooks on exit/failure.
+    - Writes cleanup manifests and runs process-finalizer cleanup hooks on exit/failure without deleting benchmark session or artifact state.
   - `chemqa_review_openclaw_driver.py` -> `debate_state.py`
     - Subprocess-driven control loop; asks for next action, submits artifacts, advances state.
   - `collect_artifacts.py` -> protocol YAML/JSON emitted by coordinator
@@ -224,11 +226,11 @@
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
-  - Description: Builds prompt, shells out to `openclaw agent --local`, unwraps JSON payload, normalizes answer tracks.
+  - Description: Builds prompt, shells out through the single-LLM OpenClaw wrapper, unwraps JSON payload, normalizes answer tracks, and marks a record failed/unscored if wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`.
   - Input / Output:
     - Input: benchmark record, group config, runtime bundle root.
-    - Output: `RunnerResult`.
-  - Implementation location: `workspace/benchmarking/runners/single_llm.py`
+    - Output: `RunnerResult` with `runner_meta.session_isolation` audit metadata.
+  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
@@ -416,10 +418,10 @@
   - Status: `DONE`
 
 - Name: Benchmark cleanup executor
-  - Description: Terminates related processes, scrubs session stores, removes run-scoped artifacts, verifies no leftovers remain.
+  - Description: Terminates related processes from leases and process scans, but does not scrub session stores or remove run-scoped session/artifact/config/manifest files.
   - Input / Output:
     - Input: cleanup manifest or explicit run parameters.
-    - Output: cleanup report JSON.
+    - Output: cleanup report JSON with retained `session_store_scrub` and `removed_paths` fields left empty for compatibility.
   - Implementation location: `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`
   - Status: `DONE`
 
@@ -485,7 +487,7 @@
     - It prefers canonical `qa_result_path`, `final_answer_artifact_path`, `failure_artifact_path`, and `artifact_manifest_path` from run status. If artifacts are missing, it tries to rebuild them from protocol files with `collect_artifacts.py`.
     - If the final `qa_result.json` is still missing or unusable, it can fall back to the latest archived `proposer-1` proposal or `final_answer_preview`.
   - All per-record outputs are persisted immediately under `per-record/<group>/<slug>.json`.
-  - Cleanup manifests are registered and benchmark-cleanroom cleanup runs in `finally`/signal/atexit paths.
+  - Cleanup manifests are registered and benchmark-cleanroom process finalization runs in `finally`/signal/atexit paths; session stores, transcripts, and run artifacts remain on disk for audit.
 
 - Real ChemQA control path
   - The operational state machine is `workspace/skills/debateclaw-v1/scripts/debate_state.py`, not `workspace/skills/chemqa-review/runtime/workflow.py`.
@@ -500,6 +502,7 @@
   - `chemqa-review/scripts/bundle_common.py` and the prompt pack now treat all skills listed in `skills/chemistry-routing-matrix.json` as required sibling skills alongside DebateClaw and the paper pipeline.
   - ChemQA proposer prompts use full-availability skill discovery wording: provider skills can be used directly when they help, full `SKILL.md` files should be read only for skills about to be used, and unexecuted skills are not valid provider traces.
   - `benchmarking/prompts.py` injects the compact Hierarchical Skill Tree into single-agent benchmark prompts, so single-agent skills-on runs receive domain/family discovery guidance rather than record-level route selection.
+  - Single-agent benchmark turns use a fixed OpenClaw agent per experiment group and rely on `benchmarking/single_llm_openclaw_wrapper.py` to delete stale `agent:<id>:main` entries before each run-scoped session turn; old transcript files are not deleted.
   - `pyproject.toml` exposes optional experimental chemistry extras for PyPI-resolvable dependency families. `chemqa[chem-experimental]` aggregates those families but is intentionally not included in `chemqa[full]`, and OpenFF/tooluniverse/HPC executable stacks remain conda, preinstalled, API, or external-service dependencies described by their skill docs rather than default pip dependencies.
   - The shared ChemQA prompt module is named for the fixed-lane protocol rather than native workflow-package execution, so prompt assembly does not imply that `ChemQAWorkflow` is active.
   - ChemQA candidate submissions are validated in provider-trace audit mode by default. The policy audits provider traces the model actually submits; skipped provider traces are invalid and do not satisfy tool-backed evidence.
@@ -568,7 +571,7 @@
 ## 6. Risks & Technical Debt
 - Fragile logic
   - Artifact recovery depends on specific filenames and directory heuristics in `workspace/benchmarking/runners/chemqa.py`.
-  - Cleanup depends on manifests, process command-line matching, and session store scrubbing heuristics in `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
+  - Cleanup depends on manifests and process command-line matching in `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`; session/artifact retention is intentional and may require separate manual pruning outside benchmark correctness paths.
   - ChemQA recovery depends on `spawn_registry.json`, `/proc`-style process inspection when available, and workspace naming conventions in `workspace/skills/chemqa-review/scripts/recover_run.py`.
 
 - Hardcoded values
@@ -599,6 +602,6 @@
   - Either add a real web UI/API module for the `web-ui` extras or drop those extras from the project metadata.
 - Harden artifact and cleanup flows:
   - Continue reducing filename/path guessing in legacy ChemQA artifact recovery paths now that canonical Artifact Flow paths exist.
-  - Centralize run manifest/session/process metadata contracts used by runners, drivers, and cleanup.
+  - Centralize run manifest/session/process metadata contracts used by runners, drivers, cleanup, and single-LLM session-isolation audits.
 - Add clearer ownership boundaries:
   - Separate DebateClaw engine logic, ChemQA protocol logic, benchmark orchestration, and paper pipeline into smaller modules with fewer embedded subprocess wrappers.

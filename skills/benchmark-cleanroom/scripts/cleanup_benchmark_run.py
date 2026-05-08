@@ -484,40 +484,7 @@ def cleanup(context: CleanupContext, *, grace_seconds: float, kill_after_seconds
         report["termination"]["kill_pids"] = []
     report["termination"]["remaining_after_kill"] = remaining_after_kill
 
-    session_ids = {str(value).strip() for value in dict(manifest.get("session_assignments") or {}).values() if str(value).strip()}
-    for store_path in candidate_session_stores(manifest):
-        result = scrub_session_store(store_path, run_id=run_id, session_ids=session_ids, dry_run=dry_run)
-        report["session_store_scrub"].append(result)
-
-    removable_paths: list[Path] = []
-    clawteam_dir = str(manifest.get("clawteam_data_dir") or "").strip()
-    if clawteam_dir:
-        clawteam_root = Path(clawteam_dir).expanduser().resolve()
-        removable_paths.extend([clawteam_root / "teams" / run_id, clawteam_root / "tasks" / run_id])
-    removable_paths.extend(session_paths_from_manifest(manifest))
-    removable_paths.extend(normalize_path_list(list(manifest.get("control_roots") or [])))
-    removable_paths.extend(normalize_path_list(list(manifest.get("generated_roots") or [])))
-    removable_paths.extend(normalize_path_list(list(manifest.get("artifact_roots") or [])))
-    removable_paths.extend([Path(item["_lease_path"]).expanduser().resolve() for item in lease_payloads if str(item.get("_lease_path") or "").strip()])
-    if context.manifest_path is not None:
-        removable_paths.append(context.manifest_path)
-    output_root = Path(str(manifest.get("output_root") or "")).expanduser().resolve() if str(manifest.get("output_root") or "").strip() else None
-    if output_root is not None:
-        removable_paths.append(output_root / "cleanroom" / "reports" / cleanup_report_filename_for_run(run_id))
-
-    seen_paths: set[str] = set()
-    for path in removable_paths:
-        key = str(path)
-        if key in seen_paths:
-            continue
-        seen_paths.add(key)
-        try:
-            removed = remove_path(path, dry_run=dry_run)
-            report["removed_paths"].append({"path": str(path), "removed": removed})
-        except FileNotFoundError:
-            report["warnings"].append(f"Missing path during cleanup: {path}")
-        except Exception as exc:
-            report["errors"].append(f"{path}: {exc}")
+    report["retention_policy"] = "processes_only_preserve_sessions_and_artifacts"
 
     remaining_processes = []
     if not dry_run:
@@ -528,13 +495,12 @@ def cleanup(context: CleanupContext, *, grace_seconds: float, kill_after_seconds
             pid = maybe_int(item.get("pid"))
             if pid_exists(pid):
                 remaining_processes.append({"pid": pid, "cmdline": safe_read_cmdline(pid, snapshot=snapshot)})
-    remaining_session_entries = [] if dry_run else postcheck_session_stores(manifest)
     report["postcheck"] = {
         "remaining_processes": remaining_processes,
-        "remaining_session_entries": remaining_session_entries,
+        "remaining_session_entries": [],
     }
     report["completed_at"] = iso_now()
-    report["success"] = not remaining_processes and not remaining_session_entries and not report["errors"]
+    report["success"] = not remaining_processes and not report["errors"]
     return report
 
 

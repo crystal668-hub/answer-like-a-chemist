@@ -238,15 +238,19 @@ class BenchmarkCleanroomTests(unittest.TestCase):
                 names,
             )
 
-    def test_cleanup_preserves_benchmark_archive_dir_outside_manifest_roots(self) -> None:
+    def test_cleanup_preserves_benchmark_runtime_artifacts_and_session_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_root = Path(tmpdir) / "out"
             scratch_dir = output_root / "generated" / "artifacts" / "demo-run"
             archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / "demo-run"
+            store_path = output_root / "agents" / "debate-1" / "sessions" / "sessions.json"
             scratch_dir.mkdir(parents=True, exist_ok=True)
             archive_dir.mkdir(parents=True, exist_ok=True)
+            store_path.parent.mkdir(parents=True, exist_ok=True)
             (scratch_dir / "qa_result.json").write_text("{}", encoding="utf-8")
             (archive_dir / "qa_result.json").write_text("{}", encoding="utf-8")
+            store_payload = {"agent:debate-1:main": {"sessionId": "demo-session"}}
+            store_path.write_text(json.dumps(store_payload, indent=2), encoding="utf-8")
 
             manifest = {
                 "run_id": "demo-run",
@@ -259,7 +263,7 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             context = cleanup_benchmark_run.CleanupContext(manifest=manifest, manifest_path=None)
             with mock.patch.object(cleanup_benchmark_run, "iter_lease_payloads", return_value=[]):
                 with mock.patch.object(cleanup_benchmark_run, "process_targets", return_value=([], [], [])):
-                    with mock.patch.object(cleanup_benchmark_run, "candidate_session_stores", return_value=[]):
+                    with mock.patch.object(cleanup_benchmark_run, "candidate_session_stores", return_value=[store_path]):
                         with mock.patch.object(cleanup_benchmark_run, "session_paths_from_manifest", return_value=[]):
                             with mock.patch.object(cleanup_benchmark_run, "terminate_process_groups", return_value=[]):
                                 with mock.patch.object(cleanup_benchmark_run, "terminate_pids", return_value=[]):
@@ -272,9 +276,13 @@ class BenchmarkCleanroomTests(unittest.TestCase):
                                         )
 
             self.assertTrue(report["success"])
-            self.assertFalse(scratch_dir.exists())
+            self.assertEqual([], report["session_store_scrub"])
+            self.assertEqual([], report["removed_paths"])
+            self.assertEqual([], report["postcheck"]["remaining_session_entries"])
+            self.assertTrue(scratch_dir.exists())
             self.assertTrue(archive_dir.exists())
             self.assertTrue((archive_dir / "qa_result.json").is_file())
+            self.assertEqual(store_payload, json.loads(store_path.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

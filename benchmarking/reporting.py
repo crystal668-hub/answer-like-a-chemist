@@ -62,6 +62,25 @@ def skill_tool_call_count(item: GroupRecordResult) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
+def session_isolation_audit(item: GroupRecordResult) -> dict[str, Any]:
+    audit = (item.runner_meta or {}).get("session_isolation") or {}
+    return audit if isinstance(audit, dict) else {}
+
+
+def session_isolation_failed(item: GroupRecordResult) -> bool:
+    audit = session_isolation_audit(item)
+    return audit.get("session_isolation_ok") is False
+
+
+def session_contaminated(item: GroupRecordResult) -> bool:
+    audit = session_isolation_audit(item)
+    if audit.get("session_isolation_ok") is not False:
+        return False
+    requested = str(audit.get("requested_session_id") or "").strip()
+    actual = str(audit.get("postflight_entry_session_id") or "").strip()
+    return bool(actual and actual != requested)
+
+
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
     return {
         "count": len(items),
@@ -80,6 +99,9 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "skill_model_declared_skip_count": sum(1 for item in items if skill_audit(item).get("model_declared_skip")),
         "skill_no_tool_call_count": sum(1 for item in items if skill_audit(item).get("no_tool_call")),
         "skill_tool_call_total": sum(skill_tool_call_count(item) for item in items),
+        "session_isolation_ok_count": sum(1 for item in items if session_isolation_audit(item).get("session_isolation_ok") is True),
+        "session_isolation_failed_count": sum(1 for item in items if session_isolation_failed(item)),
+        "session_contaminated_count": sum(1 for item in items if session_contaminated(item)),
         "avg_score": sum(float(item.evaluation["score"]) for item in items) / len(items),
         "avg_normalized_score": sum(float(item.evaluation["normalized_score"]) for item in items) / len(items),
         "avg_elapsed_seconds": sum(float(item.elapsed_seconds) for item in items) / len(items),
