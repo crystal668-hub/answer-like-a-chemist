@@ -39,7 +39,7 @@ try:
         source_pair_key as record_source_pair_key,
     )
     from benchmarking.evaluation import evaluate_record, register_evaluator
-    from benchmarking.chemistry_routing import load_chemistry_routing_matrix
+    from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from benchmarking.evaluators import (
         EvaluationError,
         EvaluationResult,
@@ -106,7 +106,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         source_pair_key as record_source_pair_key,
     )
     from workspace.benchmarking.evaluation import evaluate_record, register_evaluator
-    from workspace.benchmarking.chemistry_routing import load_chemistry_routing_matrix
+    from workspace.benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from workspace.benchmarking.evaluators import (
         EvaluationError,
         EvaluationResult,
@@ -182,10 +182,7 @@ DEFAULT_JUDGE_MODEL = "su8/gpt-5.4"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
 BASELINE_WORKSPACE_ROOT = runtime_paths.benchmark_runtime_root
-BENCHMARK_SKILLS_ALLOWLIST = [
-    str(entry["skill"])
-    for entry in load_chemistry_routing_matrix().get("skills", [])
-]
+BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
 CHEMQA_SLOT_SETS = {
     "chemqa_skills_on": "A",
 }

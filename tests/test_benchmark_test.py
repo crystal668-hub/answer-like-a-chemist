@@ -76,16 +76,20 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
-    def test_benchmark_skills_allowlist_comes_from_routing_matrix(self) -> None:
-        matrix_skills = [
+    def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
+        inventory_skills = [
             str(entry["skill"])
-            for entry in benchmark_test.load_chemistry_routing_matrix().get("skills", [])
+            for entry in benchmark_test.load_chemistry_skill_inventory().get("skills", [])
         ]
 
-        self.assertEqual(matrix_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(inventory_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(84, len(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST))
         self.assertIn("chem-calculator", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("pymatgen", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("tooluniverse-chemical-safety", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-retrieval", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-access", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-parse", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-rerank", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("benchmark-cleanroom", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
