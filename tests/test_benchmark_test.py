@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,14 +24,8 @@ assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = benchmark_test
 SPEC.loader.exec_module(benchmark_test)
 
-try:
-    from benchmarking.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
-    from benchmarking.reporting import build_error_group_record_result as shared_build_error_group_record_result
-except ModuleNotFoundError as exc:
-    if exc.name != "benchmarking":
-        raise
-    from workspace.benchmarking.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
-    from workspace.benchmarking.reporting import build_error_group_record_result as shared_build_error_group_record_result
+from benchmarking.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
+from benchmarking.reporting import build_error_group_record_result as shared_build_error_group_record_result
 
 
 @contextmanager
@@ -76,6 +71,48 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
         self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
+
+    def test_benchmark_test_loads_from_absolute_path_without_workspace_package_import(self) -> None:
+        code = f"""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+
+module_path = Path({str(MODULE_PATH)!r})
+blocked = {{module_path.parent.resolve(), module_path.parent.parent.resolve()}}
+sys.path = [
+    entry
+    for entry in sys.path
+    if Path(entry or os.getcwd()).resolve() not in blocked
+]
+spec = importlib.util.spec_from_file_location("benchmark_test_isolated", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+print(json.dumps({{
+    "answer_payload_module": module.AnswerPayload.__module__,
+    "runtime_paths_module": module.runtime_paths.__name__,
+}}))
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = dict(os.environ)
+            env.pop("PYTHONPATH", None)
+            completed = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=tmpdir,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual("", completed.stderr)
+        self.assertEqual(0, completed.returncode)
+        payload = json.loads(completed.stdout)
+        self.assertEqual("benchmarking.contracts", payload["answer_payload_module"])
+        self.assertEqual("runtime_paths", payload["runtime_paths_module"])
 
     def test_benchmark_skills_allowlist_comes_from_routing_matrix(self) -> None:
         matrix_skills = [

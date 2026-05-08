@@ -467,6 +467,7 @@
 ## 4. Actual Behavior
 - Primary execution flow: three-group skills benchmark
   - `workspace/benchmark_test.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided.
+  - On import, `workspace/benchmark_test.py` ensures the workspace source root is on `sys.path` and imports benchmark internals via top-level `benchmarking.*`/`runtime_paths`, so loading the entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
   - It normalizes records through `benchmarking.datasets.load_records`.
   - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; `benchmark_test.py` keeps compatibility wrappers around that package module.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
