@@ -1048,7 +1048,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_injects_skill_routing_only_when_enabled(self) -> None:
+    def test_build_single_llm_prompt_injects_skill_tree_only_when_enabled(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1072,12 +1072,15 @@ Points: 0.5, Item: Second criterion
             input_bundle=None,
         )
 
-        self.assertIn("Experimental chemistry skill routing rules", skills_on)
-        self.assertIn("`chem-calculator`", skills_on)
-        self.assertIn("`pymatgen`", skills_on)
+        self.assertIn("Skill capability tree", skills_on)
+        self.assertIn("First choose a capability domain", skills_on)
+        self.assertIn("paper-pipeline", skills_on)
+        self.assertIn("calculation-math", skills_on)
+        self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
+        self.assertNotIn("first matching primary route", skills_on)
+        self.assertNotIn("SKILL TRACE: skipped", skills_on)
         self.assertNotIn("Do not use OpenClaw skills", skills_on)
-        self.assertNotIn("Experimental chemistry skill routing rules", skills_off)
-        self.assertNotIn("`chem-calculator`", skills_off)
+        self.assertNotIn("Skill capability tree", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
