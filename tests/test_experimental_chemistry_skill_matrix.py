@@ -93,16 +93,16 @@ EXPECTED_EXPERIMENTAL_SKILLS = {
 
 
 def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
-    from benchmarking.chemistry_routing import load_chemistry_routing_matrix
+    from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
 
-    matrix = load_chemistry_routing_matrix()
-    skill_names = {entry["skill"] for entry in matrix["skills"]}
+    inventory = load_chemistry_skill_inventory()
+    skill_names = set(benchmark_skill_allowlist())
 
-    assert len(matrix["skills"]) == 84
-    assert len(skill_names) == len(matrix["skills"])
+    assert len(inventory["skills"]) == 84
+    assert len(skill_names) == len(inventory["skills"])
     assert EXPECTED_EXPERIMENTAL_SKILLS <= skill_names
     assert {"rdkit", "opsin", "pubchem", "chem-calculator"} <= skill_names
-    assert matrix["mode"] == "experimental_mid_plus"
+    assert inventory["mode"] == "experimental_mid_plus"
 
 
 def test_selected_experimental_skills_are_installed_as_skill_bundles() -> None:
@@ -124,68 +124,30 @@ def test_core_new_skill_wrappers_are_installed() -> None:
         assert (SKILLS_ROOT / skill / wrapper).is_file(), f"{skill}/{wrapper}"
 
 
-def test_compact_prompt_routing_is_grouped_not_full_skill_docs() -> None:
-    from benchmarking.chemistry_routing import render_compact_skill_routing_table
+def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
+    from benchmarking.skill_tree import render_top_level_skill_tree
 
-    table = render_compact_skill_routing_table()
+    tree = render_top_level_skill_tree()
 
-    for skill in (
-        "rdkit",
-        "pymatgen",
-        "ase",
-        "cclib",
-        "chembl-database",
-        "molecular-dynamics",
-        "open-forcefield-toolkit",
-        "tooluniverse-chemical-safety",
-        "q-chem",
-        "chgnet",
+    for domain_or_family in (
+        "calculation-math",
+        "molecular-structure-identity",
+        "literature-evidence",
+        "paper-pipeline",
+        "materials-crystals",
+        "quantum-hpc",
+        "workflow-automation",
     ):
-        assert f"`{skill}`" in table
+        assert domain_or_family in tree
 
-    assert "Quick Start Guide" not in table
-    assert "Core Workflow: OpenMM Simulation" not in table
-    assert "Installation and Setup" not in table
-    assert len(table.splitlines()) < 90
-
-
-def test_route_scenarios_use_unique_primary_skills() -> None:
-    from benchmarking.chemistry_routing import route_skill_for_text
-
-    cases = {
-        "Count NMR symmetry classes for the SMILES Cc1ccccc1.": "rdkit",
-        "Determine coordination polyhedra from this CIF crystal structure.": "pymatgen",
-        "Build an ASE slab adsorption model and NEB path for CO on Pt.": "ase",
-        "Parse Gaussian output for SCF energy, HOMO/LUMO, and vibrational frequencies.": "cclib",
-        "Standardize a molecule batch and compute Bemis-Murcko scaffolds with Datamol.": "datamol",
-        "Build QSAR molecular embeddings and molecular fingerprints with MolFeat.": "molfeat",
-        "Find EGFR inhibitors with IC50 below 100 nM and summarize SAR.": "chembl-database",
-        "Search ZINC for purchasable drug-like analogs for virtual screening.": "zinc-database",
-        "Retrieve Materials Project band gap and energy above hull for mp-149.": "materials-project",
-        "Find the COD entry for an experimental crystal structure.": "cod",
-        "Query OQMD for formation energy and phase stability.": "oqmd",
-        "Look up JARVIS 2D material exfoliation energy and DFT properties.": "jarvis",
-        "Check CCCBDB reference thermochemistry for a small molecule.": "cccbdb",
-        "Compare with MolSSI QCA quantum chemistry benchmark data.": "molssi-qca",
-        "Analyze an OpenMM trajectory for RMSD and RMSF.": "molecular-dynamics",
-        "Set up an OpenMM simulation system with force fields and solvation.": "openmm",
-        "Assign AM1-BCC partial charges using SMIRNOFF.": "open-forcefield-toolkit",
-        "Assess chemical safety with ADMET, FDA labels, CTD, and STITCH evidence.": "tooluniverse-chemical-safety",
-        "Create a Q-Chem TDDFT input with PCM solvent and fix SCF convergence.": "q-chem",
-        "Choose ORCA DLPNO-CCSD(T) input settings and diagnose convergence errors.": "hpc-orca",
-        "Interpret an IR spectrum encoded in JCAMP-DX format.": "jcamp-dx",
-        "Use CHGNet to relax a crystal structure with an ML potential.": "chgnet",
-        "Search papers and return normalized literature candidates for CO2 reduction catalysts.": "paper-retrieval",
-        "Resolve DOI and download the open access PDF for this paper candidate.": "paper-access",
-        "Parse paper PDF fulltext and extract sections from the local paper PDF.": "paper-parse",
-        "Rerank papers using GROBID profiles and listwise rerank decisions.": "paper-rerank",
-    }
-
-    for prompt, expected in cases.items():
-        assert route_skill_for_text(prompt) == expected, prompt
+    assert "Quick Start Guide" not in tree
+    assert "Core Workflow: OpenMM Simulation" not in tree
+    assert "Installation and Setup" not in tree
+    assert "first matching primary route" not in tree
+    assert len(tree.splitlines()) < 60
 
 
-def test_single_agent_prompt_injects_same_compact_matrix() -> None:
+def test_single_agent_prompt_injects_skill_tree() -> None:
     from benchmarking.datasets import BenchmarkRecord
     from benchmarking.prompts import build_single_llm_prompt
 
@@ -200,10 +162,10 @@ def test_single_agent_prompt_injects_same_compact_matrix() -> None:
 
     prompt = build_single_llm_prompt(record, websearch_enabled=False)
 
-    assert "Experimental chemistry skill routing rules:" in prompt
-    assert "`pymatgen`" in prompt
-    assert "`tooluniverse-chemical-safety`" in prompt
-    assert "Quick Start Guide" not in prompt
+    assert "Skill capability tree:" in prompt
+    assert "materials-crystals" in prompt
+    assert "paper-pipeline" in prompt
+    assert "Experimental chemistry skill routing rules" not in prompt
 
 
 def test_experimental_skill_dependencies_are_optional_and_scoped() -> None:

@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
-from .chemistry_routing import render_compact_skill_routing_table
 from .datasets import BenchmarkRecord
+from .skill_tree import render_top_level_skill_tree
 
 
 FORMULA_SIGNAL_RE = re.compile(
@@ -66,7 +66,7 @@ def build_single_llm_prompt(
         "Be careful, concise, and do not fabricate missing facts.",
     ]
     if skills_enabled:
-        instructions.append(render_compact_skill_routing_table())
+        instructions.append(render_top_level_skill_tree())
     else:
         instructions.append("Do not use OpenClaw skills or local skill tools for this run.")
     if websearch_enabled:
