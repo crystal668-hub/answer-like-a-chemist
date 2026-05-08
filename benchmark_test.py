@@ -844,29 +844,10 @@ def parse_superchem_option_answer(text: str, *, valid_options: Iterable[str]) ->
         raise BenchmarkError(str(exc)) from exc
 
 
-def _candidate_local_image_paths(raw_path: str) -> list[Path]:
-    path = Path(raw_path).expanduser()
-    candidates = [path]
-    parts = path.parts
-    for index, part in enumerate(parts):
-        if part == "benchmarks" and index + 1 < len(parts):
-            candidates.append(runtime_paths.benchmarks_root.joinpath(*parts[index + 1 :]))
-            break
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
-    return deduped
-
-
 def _resolve_local_image_path(raw_path: str) -> Path | None:
-    for candidate in _candidate_local_image_paths(raw_path):
-        if candidate.is_file():
-            return candidate.resolve()
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
     return None
 
 
@@ -878,6 +859,17 @@ def _resolve_record_local_image_path(record: BenchmarkRecord, raw_path: str) -> 
         if candidate.is_file():
             return candidate
     return _resolve_local_image_path(raw_path)
+
+
+def _resolve_record_relative_image_path(record: BenchmarkRecord, raw_path: str) -> Path | None:
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return None
+    source_dir = Path(record.source_file).expanduser().resolve().parent
+    candidate = (source_dir / path).resolve()
+    if candidate.is_file():
+        return candidate
+    return None
 
 
 def _superchem_image_path_items(record: BenchmarkRecord) -> list[str]:
@@ -907,7 +899,7 @@ def _superchem_image_path_items(record: BenchmarkRecord) -> list[str]:
 def superchem_image_paths(record: BenchmarkRecord) -> list[Path]:
     paths: list[Path] = []
     for item in _superchem_image_path_items(record):
-        resolved = _resolve_record_local_image_path(record, item)
+        resolved = _resolve_record_relative_image_path(record, item)
         if resolved is not None:
             paths.append(resolved)
     return paths
@@ -989,7 +981,7 @@ def ensure_runtime_bundle(record: BenchmarkRecord, *, bundle_root: Path) -> Runt
         if record.dataset == "superchem":
             missing_paths: list[str] = []
             for index, raw_path in enumerate(_superchem_image_path_items(record), start=1):
-                source_path = _resolve_record_local_image_path(record, raw_path)
+                source_path = _resolve_record_relative_image_path(record, raw_path)
                 if source_path is None:
                     missing_paths.append(raw_path)
                     continue

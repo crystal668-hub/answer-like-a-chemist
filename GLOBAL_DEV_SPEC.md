@@ -153,7 +153,7 @@
   - Status: `DONE`
 
 - Name: Benchmark visual input bundle materialization
-  - Description: Creates per-record local input bundles for benchmark records with visual inputs. SuperChem image paths are resolved from record-relative paths, current local paths, and legacy absolute paths by remapping the suffix below `benchmarks/`; required multimodal SuperChem images fail fast when unavailable. HLE image fields are materialized from base64 data URIs or local files into the bundle, and remote-only HLE images fail fast instead of silently dropping visual context.
+  - Description: Creates per-record local input bundles for benchmark records with visual inputs. SuperChem image paths are expected to be relative to the record JSONL directory, so machine-local absolute paths are cleaned at the data layer rather than remapped at runtime; required multimodal SuperChem images fail fast when unavailable. HLE image fields are materialized from base64 data URIs or local files into the bundle, and remote-only HLE images fail fast instead of silently dropping visual context.
   - Input / Output:
     - Input: SuperChem/HLE `BenchmarkRecord` payloads plus a run-local bundle root.
     - Output: `question.md` and localized `images/*` files referenced by single-agent and ChemQA prompts.

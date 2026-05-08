@@ -1192,12 +1192,14 @@ Points: 0.5, Item: Second criterion
     def test_ensure_runtime_bundle_copies_superchem_images(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            source_image = temp_dir / "source.png"
+            data_dir = temp_dir / "data"
+            source_image = temp_dir / "assets" / "source.png"
+            source_image.parent.mkdir(parents=True)
             source_image.write_bytes(b"image-bytes")
             record = benchmark_test.BenchmarkRecord(
                 record_id="superchem-demo-mm",
                 dataset="superchem",
-                source_file="/tmp/superchem.jsonl",
+                source_file=str(data_dir / "superchem.jsonl"),
                 eval_kind="superchem_multiple_choice_rpf",
                 prompt="Question prompt",
                 reference_answer="B",
@@ -1206,7 +1208,7 @@ Points: 0.5, Item: Second criterion
                     "modality": "multimodal",
                     "question": "Question prompt",
                     "options": {"A": "foo", "B": "bar"},
-                    "question_image_paths": [str(source_image)],
+                    "question_image_paths": ["../assets/source.png"],
                     "option_image_paths": {},
                 },
             )
@@ -1218,42 +1220,30 @@ Points: 0.5, Item: Second criterion
             self.assertTrue(bundle.image_files[0].is_file())
             self.assertEqual(b"image-bytes", bundle.image_files[0].read_bytes())
 
-    def test_ensure_runtime_bundle_relocates_legacy_superchem_asset_paths(self) -> None:
+    def test_ensure_runtime_bundle_rejects_superchem_absolute_asset_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            current_asset = temp_dir / "benchmarks" / "superchem" / "assets" / "_shared" / "aa" / "asset.png"
-            current_asset.parent.mkdir(parents=True)
-            current_asset.write_bytes(b"relocated-image")
-            original_benchmarks_root = benchmark_test.runtime_paths.benchmarks_root
-            benchmark_test.runtime_paths.benchmarks_root = temp_dir / "benchmarks"
-            try:
-                record = benchmark_test.BenchmarkRecord(
-                    record_id="superchem-legacy-mm",
-                    dataset="superchem",
-                    source_file="/tmp/superchem.jsonl",
-                    eval_kind="superchem_multiple_choice_rpf",
-                    prompt="Question prompt",
-                    reference_answer="B",
-                    payload={
-                        "source_uuid": "uuid-demo",
-                        "modality": "multimodal",
-                        "question": "Question prompt",
-                        "options": {"A": "foo", "B": "bar"},
-                        "question_image_paths": [
-                            "/home/dministrator/.openclaw/benchmarks/superchem/assets/_shared/aa/asset.png"
-                        ],
-                        "option_image_paths": {},
-                    },
-                )
-                bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-            finally:
-                benchmark_test.runtime_paths.benchmarks_root = original_benchmarks_root
-            assert bundle is not None
-            self.assertEqual(1, len(bundle.image_files))
-            self.assertEqual(b"relocated-image", bundle.image_files[0].read_bytes())
-            question_text = bundle.question_markdown.read_text(encoding="utf-8")
-            self.assertIn("images/img01.png", question_text)
-            self.assertNotIn("/home/dministrator", question_text)
+            source_image = temp_dir / "assets" / "source.png"
+            source_image.parent.mkdir(parents=True)
+            source_image.write_bytes(b"image-bytes")
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-absolute-mm",
+                dataset="superchem",
+                source_file=str(temp_dir / "data" / "superchem.jsonl"),
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Question prompt",
+                reference_answer="B",
+                payload={
+                    "source_uuid": "uuid-demo",
+                    "modality": "multimodal",
+                    "question": "Question prompt",
+                    "options": {"A": "foo", "B": "bar"},
+                    "question_image_paths": [source_image.as_posix()],
+                    "option_image_paths": {},
+                },
+            )
+            with self.assertRaises(benchmark_test.BenchmarkError):
+                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
     def test_ensure_runtime_bundle_fails_when_superchem_multimodal_images_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
