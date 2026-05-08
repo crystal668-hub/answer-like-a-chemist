@@ -67,7 +67,7 @@
     - `runtime_config.py`
       - Orchestrates run-scoped config payloads, ChemQA slot id mapping, slot workspace provisioning, and config-path pooling for benchmark runs.
     - `prompts.py`
-      - Builds single-agent and ChemQA benchmark prompts and resolves ChemQA answer-kind hints.
+      - Builds single-agent and ChemQA benchmark prompts, adds run-local visual bundle instructions when present, and resolves ChemQA answer-kind hints.
     - `reporting.py`
       - Defines the per-record benchmark result schema and aggregates per-record results into summary buckets.
     - `status.py`
@@ -77,7 +77,7 @@
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
   - `workspace/benchmark_test.py`
     - Main three-group skills benchmark CLI.
-    - Also contains runtime bundle helpers, cleanup registration, runner wiring, and compatibility wrappers for runtime config and evaluator helpers.
+    - Also contains runtime bundle helpers for SuperChem/HLE visual inputs, cleanup registration, runner wiring, and compatibility wrappers for runtime config and evaluator helpers.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
 
@@ -152,6 +152,14 @@
   - Implementation location: `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
   - Status: `DONE`
 
+- Name: Benchmark visual input bundle materialization
+  - Description: Creates per-record local input bundles for benchmark records with visual inputs. SuperChem image paths are resolved from record-relative paths, current local paths, and legacy absolute paths by remapping the suffix below `benchmarks/`; required multimodal SuperChem images fail fast when unavailable. HLE image fields are materialized from base64 data URIs or local files into the bundle, and remote-only HLE images fail fast instead of silently dropping visual context.
+  - Input / Output:
+    - Input: SuperChem/HLE `BenchmarkRecord` payloads plus a run-local bundle root.
+    - Output: `question.md` and localized `images/*` files referenced by single-agent and ChemQA prompts.
+  - Implementation location: `workspace/benchmark_test.py`, `workspace/benchmarking/prompts.py`
+  - Status: `DONE`
+
 - Name: Evaluator registry and dispatch
   - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Scoreable benchmark answers are judged from the complete candidate `answer_text`/full response, while `short_answer_text` remains a legacy/display field and is not used to decide `passed` or score. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
   - Input / Output:
@@ -217,7 +225,7 @@
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
-  - Description: Builds prompt, shells out to `openclaw agent --local`, unwraps JSON payload, normalizes answer tracks.
+  - Description: Builds prompt, includes run-local visual bundle instructions when a record has localized visual inputs, shells out to `openclaw agent --local`, unwraps JSON payload, normalizes answer tracks.
   - Input / Output:
     - Input: benchmark record, group config, runtime bundle root.
     - Output: `RunnerResult`.
@@ -225,7 +233,7 @@
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
-  - Description: Launches ChemQA preset flow, derives an immutable benchmark answer kind, waits for benchmark-visible terminal run-status, triggers bounded recovery when run-status stops changing, prefers canonical Artifact Flow paths, archives artifacts, keeps legacy reconstruction/fallback for compatibility, marks evaluable recovered candidate submissions as scoreable degraded executions, and writes cleanup manifest.
+  - Description: Launches ChemQA preset flow with run-local visual bundle context when present, derives an immutable benchmark answer kind, waits for benchmark-visible terminal run-status, triggers bounded recovery when run-status stops changing, prefers canonical Artifact Flow paths, archives artifacts, keeps legacy reconstruction/fallback for compatibility, marks evaluable recovered candidate submissions as scoreable degraded executions, and writes cleanup manifest.
   - Input / Output:
     - Input: benchmark record, ChemQA skill root, config path, slot set, profile/round overrides.
     - Output: `RunnerResult` plus archived artifact tree including canonical final/failure artifacts when available.
@@ -441,7 +449,7 @@
   - Status: `DONE`
 
 - Name: SuperChem dataset extraction
-  - Description: Reads SUPERChem rows from datasets-server or zip/parquet fallback, localizes assets, emits a multimodal pool.
+  - Description: Reads SUPERChem rows from datasets-server or zip/parquet fallback, localizes assets, emits a multimodal pool with asset paths stored relative to the output JSONL directory when that context is available.
   - Input / Output:
     - Input: dataset name, output JSONL/assets paths.
     - Output: JSONL pool + manifest + assets.
@@ -464,12 +472,15 @@
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
   - `BENCHMARK_SKILLS_ALLOWLIST` is loaded from `workspace/skills/chemistry-routing-matrix.json` (`skills[].skill`) and is written to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
   - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.
+  - Before dispatching a record, `benchmark_test.py` materializes run-local input bundles for benchmark visual inputs. SuperChem bundles copy resolved images into `images/` and rewrite `question.md` to reference those local files; required multimodal images that cannot be resolved raise `BenchmarkError`. HLE bundles decode base64 image data or copy local image files so prompts with "provided information" retain their visual context.
   - For `single_llm_*` groups:
     - The runner shells out directly to `openclaw agent --local ... --json`.
     - It does not use a native Python OpenClaw API.
     - `single_llm_skills_on` includes the compact chemistry routing table in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
+    - When an input bundle exists, the prompt names the bundle directory, tells the agent to read `question.md`, and explicitly instructs it to inspect referenced local images before answering.
   - For `chemqa_*` groups:
     - The runner shells out to ChemQA skill scripts to compile/materialize/launch the run.
+    - When an input bundle exists, the ChemQA goal names the bundle and instructs workers to open `question.md` and inspect referenced images; the bundle directory is also passed as an additional file workspace.
     - It monitors run status via files under `chemqa-review/control/run-status/`.
     - If run-status remains unchanged across polling intervals, it invokes `chemqa-review/scripts/recover_run.py` with the run-scoped `CLAWTEAM_DATA_DIR`; repeated recovery attempts are rate-limited while the status signature remains unchanged.
     - While a worker phase is still in progress, run status may carry a `role_phase` block with turn index, max turns, classification such as `waiting_for_artifact` / `repairing_invalid_artifact` / `repairing_stale_artifact`, and the last structured turn/artifact diagnostics.

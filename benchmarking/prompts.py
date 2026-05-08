@@ -92,6 +92,11 @@ def build_single_llm_prompt(
         instructions.append("Explanation: <your concise explanation>")
         instructions.append("Answer: <your chosen answer>")
         instructions.append("Confidence: <your confidence score between 0% and 100%>")
+        if input_bundle is not None:
+            instructions.append(f"Local file bundle: {input_bundle.bundle_dir}")
+            instructions.append(f"Read the question bundle file first: {input_bundle.question_markdown}")
+            if input_bundle.image_files:
+                instructions.append("Inspect the local image files referenced in the bundle before answering.")
     else:
         instructions.append("Provide a complete answer. If you include a final answer line, use: FINAL ANSWER: <answer>.")
 
@@ -126,5 +131,8 @@ def build_chemqa_goal(
         instructions.append("Explanation: <your concise explanation>")
         instructions.append("Answer: <your chosen answer>")
         instructions.append("Confidence: <your confidence score between 0% and 100%>")
+        if input_bundle is not None:
+            instructions.append(f"Use the local file bundle at `{input_bundle.bundle_dir}`.")
+            instructions.append(f"Open `{input_bundle.question_markdown}` first and inspect any referenced images.")
     instructions.append(f"ChemQA Artifact Flow answer kind: {resolve_chemqa_answer_kind(record)}.")
     return "\n".join(instructions) + "\n\nQUESTION:\n" + record.prompt.strip()

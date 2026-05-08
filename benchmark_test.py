@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
+import binascii
 import csv
 import gc
 import hashlib
@@ -22,6 +24,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 import sys
 from typing import Any, Iterable
 
@@ -841,29 +844,73 @@ def parse_superchem_option_answer(text: str, *, valid_options: Iterable[str]) ->
         raise BenchmarkError(str(exc)) from exc
 
 
-def superchem_image_paths(record: BenchmarkRecord) -> list[Path]:
+def _candidate_local_image_paths(raw_path: str) -> list[Path]:
+    path = Path(raw_path).expanduser()
+    candidates = [path]
+    parts = path.parts
+    for index, part in enumerate(parts):
+        if part == "benchmarks" and index + 1 < len(parts):
+            candidates.append(runtime_paths.benchmarks_root.joinpath(*parts[index + 1 :]))
+            break
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _resolve_local_image_path(raw_path: str) -> Path | None:
+    for candidate in _candidate_local_image_paths(raw_path):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _resolve_record_local_image_path(record: BenchmarkRecord, raw_path: str) -> Path | None:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        source_dir = Path(record.source_file).expanduser().resolve().parent
+        candidate = (source_dir / path).resolve()
+        if candidate.is_file():
+            return candidate
+    return _resolve_local_image_path(raw_path)
+
+
+def _superchem_image_path_items(record: BenchmarkRecord) -> list[str]:
     payload = record.payload
-    paths: list[Path] = []
+    paths: list[str] = []
     for item in payload.get("question_image_paths") or []:
         text = str(item or "").strip()
         if text:
-            paths.append(Path(text).expanduser().resolve())
+            paths.append(text)
     option_paths = payload.get("option_image_paths") or {}
     if isinstance(option_paths, dict):
         for items in option_paths.values():
             for item in items or []:
                 text = str(item or "").strip()
                 if text:
-                    paths.append(Path(text).expanduser().resolve())
-    deduped: list[Path] = []
+                    paths.append(text)
+    deduped: list[str] = []
     seen: set[str] = set()
     for path in paths:
-        key = str(path)
-        if key in seen:
+        if path in seen:
             continue
-        seen.add(key)
+        seen.add(path)
         deduped.append(path)
     return deduped
+
+
+def superchem_image_paths(record: BenchmarkRecord) -> list[Path]:
+    paths: list[Path] = []
+    for item in _superchem_image_path_items(record):
+        resolved = _resolve_record_local_image_path(record, item)
+        if resolved is not None:
+            paths.append(resolved)
+    return paths
 
 
 def build_superchem_question_markdown(record: BenchmarkRecord, *, image_relpaths: list[str]) -> str:
@@ -891,9 +938,45 @@ def build_superchem_question_markdown(record: BenchmarkRecord, *, image_relpaths
     return "\n".join(lines).strip() + "\n"
 
 
+DATA_URI_IMAGE_RE = re.compile(r"^data:(?P<mime>image/[a-zA-Z0-9.+-]+);base64,(?P<data>.+)$", re.DOTALL)
+
+
+def _extension_from_image_mime(mime_type: str) -> str:
+    mapping = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+    }
+    return mapping.get(mime_type.lower(), ".bin")
+
+
+def build_hle_question_markdown(record: BenchmarkRecord, *, image_relpaths: list[str]) -> str:
+    lines = [
+        "# HLE Benchmark Record",
+        f"Record ID: {record.record_id}",
+        "",
+        "Question:",
+        str(record.payload.get("question") or record.prompt).strip(),
+    ]
+    if image_relpaths:
+        lines.extend(["", "Local images to inspect:"])
+        for item in image_relpaths:
+            lines.append(f"- {item}")
+    return "\n".join(lines).strip() + "\n"
+
+
 def ensure_runtime_bundle(record: BenchmarkRecord, *, bundle_root: Path) -> RuntimeBundle | None:
-    if record.dataset != "superchem":
+    if record.dataset not in {"superchem", "hle"}:
         return None
+    if record.dataset == "hle":
+        image_value = str(record.payload.get("image") or record.grading.config.get("image") or "").strip()
+        if not image_value:
+            return None
     bundle_dir = bundle_root / slugify(record.record_id, limit=80)
     question_markdown = bundle_dir / "question.md"
     image_dir = bundle_dir / "images"
@@ -903,19 +986,57 @@ def ensure_runtime_bundle(record: BenchmarkRecord, *, bundle_root: Path) -> Runt
         bundle_dir.mkdir(parents=True, exist_ok=True)
         image_dir.mkdir(parents=True, exist_ok=True)
         image_relpaths: list[str] = []
-        for index, source_path in enumerate(superchem_image_paths(record), start=1):
-            extension = source_path.suffix or ".bin"
-            target_path = image_dir / f"img{index:02d}{extension}"
-            if source_path.is_file():
+        if record.dataset == "superchem":
+            missing_paths: list[str] = []
+            for index, raw_path in enumerate(_superchem_image_path_items(record), start=1):
+                source_path = _resolve_record_local_image_path(record, raw_path)
+                if source_path is None:
+                    missing_paths.append(raw_path)
+                    continue
+                extension = source_path.suffix or ".bin"
+                target_path = image_dir / f"img{index:02d}{extension}"
                 shutil.copy2(source_path, target_path)
                 image_files.append(target_path)
                 image_relpaths.append(str(target_path.relative_to(bundle_dir)))
+            expects_images = bool(
+                str(record.payload.get("modality") or "").lower() == "multimodal"
+                or record.payload.get("has_images")
+                or record.payload.get("source_has_images")
+                or _superchem_image_path_items(record)
+            )
+            if expects_images and (missing_paths or not image_files):
+                raise BenchmarkError(
+                    f"SUPERChem multimodal record `{record.record_id}` has unavailable image inputs: "
+                    + ", ".join(missing_paths or ["<no image paths>"])
+                )
+            question_markdown.write_text(
+                build_superchem_question_markdown(record, image_relpaths=image_relpaths),
+                encoding="utf-8",
+            )
+        elif record.dataset == "hle":
+            match = DATA_URI_IMAGE_RE.match(image_value)
+            if not match:
+                parsed = urlparse(image_value)
+                if parsed.scheme in {"http", "https"}:
+                    raise BenchmarkError(f"HLE record `{record.record_id}` references a remote image that is not localized.")
+                source_path = _resolve_record_local_image_path(record, image_value)
+                if source_path is None:
+                    raise BenchmarkError(f"HLE record `{record.record_id}` image is unavailable: {image_value}")
+                target_path = image_dir / f"hle-image-01{source_path.suffix or '.bin'}"
+                shutil.copy2(source_path, target_path)
             else:
-                image_relpaths.append(str(source_path))
-        question_markdown.write_text(
-            build_superchem_question_markdown(record, image_relpaths=image_relpaths),
-            encoding="utf-8",
-        )
+                try:
+                    image_bytes = base64.b64decode(match.group("data"), validate=True)
+                except binascii.Error as exc:
+                    raise BenchmarkError(f"HLE record `{record.record_id}` has invalid base64 image data.") from exc
+                target_path = image_dir / f"hle-image-01{_extension_from_image_mime(match.group('mime'))}"
+                target_path.write_bytes(image_bytes)
+            image_files.append(target_path)
+            image_relpaths.append(str(target_path.relative_to(bundle_dir)))
+            question_markdown.write_text(
+                build_hle_question_markdown(record, image_relpaths=image_relpaths),
+                encoding="utf-8",
+            )
     return RuntimeBundle(bundle_dir=bundle_dir, question_markdown=question_markdown, image_files=image_files)
 
 

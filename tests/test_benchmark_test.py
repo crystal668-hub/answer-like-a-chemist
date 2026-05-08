@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import base64
 import importlib.util
 import io
 import json
@@ -1216,6 +1217,98 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(1, len(bundle.image_files))
             self.assertTrue(bundle.image_files[0].is_file())
             self.assertEqual(b"image-bytes", bundle.image_files[0].read_bytes())
+
+    def test_ensure_runtime_bundle_relocates_legacy_superchem_asset_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            current_asset = temp_dir / "benchmarks" / "superchem" / "assets" / "_shared" / "aa" / "asset.png"
+            current_asset.parent.mkdir(parents=True)
+            current_asset.write_bytes(b"relocated-image")
+            original_benchmarks_root = benchmark_test.runtime_paths.benchmarks_root
+            benchmark_test.runtime_paths.benchmarks_root = temp_dir / "benchmarks"
+            try:
+                record = benchmark_test.BenchmarkRecord(
+                    record_id="superchem-legacy-mm",
+                    dataset="superchem",
+                    source_file="/tmp/superchem.jsonl",
+                    eval_kind="superchem_multiple_choice_rpf",
+                    prompt="Question prompt",
+                    reference_answer="B",
+                    payload={
+                        "source_uuid": "uuid-demo",
+                        "modality": "multimodal",
+                        "question": "Question prompt",
+                        "options": {"A": "foo", "B": "bar"},
+                        "question_image_paths": [
+                            "/home/dministrator/.openclaw/benchmarks/superchem/assets/_shared/aa/asset.png"
+                        ],
+                        "option_image_paths": {},
+                    },
+                )
+                bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            finally:
+                benchmark_test.runtime_paths.benchmarks_root = original_benchmarks_root
+            assert bundle is not None
+            self.assertEqual(1, len(bundle.image_files))
+            self.assertEqual(b"relocated-image", bundle.image_files[0].read_bytes())
+            question_text = bundle.question_markdown.read_text(encoding="utf-8")
+            self.assertIn("images/img01.png", question_text)
+            self.assertNotIn("/home/dministrator", question_text)
+
+    def test_ensure_runtime_bundle_fails_when_superchem_multimodal_images_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-missing-mm",
+                dataset="superchem",
+                source_file="/tmp/superchem.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Question prompt",
+                reference_answer="B",
+                payload={
+                    "source_uuid": "uuid-demo",
+                    "modality": "multimodal",
+                    "question": "Question prompt",
+                    "options": {"A": "foo", "B": "bar"},
+                    "question_image_paths": ["/missing/source.png"],
+                    "option_image_paths": {},
+                },
+            )
+            with self.assertRaises(benchmark_test.BenchmarkError):
+                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+
+    def test_ensure_runtime_bundle_materializes_hle_base64_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            data_uri = "data:image/png;base64," + base64.b64encode(b"png-bytes").decode("ascii")
+            record = benchmark_test.BenchmarkRecord(
+                record_id="hle-chemistry-demo",
+                dataset="hle",
+                source_file="/tmp/hle.jsonl",
+                eval_kind="hle",
+                prompt="Using the provided information, identify the step.",
+                reference_answer="Final step",
+                payload={
+                    "question": "Using the provided information, identify the step.",
+                    "answer": "Final step",
+                    "image": data_uri,
+                },
+            )
+            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            assert bundle is not None
+            self.assertEqual(1, len(bundle.image_files))
+            self.assertEqual(b"png-bytes", bundle.image_files[0].read_bytes())
+            question_text = bundle.question_markdown.read_text(encoding="utf-8")
+            self.assertIn("# HLE Benchmark Record", question_text)
+            self.assertIn("images/hle-image-01.png", question_text)
+            prompt = benchmark_test.build_single_llm_prompt(
+                record,
+                websearch_enabled=True,
+                skills_enabled=False,
+                input_bundle=bundle,
+            )
+            self.assertIn("Read the question bundle file first", prompt)
+            self.assertIn("Inspect the local image files referenced in the bundle", prompt)
 
     def test_build_chemqa_full_response_uses_final_submission_rationale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
