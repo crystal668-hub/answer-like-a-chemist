@@ -22,6 +22,7 @@ def evaluate_record(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: object,
 ) -> Any:
     evaluator = EVALUATORS.get(record.grading.kind)
@@ -35,5 +36,6 @@ def evaluate_record(
         record,
         short_answer_text=short_answer_text,
         full_response_text=full_response_text,
+        answer_text=answer_text,
         judge=judge,
     )

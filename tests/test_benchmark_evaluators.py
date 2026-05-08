@@ -4,8 +4,8 @@ from benchmarking.datasets import BenchmarkRecord
 from benchmarking.evaluators import (
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
+    evaluate_generic_semantic,
     evaluate_hle,
-    heuristic_semantic_match,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
     safe_json_extract,
@@ -23,7 +23,8 @@ class JudgeStub:
 
 
 class BenchmarkEvaluatorTests(unittest.TestCase):
-    def test_chembench_open_ended_numeric_match(self) -> None:
+    def test_chembench_open_ended_numeric_match_uses_judge_full_answer_text(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = BenchmarkRecord(
             record_id="demo",
             dataset="chembench",
@@ -36,17 +37,23 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
         result = evaluate_chembench_open_ended(
             record,
-            short_answer_text="4",
-            full_response_text="Reasoning\nFINAL ANSWER: 4",
+            short_answer_text="wrong-short-answer",
+            full_response_text="Reasoning with necessary context\nFINAL ANSWER: 4",
+            answer_text="Reasoning with necessary context\nFINAL ANSWER: 4",
+            judge=judge,
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual(0.0, result.score)
+        self.assertEqual(1.0, result.score)
         self.assertEqual(1.0, result.normalized_score)
-        self.assertEqual(0.0, result.details["mae"])
+        self.assertEqual("judge", result.details["method"])
+        self.assertEqual("Reasoning with necessary context\nFINAL ANSWER: 4", result.details["candidate_answer_text"])
+        self.assertEqual(1, len(judge.prompts))
+        self.assertIn("Reasoning with necessary context", judge.prompts[0])
+        self.assertNotIn("wrong-short-answer", judge.prompts[0])
 
-    def test_frontierscience_olympiad_heuristic_match_skips_judge(self) -> None:
-        judge = JudgeStub({"correct": False})
+    def test_frontierscience_olympiad_always_uses_judge(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = BenchmarkRecord(
             record_id="fs-demo",
             dataset="frontierscience",
@@ -65,11 +72,11 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual("heuristic", result.details["method"])
-        self.assertEqual([], judge.prompts)
+        self.assertEqual("judge", result.details["method"])
+        self.assertEqual(1, len(judge.prompts))
 
-    def test_frontierscience_olympiad_iupac_reference_is_not_rejected_as_numeric_mismatch(self) -> None:
-        judge = JudgeStub({"correct": False})
+    def test_frontierscience_olympiad_iupac_reference_uses_judge_not_numeric_heuristic(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = BenchmarkRecord(
             record_id="fs-chem-olympiad-23cb57a5",
             dataset="frontierscience",
@@ -92,11 +99,34 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         )
 
         self.assertTrue(result.passed)
-        self.assertEqual("heuristic", result.details["method"])
-        self.assertEqual([], judge.prompts)
+        self.assertEqual("judge", result.details["method"])
+        self.assertEqual(1, len(judge.prompts))
+        self.assertIn("3-(trifluoromethyl)aniline", result.details["candidate_answer_text"])
 
-    def test_heuristic_semantic_match_does_not_treat_chemical_formula_digits_as_scalar_answer(self) -> None:
-        self.assertIsNone(heuristic_semantic_match("C2H6", "C2H5"))
+    def test_generic_semantic_uses_judge_full_answer_text(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer contains the match"})
+        record = BenchmarkRecord(
+            record_id="generic-demo",
+            dataset="custom",
+            source_file="/tmp/custom.jsonl",
+            eval_kind="generic_semantic",
+            prompt="Name the molecule.",
+            reference_answer="benzene",
+            payload={},
+        )
+
+        result = evaluate_generic_semantic(
+            record,
+            short_answer_text="wrong-short-answer",
+            full_response_text="The relevant final answer is benzene.",
+            answer_text="The relevant final answer is benzene.",
+            judge=judge,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual("judge", result.details["method"])
+        self.assertIn("The relevant final answer is benzene.", judge.prompts[0])
+        self.assertNotIn("wrong-short-answer", judge.prompts[0])
 
     def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
         judge = JudgeStub(
@@ -119,8 +149,9 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
         result = evaluate_hle(
             record,
-            short_answer_text="PCC",
+            short_answer_text="wrong-short-answer",
             full_response_text="Explanation: brief\nAnswer: PCC\nConfidence: 87%",
+            answer_text="Explanation: brief\nAnswer: PCC\nConfidence: 87%",
             judge=judge,
         )
 
@@ -130,6 +161,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual(87, result.details["confidence"])
         self.assertIn("extracted_final_answer", judge.prompts[0])
         self.assertIn("[correct_answer]: PCC", judge.prompts[0])
+        self.assertIn("Explanation: brief", judge.prompts[0])
+        self.assertNotIn("wrong-short-answer", judge.prompts[0])
 
     def test_parse_helpers_cover_research_rubric_and_superchem_options(self) -> None:
         rubric = "Points: 1.5, Item: Identify the limiting reagent.\nExplain the stoichiometric basis."

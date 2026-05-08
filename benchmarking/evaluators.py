@@ -106,6 +106,19 @@ def normalize_answer_tracks(*, short_answer_text: str = "", full_response_text: 
     return short_text, full_text
 
 
+def resolve_candidate_answer_text(
+    *,
+    answer_text: str = "",
+    short_answer_text: str = "",
+    full_response_text: str = "",
+) -> str:
+    candidate = str(answer_text or "").strip()
+    if candidate:
+        return candidate
+    short_text, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
+    return full_text or short_text
+
+
 def parse_numeric_scalar(text: str) -> float | None:
     if not text:
         return None
@@ -291,65 +304,62 @@ def evaluate_chembench_open_ended(
     *,
     short_answer_text: str,
     full_response_text: str,
-    judge: object | None = None,
+    answer_text: str = "",
+    judge: Any,
 ) -> EvaluationResult:
-    _ = judge
     expected = str(record.grading.reference_answer or record.payload.get("target") or record.reference_answer)
-    predicted_short, _ = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    expected_norm = normalize_loose(expected)
-    predicted_norm = normalize_loose(predicted_short)
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
+    prompt = f"""
+You are evaluating a ChemBench open-ended chemistry benchmark answer.
+Judge whether the candidate answer is correct against the reference answer.
+Use the full candidate response; do not rely on any separately extracted short answer.
+Allow small numeric tolerance when appropriate for chemistry calculations.
+Return strict JSON only.
 
-    expected_num = parse_numeric_scalar(expected)
-    predicted_num = parse_numeric_scalar(predicted_short)
-    exact_match = predicted_norm == expected_norm
-    relative_tolerance = record.grading.config.get("relative_tolerance")
-    mae = None
-    mse = None
-    within_relative_tolerance = None
-    if expected_num is not None and predicted_num is not None:
-        mae = abs(predicted_num - expected_num)
-        mse = mae * mae
-        if relative_tolerance is not None:
-            denom = max(abs(expected_num), 1e-12)
-            within_relative_tolerance = mae <= abs(float(relative_tolerance)) * denom
-        if mae <= 1e-12:
-            exact_match = True
-        if within_relative_tolerance:
-            exact_match = True
+Required JSON schema:
+{{
+  "correct": true,
+  "score": 1.0,
+  "rationale": "brief explanation",
+  "expected_answer": "...",
+  "candidate_answer": "..."
+}}
 
-    preferred = str(record.grading.config.get("preferred_score") or "exact_str_match")
-    if preferred == "mae" and mae is not None:
-        score = mae
-        normalized_score = 1.0 / (1.0 + mae)
-        direction = "lower_is_better"
-    elif preferred == "mse" and mse is not None:
-        score = mse
-        normalized_score = 1.0 / (1.0 + mse)
-        direction = "lower_is_better"
-    else:
-        score = 1.0 if exact_match else 0.0
-        normalized_score = score
-        direction = "higher_is_better"
-        preferred = "exact_str_match"
+QUESTION:
+{record.prompt}
+
+REFERENCE ANSWER:
+{expected}
+
+CANDIDATE ANSWER:
+{candidate_answer_text}
+""".strip()
+    judged = judge.evaluate_json(prompt)
+    correct = bool(judged.get("correct"))
+    raw_score = judged.get("score")
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        score = 1.0 if correct else 0.0
+    score = max(0.0, min(1.0, score))
 
     return EvaluationResult(
         eval_kind=record.eval_kind,
         score=float(score),
         max_score=1.0,
-        normalized_score=float(normalized_score),
-        passed=bool(exact_match),
-        primary_metric=preferred,
-        primary_metric_direction=direction,
+        normalized_score=float(score),
+        passed=correct,
+        primary_metric="judge_accuracy",
+        primary_metric_direction="higher_is_better",
         details={
+            "method": "judge",
             "expected": expected,
-            "predicted_short": predicted_short,
-            "exact_match": exact_match,
-            "expected_numeric": expected_num,
-            "predicted_numeric": predicted_num,
-            "mae": mae,
-            "mse": mse,
-            "relative_tolerance": relative_tolerance,
-            "within_relative_tolerance": within_relative_tolerance,
+            "candidate_answer_text": candidate_answer_text,
+            "judge": judged,
         },
     )
 
@@ -389,32 +399,21 @@ def evaluate_frontierscience_olympiad(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: Any,
 ) -> EvaluationResult:
     expected = record.grading.reference_answer
-    predicted, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    heuristic = heuristic_semantic_match(expected, predicted)
-    if heuristic is not None:
-        return EvaluationResult(
-            eval_kind=record.eval_kind,
-            score=1.0 if heuristic else 0.0,
-            max_score=1.0,
-            normalized_score=1.0 if heuristic else 0.0,
-            passed=bool(heuristic),
-            primary_metric="semantic_match",
-            primary_metric_direction="higher_is_better",
-            details={
-                "method": "heuristic",
-                "expected": expected,
-                "predicted_short": predicted,
-            },
-        )
-
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
     prompt = f"""
 You are evaluating a chemistry olympiad benchmark answer.
 Decide whether the candidate answer matches the reference answer semantically.
 Ignore harmless formatting differences, punctuation, capitalization, and equivalent chemical naming.
 Do not give partial credit.
+Use the full candidate response; do not rely on any separately extracted short answer.
 Return strict JSON only.
 
 Required JSON schema:
@@ -432,15 +431,17 @@ QUESTION:
 REFERENCE ANSWER:
 {expected}
 
-CANDIDATE SHORT ANSWER:
-{predicted}
-
-CANDIDATE FULL RESPONSE:
-{full_text}
+CANDIDATE ANSWER:
+{candidate_answer_text}
 """.strip()
     judged = judge.evaluate_json(prompt)
     correct = bool(judged.get("correct"))
-    score = 1.0 if correct else 0.0
+    raw_score = judged.get("score")
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        score = 1.0 if correct else 0.0
+    score = max(0.0, min(1.0, score))
     return EvaluationResult(
         eval_kind=record.eval_kind,
         score=score,
@@ -452,7 +453,7 @@ CANDIDATE FULL RESPONSE:
         details={
             "method": "judge",
             "expected": expected,
-            "predicted_short": predicted,
+            "candidate_answer_text": candidate_answer_text,
             "judge": judged,
         },
     )
@@ -487,6 +488,7 @@ def evaluate_frontierscience_research(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: Any,
 ) -> EvaluationResult:
     rubric_items = parse_frontierscience_research_rubric(record.grading.reference_answer)
@@ -494,8 +496,11 @@ def evaluate_frontierscience_research(
         raise EvaluationError(f"No rubric items parsed for record: {record.record_id}")
     rubric_lines = [f"{idx + 1}. [{item['points']} points] {item['description']}" for idx, item in enumerate(rubric_items)]
     max_score = float(sum(item["points"] for item in rubric_items))
-    short_text, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    candidate_response = full_text or short_text
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
     prompt = f"""
 You are grading a chemistry research benchmark response against a point rubric.
 For each rubric item, award either 0 or the item's full points only.
@@ -519,7 +524,7 @@ RUBRIC ITEMS:
 {os.linesep.join(rubric_lines)}
 
 CANDIDATE ANSWER:
-{candidate_response}
+{candidate_answer_text}
 """.strip()
     judged = judge.evaluate_json(prompt)
     judged_items = judged.get("items")
@@ -566,7 +571,9 @@ CANDIDATE ANSWER:
         primary_metric="rubric_points",
         primary_metric_direction="higher_is_better",
         details={
+            "method": "judge",
             "judge": judged,
+            "candidate_answer_text": candidate_answer_text,
             "rubric_items": awarded_items,
             "summary": judged.get("summary"),
         },
@@ -578,13 +585,16 @@ def evaluate_superchem_multiple_choice_rpf(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: Any,
 ) -> EvaluationResult:
     valid_options = superchem_valid_options(record)
-    short_text, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
     expected = parse_superchem_option_answer(record.grading.reference_answer, valid_options=valid_options) or record.reference_answer
-    predicted = parse_superchem_option_answer(short_text, valid_options=valid_options)
-    answer_accuracy = 1.0 if predicted and predicted == expected else 0.0
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
 
     checkpoints = parse_superchem_checkpoints(str(record.grading.config.get("reference_reasoning") or record.payload.get("reference_reasoning") or ""))
     if not checkpoints:
@@ -596,12 +606,16 @@ def evaluate_superchem_multiple_choice_rpf(
     ]
     prompt = f"""
 You are scoring a chemistry candidate response against expert reasoning checkpoints from SUPERChem.
+First decide whether the candidate's final answer matches the reference answer.
 For each checkpoint, mark it matched only if the candidate response clearly covers the same reasoning step or conclusion.
 Do not award partial matches.
+Use the full candidate response; do not rely on any separately extracted short answer.
 Return strict JSON only.
 
 Required JSON schema:
 {{
+  "answer_correct": true,
+  "answer_score": 1.0,
   "items": [
     {{"index": 1, "matched": true, "rationale": "brief"}}
   ],
@@ -611,16 +625,30 @@ Required JSON schema:
 QUESTION:
 {record.prompt}
 
+REFERENCE ANSWER:
+{record.grading.reference_answer}
+
+PARSED REFERENCE OPTION:
+{expected}
+
 REFERENCE CHECKPOINTS:
 {os.linesep.join(rendered_checkpoints)}
 
 CANDIDATE RESPONSE:
-{full_text}
+{candidate_answer_text}
 """.strip()
     judged = judge.evaluate_json(prompt)
     judged_items = judged.get("items")
     if not isinstance(judged_items, list):
         raise EvaluationError(f"Judge response missing checkpoint items list: {judged}")
+
+    answer_correct = bool(judged.get("answer_correct", judged.get("correct", False)))
+    raw_answer_score = judged.get("answer_score", judged.get("score"))
+    try:
+        answer_accuracy = float(raw_answer_score)
+    except (TypeError, ValueError):
+        answer_accuracy = 1.0 if answer_correct else 0.0
+    answer_accuracy = max(0.0, min(1.0, answer_accuracy))
 
     total_weight = float(sum(float(item["weight"]) for item in checkpoints))
     matched_weight = 0.0
@@ -650,11 +678,12 @@ CANDIDATE RESPONSE:
         primary_metric="answer_accuracy",
         primary_metric_direction="higher_is_better",
         details={
+            "method": "judge",
             "parsed_reference": expected,
-            "parsed_prediction": predicted,
             "answer_accuracy": answer_accuracy,
             "rpf": rpf,
             "checkpoint_matches": checkpoint_matches,
+            "candidate_answer_text": candidate_answer_text,
             "judge": judged,
         },
     )
@@ -671,17 +700,21 @@ def evaluate_hle(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: Any,
 ) -> EvaluationResult:
     expected = record.grading.reference_answer
-    short_text, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    response_text = full_text or short_text
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
     prompt = f"""
 Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
 [question]: {record.prompt}
 
-[response]: {response_text}
+[response]: {candidate_answer_text}
 
 Your judgement must be in the format and criteria specified below:
 
@@ -716,7 +749,7 @@ Return strict JSON only with keys: extracted_final_answer, reasoning, correct, c
         details={
             "method": "hle_judge",
             "expected": expected,
-            "predicted_short": short_text,
+            "candidate_answer_text": candidate_answer_text,
             "judge": judged,
             "extracted_final_answer": judged.get("extracted_final_answer"),
             "confidence": confidence,
@@ -730,26 +763,18 @@ def evaluate_generic_semantic(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: Any,
 ) -> EvaluationResult:
     expected = record.grading.reference_answer
-    predicted, full_text = normalize_answer_tracks(short_answer_text=short_answer_text, full_response_text=full_response_text)
-    heuristic = heuristic_semantic_match(expected, predicted)
-    if heuristic is not None:
-        score = 1.0 if heuristic else 0.0
-        return EvaluationResult(
-            eval_kind=record.eval_kind,
-            score=score,
-            max_score=1.0,
-            normalized_score=score,
-            passed=bool(heuristic),
-            primary_metric="semantic_match",
-            primary_metric_direction="higher_is_better",
-            details={"method": "heuristic", "expected": expected, "predicted_short": predicted},
-        )
-
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
     prompt = f"""
 You are evaluating whether a benchmark candidate answer matches a reference answer.
+Use the full candidate response; do not rely on any separately extracted short answer.
 Return strict JSON only.
 
 Required JSON schema:
@@ -765,15 +790,17 @@ QUESTION:
 REFERENCE ANSWER:
 {expected}
 
-CANDIDATE SHORT ANSWER:
-{predicted}
-
-CANDIDATE FULL RESPONSE:
-{full_text}
+CANDIDATE ANSWER:
+{candidate_answer_text}
 """.strip()
     judged = judge.evaluate_json(prompt)
     correct = bool(judged.get("correct"))
-    score = 1.0 if correct else 0.0
+    raw_score = judged.get("score")
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        score = 1.0 if correct else 0.0
+    score = max(0.0, min(1.0, score))
     return EvaluationResult(
         eval_kind=record.eval_kind,
         score=score,
@@ -782,7 +809,7 @@ CANDIDATE FULL RESPONSE:
         passed=correct,
         primary_metric="semantic_match",
         primary_metric_direction="higher_is_better",
-        details={"method": "judge", "judge": judged, "expected": expected, "predicted_short": predicted},
+        details={"method": "judge", "judge": judged, "expected": expected, "candidate_answer_text": candidate_answer_text},
     )
 
 

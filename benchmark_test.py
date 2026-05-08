@@ -52,14 +52,11 @@ try:
         evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
         extract_candidate_short_answer,
         extract_final_answer_line,
-        heuristic_semantic_match,
         last_nonempty_line,
         maybe_json_loads,
         normalize_answer_tracks,
-        normalize_loose,
         normalize_space,
         parse_frontierscience_research_rubric,
-        parse_numeric_scalar,
         parse_superchem_checkpoint_weight,
         parse_superchem_checkpoints,
         parse_superchem_option_answer as _shared_parse_superchem_option_answer,
@@ -122,14 +119,11 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
         extract_candidate_short_answer,
         extract_final_answer_line,
-        heuristic_semantic_match,
         last_nonempty_line,
         maybe_json_loads,
         normalize_answer_tracks,
-        normalize_loose,
         normalize_space,
         parse_frontierscience_research_rubric,
-        parse_numeric_scalar,
         parse_superchem_checkpoint_weight,
         parse_superchem_checkpoints,
         parse_superchem_option_answer as _shared_parse_superchem_option_answer,
@@ -1233,6 +1227,7 @@ def evaluate_chembench_open_ended(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient | None = None,
 ) -> EvaluationResult:
     try:
@@ -1240,6 +1235,7 @@ def evaluate_chembench_open_ended(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1251,6 +1247,7 @@ def evaluate_frontierscience_olympiad(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     try:
@@ -1258,6 +1255,7 @@ def evaluate_frontierscience_olympiad(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1269,6 +1267,7 @@ def evaluate_frontierscience_research(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     try:
@@ -1276,6 +1275,7 @@ def evaluate_frontierscience_research(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1287,6 +1287,7 @@ def evaluate_superchem_multiple_choice_rpf(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     try:
@@ -1294,6 +1295,7 @@ def evaluate_superchem_multiple_choice_rpf(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1305,6 +1307,7 @@ def evaluate_hle(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     try:
@@ -1312,6 +1315,7 @@ def evaluate_hle(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1323,6 +1327,7 @@ def evaluate_generic_semantic(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     try:
@@ -1330,6 +1335,7 @@ def evaluate_generic_semantic(
             record,
             short_answer_text=short_answer_text,
             full_response_text=full_response_text,
+            answer_text=answer_text,
             judge=judge,
         )
     except EvaluationError as exc:
@@ -1341,12 +1347,14 @@ def evaluate_answer(
     *,
     short_answer_text: str,
     full_response_text: str,
+    answer_text: str = "",
     judge: JudgeClient,
 ) -> EvaluationResult:
     return evaluate_record(
         record,
         short_answer_text=short_answer_text,
         full_response_text=full_response_text,
+        answer_text=answer_text,
         judge=judge,
     )
 
@@ -1836,13 +1844,14 @@ def run_group(
             ensure_compatible_runner_result(run_result)
             axes = build_result_axes_from_runner(run_result)
             if run_result.should_score():
+                answer_text = run_result.answer.full_response_text or run_result.answer.short_answer_text
                 evaluation = evaluate_answer(
                     record,
                     short_answer_text=run_result.answer.short_answer_text,
                     full_response_text=run_result.answer.full_response_text,
+                    answer_text=answer_text,
                     judge=judge,
                 )
-                answer_text = run_result.answer.full_response_text or run_result.answer.short_answer_text
                 entry = GroupRecordResult(
                     **axes,
                     group_id=group.id,

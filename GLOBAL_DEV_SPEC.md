@@ -153,7 +153,7 @@
   - Status: `DONE`
 
 - Name: Evaluator registry and dispatch
-  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
+  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Scoreable benchmark answers are judged from the complete candidate `answer_text`/full response, while `short_answer_text` remains a legacy/display field and is not used to decide `passed` or score. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
   - Input / Output:
     - Input: `BenchmarkRecord`, short/full answer text, judge object.
     - Output: evaluator payload/dataclass.
@@ -161,7 +161,7 @@
   - Status: `DONE`
 
 - Name: ChemBench open-ended scoring
-  - Description: Scores numeric or text answers for ChemBench open-ended tasks.
+  - Description: Scores numeric or text answers for ChemBench open-ended tasks through the LLM judge using the complete candidate answer text; local numeric/string matching does not decide pass/fail.
   - Input / Output:
     - Input: `BenchmarkRecord`, model answer text.
     - Output: `EvaluationResult`.
@@ -169,7 +169,7 @@
   - Status: `DONE`
 
 - Name: FrontierScience Olympiad scoring
-  - Description: Evaluates olympiad-style short answers, including numeric answers, molecule names embedded in tagged InChI/SMILES/IUPAC references, and formula-style symbolic expressions that may require semantic judge comparison. The shared semantic heuristic only treats answers as numeric scalar matches when both expected and predicted short answers are plain numeric scalars, so digits inside chemical formulas, InChI strings, or IUPAC names do not short-circuit molecule/name matching as numeric mismatches.
+  - Description: Evaluates olympiad-style answers through the LLM judge using the complete candidate answer text, covering numeric answers, molecule names embedded in tagged InChI/SMILES/IUPAC references, and formula-style symbolic expressions without local heuristic short-circuiting.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
@@ -177,7 +177,7 @@
   - Status: `DONE`
 
 - Name: FrontierScience Research scoring
-  - Description: Uses rubric parsing plus judge support for research track outputs.
+  - Description: Uses rubric parsing plus LLM judge scoring for research track outputs; parsed rubric items structure the prompt, and the judge decides item satisfaction from the complete candidate answer text.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
@@ -185,7 +185,7 @@
   - Status: `DONE`
 
 - Name: SuperChem multimodal scoring
-  - Description: Extracts option answer/checkpoints and computes score/RPF-style metrics.
+  - Description: Extracts reference checkpoints/options for prompt context and asks the LLM judge to decide answer accuracy plus checkpoint matches/RPF from the complete candidate answer text.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
@@ -193,7 +193,7 @@
   - Status: `DONE`
 
 - Name: HLE chemistry scoring
-  - Description: Scores Humanity's Last Exam chemistry-subset records with the official HLE-style judge rule: extract the final answer from the response, compare against the precise reference answer with small numeric tolerance allowed by the judge prompt, and return binary accuracy plus confidence metadata.
+  - Description: Scores Humanity's Last Exam chemistry-subset records with the official HLE-style LLM judge rule over the complete candidate answer text: extract the final answer from the response, compare against the precise reference answer with small numeric tolerance allowed by the judge prompt, and return binary accuracy plus confidence metadata.
   - Input / Output:
     - Input: HLE chemistry `BenchmarkRecord` plus model response text.
     - Output: `EvaluationResult` with `primary_metric = hle_judge_accuracy` and judge details including extracted final answer and confidence.

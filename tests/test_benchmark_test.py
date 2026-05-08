@@ -863,7 +863,8 @@ Points: 0.5, Item: Second criterion
             candidates,
         )
 
-    def test_evaluate_chembench_open_ended_numeric_match(self) -> None:
+    def test_evaluate_chembench_open_ended_numeric_match_uses_judge(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = benchmark_test.BenchmarkRecord(
             record_id="demo",
             dataset="chembench",
@@ -875,13 +876,17 @@ Points: 0.5, Item: Second criterion
         )
         result = benchmark_test.evaluate_chembench_open_ended(
             record,
-            short_answer_text="4",
+            short_answer_text="wrong-short-answer",
             full_response_text="Reasoning\nFINAL ANSWER: 4",
+            answer_text="Reasoning\nFINAL ANSWER: 4",
+            judge=judge,
         )
         self.assertTrue(result.passed)
-        self.assertEqual(0.0, result.score)
+        self.assertEqual(1.0, result.score)
         self.assertEqual(1.0, result.normalized_score)
-        self.assertEqual(0.0, result.details["mae"])
+        self.assertEqual("judge", result.details["method"])
+        self.assertIn("Reasoning\nFINAL ANSWER: 4", judge.prompts[0])
+        self.assertNotIn("wrong-short-answer", judge.prompts[0])
 
     def test_load_records_uses_problem_field_for_frontierscience(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -907,8 +912,8 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("Solve me", records[0].prompt)
             self.assertEqual("42", records[0].reference_answer)
 
-    def test_evaluate_frontierscience_olympiad_heuristic_match(self) -> None:
-        judge = JudgeStub({"correct": False})
+    def test_evaluate_frontierscience_olympiad_always_uses_judge(self) -> None:
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-demo",
             dataset="frontierscience",
@@ -925,11 +930,11 @@ Points: 0.5, Item: Second criterion
             judge=judge,
         )
         self.assertTrue(result.passed)
-        self.assertEqual("heuristic", result.details["method"])
-        self.assertEqual([], judge.prompts)
+        self.assertEqual("judge", result.details["method"])
+        self.assertEqual(1, len(judge.prompts))
 
     def test_evaluate_answer_uses_generic_semantic_fallback(self) -> None:
-        judge = JudgeStub({"correct": False})
+        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer matches"})
         record = benchmark_test.BenchmarkRecord(
             record_id="generic-demo",
             dataset="customset",
@@ -941,14 +946,16 @@ Points: 0.5, Item: Second criterion
         )
         result = benchmark_test.evaluate_answer(
             record,
-            short_answer_text="benzene",
-            full_response_text="FINAL ANSWER: benzene",
+            short_answer_text="wrong-short-answer",
+            full_response_text="Full answer contains benzene.",
+            answer_text="Full answer contains benzene.",
             judge=judge,
         )
         self.assertTrue(result.passed)
         self.assertEqual("semantic_match", result.primary_metric)
-        self.assertEqual("heuristic", result.details["method"])
-        self.assertEqual([], judge.prompts)
+        self.assertEqual("judge", result.details["method"])
+        self.assertIn("Full answer contains benzene.", judge.prompts[0])
+        self.assertNotIn("wrong-short-answer", judge.prompts[0])
 
     def test_load_records_malformed_json_propagates_decode_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1328,6 +1335,7 @@ Points: 0.5, Item: Second criterion
         )
         judge = JudgeStub(
             {
+                "answer_correct": True,
                 "items": [
                     {"index": 1, "matched": True, "rationale": "covered"},
                     {"index": 2, "matched": False, "rationale": "missing"},
@@ -1337,17 +1345,20 @@ Points: 0.5, Item: Second criterion
         )
         result = benchmark_test.evaluate_superchem_multiple_choice_rpf(
             record,
-            short_answer_text="B",
+            short_answer_text="A",
             full_response_text="Reasoning\nFINAL ANSWER: B",
+            answer_text="Reasoning\nFINAL ANSWER: B",
             judge=judge,
         )
         self.assertTrue(result.passed)
         self.assertEqual(1.0, result.score)
         self.assertAlmostEqual(2.0 / 3.0, result.details["rpf"])
-        self.assertEqual("B", result.details["parsed_prediction"])
+        self.assertEqual(1.0, result.details["answer_accuracy"])
+        self.assertEqual("Reasoning\nFINAL ANSWER: B", result.details["candidate_answer_text"])
         self.assertEqual(2, len(result.details["checkpoint_matches"]))
         self.assertEqual(1, len(judge.prompts))
         self.assertIn("Reasoning", judge.prompts[0])
+        self.assertNotIn("FINAL ANSWER: A", judge.prompts[0])
 
     def test_aggregate_results_groups_by_experiment(self) -> None:
         sample = [
@@ -2977,7 +2988,7 @@ Points: 0.5, Item: Second criterion
                     output_root=Path(tmpdir),
                     single_timeout=10,
                     chemqa_timeout=10,
-                    judge=JudgeStub({}),
+                    judge=JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"}),
                     config_path=Path(tmpdir) / "cfg.json",
                     single_agent="benchmark-single-skills-off",
                     chemqa_root=Path(tmpdir),
@@ -3189,11 +3200,13 @@ Points: 0.5, Item: Second criterion
                 *,
                 short_answer_text: str,
                 full_response_text: str,
+                answer_text: str,
                 judge: object,
             ) -> benchmark_test.EvaluationResult:
                 self.assertIs(record, actual_record)
                 self.assertEqual("fallback-answer", short_answer_text)
                 self.assertEqual("FINAL ANSWER: fallback-answer", full_response_text)
+                self.assertEqual("FINAL ANSWER: fallback-answer", answer_text)
                 self.assertIs(judge, judge_obj)
                 return benchmark_test.EvaluationResult(
                     eval_kind="chembench_open_ended",

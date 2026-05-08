@@ -102,11 +102,18 @@ class BenchmarkDatasetsTests(unittest.TestCase):
                 load_records([path])
 
     def test_evaluate_record_uses_registry_dispatch(self) -> None:
-        calls: list[tuple[str, str, object]] = []
+        calls: list[tuple[str, str, str, object]] = []
 
-        def evaluator(record: BenchmarkRecord, *, short_answer_text: str, full_response_text: str, judge: object) -> dict[str, object]:
-            calls.append((record.record_id, short_answer_text, judge))
-            return {"ok": True, "full_response_text": full_response_text}
+        def evaluator(
+            record: BenchmarkRecord,
+            *,
+            short_answer_text: str,
+            full_response_text: str,
+            answer_text: str = "",
+            judge: object,
+        ) -> dict[str, object]:
+            calls.append((record.record_id, short_answer_text, answer_text, judge))
+            return {"ok": True, "full_response_text": full_response_text, "answer_text": answer_text}
 
         saved = dict(EVALUATORS)
         try:
@@ -129,13 +136,15 @@ class BenchmarkDatasetsTests(unittest.TestCase):
                 record,
                 short_answer_text="42",
                 full_response_text="FINAL ANSWER: 42",
+                answer_text="FULL ANSWER: 42",
                 judge=object(),
             )
 
-            self.assertEqual({"ok": True, "full_response_text": "FINAL ANSWER: 42"}, result)
+            self.assertEqual({"ok": True, "full_response_text": "FINAL ANSWER: 42", "answer_text": "FULL ANSWER: 42"}, result)
             self.assertEqual(1, len(calls))
             self.assertEqual("chem-1", calls[0][0])
             self.assertEqual("42", calls[0][1])
+            self.assertEqual("FULL ANSWER: 42", calls[0][2])
             self.assertIn("unit_test_eval_kind", EVALUATORS)
         finally:
             EVALUATORS.clear()
