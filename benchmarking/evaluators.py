@@ -12,6 +12,24 @@ from .datasets import BenchmarkRecord
 
 FINAL_ANSWER_RE = re.compile(r"^\s*FINAL\s+ANSWER\s*[:：-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
+NUMERIC_SCALAR_ANSWER_RE = re.compile(
+    r"""
+    ^\s*
+    [-+]?
+    (?:
+        (?:
+            (?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?
+            |
+            \.\d+
+        )
+        (?:
+            \s*(?:[eE]|[xX×]\s*10\^?)\s*[-+]?\d+
+        )?
+    )
+    \s*$
+    """,
+    re.VERBOSE,
+)
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", re.DOTALL | re.IGNORECASE)
 INVALID_JSON_BACKSLASH_RE = re.compile(r'\\(?!["\\/bfnrtu])')
 SUPERCHM_XML_CHECKPOINT_RE = re.compile(
@@ -101,6 +119,19 @@ def parse_numeric_scalar(text: str) -> float | None:
         return float(token)
     except ValueError:
         return None
+
+
+def is_numeric_scalar_answer(text: str) -> bool:
+    candidate = extract_final_answer_line(text) or str(text or "").strip()
+    if not candidate:
+        return False
+    candidate = candidate.strip()
+    if candidate.startswith("$") and candidate.endswith("$"):
+        candidate = candidate[1:-1].strip()
+    boxed_match = re.fullmatch(r"\\boxed\{([^{}]+)\}", candidate)
+    if boxed_match:
+        candidate = boxed_match.group(1).strip()
+    return bool(NUMERIC_SCALAR_ANSWER_RE.fullmatch(candidate))
 
 
 def safe_json_extract(text: str) -> Any:
@@ -328,17 +359,27 @@ def heuristic_semantic_match(expected: str, predicted: str) -> bool | None:
     predicted_short = extract_candidate_short_answer(predicted)
     if not expected_short or not predicted_short:
         return None
-    expected_num = parse_numeric_scalar(expected_short)
-    predicted_num = parse_numeric_scalar(predicted_short)
-    if expected_num is not None and predicted_num is not None:
+    if is_numeric_scalar_answer(expected_short) and is_numeric_scalar_answer(predicted_short):
+        expected_num = parse_numeric_scalar(expected_short)
+        predicted_num = parse_numeric_scalar(predicted_short)
+        if expected_num is None or predicted_num is None:
+            return None
         return math.isclose(expected_num, predicted_num, rel_tol=1e-4, abs_tol=1e-8)
     expected_norm = normalize_loose(expected_short)
     predicted_norm = normalize_loose(predicted_short)
     if expected_norm == predicted_norm:
         return True
-    if expected_norm and expected_norm in predicted_norm:
+
+    def safe_contains(needle: str, haystack: str) -> bool:
+        if not needle or len(needle) < 3:
+            return False
+        if is_numeric_scalar_answer(needle):
+            return False
+        return needle in haystack
+
+    if safe_contains(expected_norm, predicted_norm):
         return True
-    if predicted_norm and predicted_norm in expected_norm:
+    if safe_contains(predicted_norm, expected_norm):
         return True
     return None
 

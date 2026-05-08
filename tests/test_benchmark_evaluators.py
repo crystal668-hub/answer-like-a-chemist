@@ -5,6 +5,7 @@ from benchmarking.evaluators import (
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
     evaluate_hle,
+    heuristic_semantic_match,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
     safe_json_extract,
@@ -66,6 +67,36 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertTrue(result.passed)
         self.assertEqual("heuristic", result.details["method"])
         self.assertEqual([], judge.prompts)
+
+    def test_frontierscience_olympiad_iupac_reference_is_not_rejected_as_numeric_mismatch(self) -> None:
+        judge = JudgeStub({"correct": False})
+        record = BenchmarkRecord(
+            record_id="fs-chem-olympiad-23cb57a5",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Provide molecule X.",
+            reference_answer=(
+                "Molecule X is <INCHI>InChI=1S/C7H6F3N/c8-7(9,10)5-2-1-3-6(11)4-5/h1-4H,11H2"
+                "</INCHI>, <SMILES>C1=CC(=CC(=C1)N)C(F)(F)F</SMILES>, "
+                "<IUPAC>3-(trifluoromethyl)aniline</IUPAC>."
+            ),
+            payload={"track": "olympiad"},
+        )
+
+        result = evaluate_frontierscience_olympiad(
+            record,
+            short_answer_text="3-(trifluoromethyl)aniline",
+            full_response_text="FINAL ANSWER: 3-(trifluoromethyl)aniline",
+            judge=judge,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual("heuristic", result.details["method"])
+        self.assertEqual([], judge.prompts)
+
+    def test_heuristic_semantic_match_does_not_treat_chemical_formula_digits_as_scalar_answer(self) -> None:
+        self.assertIsNone(heuristic_semantic_match("C2H6", "C2H5"))
 
     def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
         judge = JudgeStub(

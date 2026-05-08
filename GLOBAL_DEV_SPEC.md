@@ -169,7 +169,7 @@
   - Status: `DONE`
 
 - Name: FrontierScience Olympiad scoring
-  - Description: Evaluates olympiad-style short answers, including numeric answers and formula-style symbolic expressions that may require semantic judge comparison.
+  - Description: Evaluates olympiad-style short answers, including numeric answers, molecule names embedded in tagged InChI/SMILES/IUPAC references, and formula-style symbolic expressions that may require semantic judge comparison. The shared semantic heuristic only treats answers as numeric scalar matches when both expected and predicted short answers are plain numeric scalars, so digits inside chemical formulas, InChI strings, or IUPAC names do not short-circuit molecule/name matching as numeric mismatches.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
