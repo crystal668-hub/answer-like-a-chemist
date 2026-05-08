@@ -182,7 +182,7 @@ submission_trace:
         self.assertFalse(checked.ok)
         self.assertIn("direct_answer", " ".join(checked.errors))
 
-    def test_numeric_answer_kind_audits_missing_chem_calculator_trace(self) -> None:
+    def test_numeric_answer_kind_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -201,9 +201,9 @@ submission_trace:
             provider_trace_mode="audit",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
+        self.assertFalse(any("chem-calculator" in warning for warning in checked.warnings))
 
-    def test_formula_answer_kind_audits_missing_chem_calculator_trace(self) -> None:
+    def test_formula_answer_kind_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -222,7 +222,7 @@ submission_trace:
             provider_trace_mode="audit",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
+        self.assertFalse(any("chem-calculator" in warning for warning in checked.warnings))
 
     def test_numeric_answer_kind_enforces_valid_chem_calculator_trace(self) -> None:
         candidate = """
@@ -247,7 +247,7 @@ submission_trace:
         )
         self.assertTrue(checked.ok)
 
-    def test_triggered_skill_skip_requires_reason_and_risk(self) -> None:
+    def test_skipped_provider_trace_is_not_valid_compliance(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -255,7 +255,7 @@ owner: proposer-1
 direct_answer: "42"
 summary: numeric answer
 submission_trace:
-  - step: chem-calculator
+  - skill: chem-calculator
     status: skipped
     trigger: numeric_short_answer
     reason: calculator unsupported for this symbolic prompt
@@ -267,9 +267,10 @@ submission_trace:
             answer_kind="numeric_short_answer",
             provider_trace_mode="enforce",
         )
-        self.assertTrue(checked.ok)
+        self.assertFalse(checked.ok)
+        self.assertTrue(any("skipped" in error.lower() for error in checked.errors))
 
-    def test_experimental_matrix_audits_materials_route(self) -> None:
+    def test_materials_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -289,9 +290,9 @@ submission_trace:
             prompt="What coordination polyhedra does this CIF crystal structure contain?",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("pymatgen" in warning for warning in checked.warnings))
+        self.assertFalse(any("pymatgen" in warning for warning in checked.warnings))
 
-    def test_experimental_matrix_audits_bioactivity_route(self) -> None:
+    def test_bioactivity_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -311,9 +312,9 @@ submission_trace:
             prompt="Find EGFR inhibitors with IC50 below 100 nM and summarize SAR.",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chembl-database" in warning for warning in checked.warnings))
+        self.assertFalse(any("chembl-database" in warning for warning in checked.warnings))
 
-    def test_experimental_matrix_audits_safety_route(self) -> None:
+    def test_safety_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -333,7 +334,7 @@ submission_trace:
             prompt="Assess chemical safety with ADMET, FDA labels, CTD, and STITCH evidence.",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("tooluniverse-chemical-safety" in warning for warning in checked.warnings))
+        self.assertFalse(any("tooluniverse-chemical-safety" in warning for warning in checked.warnings))
 
     def test_formal_review_prose_recovers_summary_and_review_items(self) -> None:
         review = """
@@ -2196,7 +2197,7 @@ class CoordinatorTimeoutSalvageTest(unittest.TestCase):
 
 
 class RunStatusShapeTest(unittest.TestCase):
-    def test_artifact_outcome_surfaces_provider_trace_audit_warnings(self) -> None:
+    def test_artifact_outcome_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
             proposal_path = Path(tmpdir) / transport.proposal_filename()
@@ -2234,10 +2235,9 @@ class RunStatusShapeTest(unittest.TestCase):
             )
 
             self.assertEqual("present_valid", outcome.state)
-            self.assertTrue(any("chem-calculator" in warning for warning in outcome.validation_warnings))
-            self.assertTrue(any("chem-calculator" in warning for warning in outcome.as_payload()["validation_warnings"]))
+            self.assertFalse(any("chem-calculator" in warning for warning in outcome.validation_warnings))
 
-    def test_candidate_submission_enforces_provider_trace_mode(self) -> None:
+    def test_candidate_submission_rejects_skipped_provider_trace_even_in_enforce_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
             driver.args = argparse.Namespace(role="proposer-1", provider_trace_mode="enforce")
@@ -2251,11 +2251,13 @@ class RunStatusShapeTest(unittest.TestCase):
                         "phase: propose",
                         "owner: proposer-1",
                         "direct_answer: '42'",
-                        "summary: numeric answer without provider trace.",
+                        "summary: claims skipped provider trace.",
                         "submission_trace:",
-                        "- step: reasoning",
-                        "  status: success",
-                        "  detail: mental arithmetic only.",
+                        "- skill: chem-calculator",
+                        "  status: skipped",
+                        "  trigger: numeric_or_formula_math",
+                        "  reason: model chose ordinary reasoning",
+                        "  risk: calculation may be wrong",
                     ]
                 ),
                 encoding="utf-8",
@@ -2272,7 +2274,7 @@ class RunStatusShapeTest(unittest.TestCase):
             )
 
             self.assertEqual("present_invalid", outcome.state)
-            self.assertTrue(any("chem-calculator" in error for error in outcome.validation_errors))
+            self.assertTrue(any("skipped" in error.lower() for error in outcome.validation_errors))
 
     def test_provider_trace_mode_defaults_to_env_then_audit(self) -> None:
         driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
