@@ -521,7 +521,7 @@
   - `paper-rerank.py` requires already-downloaded local PDFs.
   - `paper-parse.py` can use a long-lived MinerU API URL from env/config or local backend fallback logic.
   - GROBID is treated as a required long-lived Docker-backed local HTTP service.
-  - MinerU is treated as a required long-lived native macOS local HTTP service when complex PDF parsing/OCR is needed; the service helper installs the native runtime, pre-downloads models, defaults runtime model loading to `MINERU_MODEL_SOURCE=local`, and keeps the Docker packaging only as legacy Linux/reference material.
+  - MinerU is treated as a required long-lived native macOS local HTTP service when complex PDF parsing/OCR is needed; the service helper installs the native runtime, pre-downloads models, and defaults runtime model loading to `MINERU_MODEL_SOURCE=local`.
 
 - Shortcuts, hacks, implicit logic
   - Benchmark scripts duplicate a large amount of logic that also exists in `workspace/benchmarking/*`; the package is not the sole orchestration layer.

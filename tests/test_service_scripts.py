@@ -8,6 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ServiceScriptTests(unittest.TestCase):
+    def test_legacy_mineru_docker_packaging_is_removed(self) -> None:
+        self.assertFalse((ROOT / "mineru-api-docker").exists())
+
     def test_docker_services_only_manages_grobid(self) -> None:
         script = (ROOT / "scripts" / "docker_services.sh").read_text(encoding="utf-8")
 

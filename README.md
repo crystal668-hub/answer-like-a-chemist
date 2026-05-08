@@ -60,4 +60,3 @@ Notes:
 - `paper-parse` still reads `MINERU_API_URL` and passes it to the local `mineru` CLI, so existing runtime config can keep `MINERU_API_URL=http://127.0.0.1:8000`.
 - `mineru_service.sh up` defaults to `MINERU_MODEL_SOURCE=local`, so run `mineru_service.sh download-models` before the first service start.
 - `mineru_service.sh download-models` defaults to `MINERU_DOWNLOAD_SOURCE=modelscope`; set `MINERU_DOWNLOAD_SOURCE=huggingface` if that source is preferred.
-- The legacy `mineru-api-docker/` folder is retained for Linux restoration/reference, but it is no longer the macOS service path.
