@@ -1939,7 +1939,14 @@ Points: 0.5, Item: Second criterion
                 return benchmark_test.subprocess.CompletedProcess(
                     command,
                     0,
-                    stdout=json.dumps({"result": {"payloads": [{"text": 'Reasoning\nFINAL ANSWER: 5'}], "meta": {}}}),
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Reasoning\nFINAL ANSWER: 5"}],
+                                "meta": {"toolSummary": {"calls": 1, "tools": ["exec"], "failures": 0}},
+                            }
+                        }
+                    ),
                     stderr="",
                 )
 
@@ -1950,6 +1957,7 @@ Points: 0.5, Item: Second criterion
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
+                configured_skills=("chem-calculator", "paper-retrieval"),
             )
             record = benchmark_test.BenchmarkRecord(
                 record_id="demo",
@@ -1966,6 +1974,10 @@ Points: 0.5, Item: Second criterion
             assert isinstance(command, list)
             self.assertIn("--thinking", command)
             self.assertEqual("high", command[command.index("--thinking") + 1])
+            audit = out.runner_meta["skill_use_audit"]
+            self.assertEqual(2, audit["available_skill_count"])
+            self.assertTrue(audit["skill_tool_executed"])
+            self.assertEqual(1, audit["tool_call_count"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle

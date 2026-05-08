@@ -1107,12 +1107,14 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         timeout_seconds: int,
         config_path: Path,
         runtime_bundle_root: Path,
+        configured_skills: tuple[str, ...] | list[str] = (),
     ) -> None:
         super().__init__(
             agent_id=agent_id,
             timeout_seconds=timeout_seconds,
             config_path=config_path,
             runtime_bundle_root=runtime_bundle_root,
+            configured_skills=configured_skills,
             run_subprocess=run_subprocess,
             parse_json_stdout=parse_json_stdout,
             unwrap_agent_payload=unwrap_agent_payload,
@@ -1818,6 +1820,7 @@ def run_group(
                 timeout_seconds=single_timeout,
                 config_path=config_path,
                 runtime_bundle_root=runtime_bundle_root,
+                configured_skills=tuple(EXPERIMENT_SPECS[group.id].skill_allowlist or ()),
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..contracts import AnswerPayload, RunnerResult, RunStatus
+from ..skill_audit import build_skill_use_audit
 
 
 class SingleLLMRunner:
@@ -25,11 +26,13 @@ class SingleLLMRunner:
         build_single_llm_prompt,
         slugify,
         benchmark_agent_thinking: str,
+        configured_skills: tuple[str, ...] | list[str] = (),
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
         self.config_path = config_path
         self.runtime_bundle_root = runtime_bundle_root
+        self.configured_skills = tuple(str(skill) for skill in configured_skills)
         self._run_subprocess = run_subprocess
         self._parse_json_stdout = parse_json_stdout
         self._unwrap_agent_payload = unwrap_agent_payload
@@ -74,6 +77,12 @@ class SingleLLMRunner:
         full_response_text = self._summarize_payloads(payloads)
         short_answer_text, full_response_text = self._normalize_answer_tracks(full_response_text=full_response_text)
         runner_meta = dict(result_payload.get("meta") or {})
+        runner_meta["skill_use_audit"] = build_skill_use_audit(
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            configured_skills=self.configured_skills,
+            runner_meta=runner_meta,
+            final_response_text=full_response_text,
+        )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
         return RunnerResult(
