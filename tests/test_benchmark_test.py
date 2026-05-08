@@ -1397,7 +1397,15 @@ Points: 0.5, Item: Second criterion
                     "primary_metric_direction": "higher_is_better",
                     "details": {},
                 },
-                runner_meta={},
+                runner_meta={
+                    "skill_use_audit": {
+                        "skills_enabled": True,
+                        "tool_call_count": 2,
+                        "skill_tool_executed": True,
+                        "model_declared_skip": False,
+                        "no_tool_call": False,
+                    }
+                },
                 raw={},
                 elapsed_seconds=2.0,
                 run_lifecycle_status="completed",
@@ -1435,7 +1443,15 @@ Points: 0.5, Item: Second criterion
                     "primary_metric_direction": "higher_is_better",
                     "details": {},
                 },
-                runner_meta={},
+                runner_meta={
+                    "skill_use_audit": {
+                        "skills_enabled": True,
+                        "tool_call_count": 0,
+                        "skill_tool_executed": False,
+                        "model_declared_skip": True,
+                        "no_tool_call": True,
+                    }
+                },
                 raw={},
                 elapsed_seconds=4.0,
                 run_lifecycle_status="completed",
@@ -1455,6 +1471,10 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["pass_count"])
         self.assertEqual(3.0, summary["groups"]["g1"]["avg_elapsed_seconds"])
         self.assertEqual(0.5, summary["groups"]["g1"]["avg_normalized_score"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_tool_executed_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_model_declared_skip_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_no_tool_call_count"])
+        self.assertEqual(2, summary["groups"]["g1"]["skill_tool_call_total"])
 
     def test_aggregate_results_tracks_evaluable_and_degraded_counts(self) -> None:
         sample = [

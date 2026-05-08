@@ -52,6 +52,16 @@ def average_optional_metric(items: list[GroupRecordResult], key: str) -> float |
     return sum(values) / len(values)
 
 
+def skill_audit(item: GroupRecordResult) -> dict[str, Any]:
+    audit = (item.runner_meta or {}).get("skill_use_audit") or {}
+    return audit if isinstance(audit, dict) else {}
+
+
+def skill_tool_call_count(item: GroupRecordResult) -> int:
+    value = skill_audit(item).get("tool_call_count")
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
     return {
         "count": len(items),
@@ -66,6 +76,10 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "native_evaluable_count": sum(1 for item in items if item.evaluable and item.recovery_mode == "none"),
         "non_evaluable_count": sum(1 for item in items if not item.evaluable),
         "degraded_execution_count": sum(1 for item in items if item.degraded_execution),
+        "skill_tool_executed_count": sum(1 for item in items if skill_audit(item).get("skill_tool_executed")),
+        "skill_model_declared_skip_count": sum(1 for item in items if skill_audit(item).get("model_declared_skip")),
+        "skill_no_tool_call_count": sum(1 for item in items if skill_audit(item).get("no_tool_call")),
+        "skill_tool_call_total": sum(skill_tool_call_count(item) for item in items),
         "avg_score": sum(float(item.evaluation["score"]) for item in items) / len(items),
         "avg_normalized_score": sum(float(item.evaluation["normalized_score"]) for item in items) / len(items),
         "avg_elapsed_seconds": sum(float(item.elapsed_seconds) for item in items) / len(items),
