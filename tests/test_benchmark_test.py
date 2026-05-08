@@ -94,6 +94,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
 
+    def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
+        source = Path("benchmarking/runners/single_llm.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("selected_skills", source)
+        self.assertNotIn("config_for_record", source)
+        self.assertNotIn("SkillPlan", source)
+
     def test_parse_args_accepts_single_agent_id_override_and_rejects_removed_flags(self) -> None:
         with mock.patch.object(
             sys,
