@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -56,3 +57,26 @@ def test_runner_returns_structured_invalid_output_payload() -> None:
     assert payload["available"] is False
     assert payload["error_kind"] == "invalid_output"
     assert payload["command"][:3] == ["uv", "run", "python"]
+
+
+def test_run_skill_cli_prints_structured_missing_dependency_payload() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "benchmarking").mkdir()
+        script = root / "skills" / "demo" / "scripts" / "needs_missing.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("raise ModuleNotFoundError(\"No module named 'missing_demo'\")\n", encoding="utf-8")
+
+        runner_script = Path(__file__).resolve().parents[1] / "scripts" / "run_skill.py"
+        completed = subprocess.run(
+            ["uv", "run", "python", str(runner_script), "--workspace-root", str(root), "--script", str(script)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    payload = json.loads(completed.stdout)
+    assert completed.returncode == 2
+    assert payload["available"] is False
+    assert payload["error_kind"] == "missing_dependency"
+    assert payload["reason"] == "missing Python module: missing_demo"
