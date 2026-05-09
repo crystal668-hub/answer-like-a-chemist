@@ -6,11 +6,11 @@
   - The main executable source code lives under `workspace/`.
   - The repo root also stores live runtime state for OpenClaw and ClawTeam: agent configs, generated workspaces, SQLite state, logs, device/auth files, and task/session registries.
 - Current capabilities (ONLY what works)
-  - `DONE`: Run benchmark batches across three skills experiment groups: `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on` via `workspace/benchmark_test.py`; all groups keep websearch enabled, and the experiment variable is the benchmark skills allowlist.
+  - `DONE`: Run benchmark batches across three skills experiment groups: `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on` via `workspace/benchmark_test.py`; all groups keep websearch enabled, and the experiment variable is the health-filtered benchmark skills allowlist.
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
   - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
-  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py` and `workspace/benchmarking/single_llm_openclaw_wrapper.py`.
+  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, validates OpenClaw stdout against a strict agent result schema before answer extraction, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, and `workspace/benchmarking/result_contract.py`.
   - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
   - `DONE`: Manage DebateClaw V1 runtime, slot provisioning, prompt/materialization, and launch commands via `workspace/skills/debateclaw-v1/scripts/*.py`.
   - `DONE`: Maintain live debate protocol state in SQLite and expose CLI commands for init/status/next-action/submit/advance via `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
@@ -19,7 +19,9 @@
   - `DONE`: Collect ChemQA protocol outputs through Artifact Flow into canonical terminal artifacts, `artifact_manifest.json`, and legacy-compatible `qa_result.json` via `workspace/skills/chemqa-review/scripts/chemqa_artifact_flow.py` and `collect_artifacts.py`; finalization applies structured `answer_revision` rebuttals and repairs numeric short-answer projections from anchored final values in the full answer when the raw direct answer is a setup/process sentence.
   - `DONE`: Provide deterministic first-batch chemistry provider skills for local structure reasoning, name resolution, public compound lookup, and numeric chemistry calculations via `workspace/skills/rdkit`, `workspace/skills/opsin`, `workspace/skills/pubchem`, and `workspace/skills/chem-calculator`.
   - `DONE`: Provide an experimental medium-or-higher-value chemistry skill inventory via `workspace/skills/chemistry-routing-matrix.json`, covering 84 local skills from structure/materials, atomistic simulation, quantum chemistry, bioactivity/safety, molecular/materials ML, databases, spectra/formats, paper retrieval/access/parse/rerank, and workflow automation. Despite the historical filename, runtime benchmark prompts now treat it as inventory data, not as a deterministic router.
-  - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the full benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, and post-run reporting tracks actual tool calls separately from answer scoring.
+  - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, executables, API keys, data files, and network providers; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`.
+  - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run python` and return structured unavailable payloads such as `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
+  - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, and post-run reporting tracks actual tool calls separately from answer scoring.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
@@ -61,6 +63,8 @@
       - Implements benchmark scoring functions, answer parsing helpers, and the `EvaluationResult` payload.
     - `experiments.py`
       - Defines `ExperimentSpec`.
+    - `result_contract.py`
+      - Validates and normalizes OpenClaw agent stdout so only schema-valid `payloads[].text` entries become benchmark answers; invalid stdout is retained only as diagnostics.
     - `config_renderer.py`
       - Produces run-scoped OpenClaw configs, toggles web search, injects agent entries, and applies runner-only benchmark skill allowlists.
     - `provisioning.py`
@@ -72,13 +76,17 @@
     - `reporting.py`
       - Defines the per-record benchmark result schema and aggregates per-record results into summary buckets.
     - `skill_tree.py`
-      - Loads the historical chemistry skill inventory, defines the full benchmark skill allowlist, and renders a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill.
+      - Loads the historical chemistry skill inventory, defines the full benchmark skill allowlist, and renders a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill, optionally filtered to health-available skills.
     - `skill_audit.py`
-      - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata and final answer text.
+      - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata, final answer text, and benchmark skill-health summary.
+    - `skill_health.py`
+      - Defines benchmark skill health requirements and startup checks for Python imports, executables, API keys, data files, and network providers.
+    - `skill_runtime.py`
+      - Provides the workspace `uv run python` skill runner and structured unavailable/failure payload normalization.
     - `status.py`
       - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
     - `single_llm_openclaw_wrapper.py`
-      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, and emits session isolation audit metadata.
+      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, and emits session isolation plus stdout diagnostics metadata.
     - `runners/`
       - `single_llm.py`: baseline single-agent runner.
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
@@ -100,8 +108,10 @@
   - `chemistry-routing-matrix.json`
     - Historical experimental chemistry skill inventory for medium-or-higher-value chemistry capabilities. Despite the historical filename, runtime benchmark prompts treat this as inventory data, not as a deterministic router.
     - `workspace/benchmarking/skill_tree.py` defines the benchmark skill allowlist and a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill.
-    - Single-agent skills-on runs expose the full benchmark skill allowlist to the model. Prompts include a lightweight hierarchical skill tree and rely on the model to choose and call relevant skills when they help answer the record.
-    - Post-run reporting records actual tool-use audit metadata such as tool-call counts, model-declared skipped traces, and no-tool-call outcomes. Skipped traces are diagnostic only and do not count as executed skill use.
+    - Benchmark startup checks the allowlist with `workspace/benchmarking/skill_health.py`; only health-available skills remain in effective skills-on runtime configs and prompts.
+    - Single-agent skills-on runs expose the health-filtered benchmark skill allowlist to the model. Prompts include a lightweight hierarchical skill tree and rely on the model to choose and call relevant skills when they help answer the record.
+    - Agent-invoked skill scripts should go through `workspace/scripts/run_skill.py`, which executes target scripts via workspace `uv run python` and reports structured unavailable/failure payloads instead of raw shell failures.
+    - Post-run reporting records actual tool-use audit metadata such as tool-call counts, model-declared skipped traces, skill-health summary, and no-tool-call outcomes. Skipped traces are diagnostic only and do not count as executed skill use.
     - Core executable wrappers for `cclib`, `pymatgen`, `molecular-dynamics`, and `chembl-database` return structured error payloads for missing dependencies, missing input files, parse failures, and provider/API failures instead of crashing.
   - `benchmark-cleanroom/`
     - Run-scoped cleanup manifests and lease management plus a process-only cleanup executor that intentionally preserves benchmark session and artifact state.
@@ -226,11 +236,11 @@
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
-  - Description: Builds prompt, shells out through the single-LLM OpenClaw wrapper, unwraps JSON payload, normalizes answer tracks, and marks a record failed/unscored if wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`.
+  - Description: Builds prompt, shells out through the single-LLM OpenClaw wrapper, validates wrapper stdout against the strict agent result contract before answer extraction, normalizes answer tracks only from schema-valid `payloads[].text`, and marks a record failed/unscored if stdout is invalid or wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`.
   - Input / Output:
     - Input: benchmark record, group config, runtime bundle root.
-    - Output: `RunnerResult` with `runner_meta.session_isolation` audit metadata.
-  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`
+    - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`.
+  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/result_contract.py`
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
@@ -346,11 +356,19 @@
   - Status: `DONE`
 
 - Name: Autonomous benchmark skill discovery and audit
-  - Description: Skills-on benchmark runs keep the full benchmark skill allowlist available for each single-LLM record, use a compact Hierarchical Skill Tree instead of deterministic selected-skill routing, and report post-run skill-use audit counters from actual tool execution metadata.
+  - Description: Skills-on benchmark runs keep the health-available benchmark skill allowlist available for each single-LLM record, use a compact Hierarchical Skill Tree instead of deterministic selected-skill routing, and report post-run skill-use audit counters from actual tool execution metadata plus startup health summary.
   - Input / Output:
-    - Input: benchmark record prompt plus full configured benchmark skill allowlist.
-    - Output: normal benchmark answer plus `runner_meta.skill_use_audit` and aggregate skill tool-use counters.
+    - Input: benchmark record prompt plus effective configured benchmark skill allowlist.
+    - Output: normal benchmark answer plus `runner_meta.skill_use_audit`, `skill-health.json`, runtime manifest skill-health summary, and aggregate skill tool-use counters.
   - Implementation location: `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, `workspace/benchmarking/prompts.py`, `workspace/benchmarking/reporting.py`
+  - Status: `DONE`
+
+- Name: Benchmark skill runtime health and fixed script runner
+  - Description: Runs startup health checks for benchmark-visible skills and routes agent-invoked local skill scripts through a fixed workspace `uv run python` runner. Health checks verify declared Python modules, executables, API keys, data files, and network providers. Unavailable skills are removed from effective skills-on allowlists and emitted as structured diagnostics.
+  - Input / Output:
+    - Input: benchmark skill allowlist plus workspace root and environment variables.
+    - Output: `skill-health.json`, runtime manifest health summary/effective allowlists, and structured skill runner payloads with `available=false`, `error_kind`, and `reason` on failure.
+  - Implementation location: `workspace/benchmarking/skill_health.py`, `workspace/benchmarking/skill_runtime.py`, `workspace/scripts/run_skill.py`, `workspace/benchmark_test.py`
   - Status: `DONE`
 
 - Name: Experimental chemistry skill optional dependencies
@@ -469,15 +487,18 @@
 - Primary execution flow: three-group skills benchmark
   - `workspace/benchmark_test.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided.
   - It normalizes records through `benchmarking.datasets.load_records`.
-  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; `benchmark_test.py` keeps compatibility wrappers around that package module.
+  - It runs benchmark skill health checks through `benchmarking.skill_health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.
+  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmark_test.py` keeps compatibility wrappers around that package module.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
-  - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skill_tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`) and is written in full to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
+  - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skill_tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`). Startup health filtering writes only available skills to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
   - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.
   - For `single_llm_*` groups:
-    - The runner shells out directly to `openclaw agent --local ... --json`.
+    - The runner shells out through `benchmarking/single_llm_openclaw_wrapper.py`, which invokes `openclaw agent --local ... --json`, validates stdout with `benchmarking.result_contract`, and normalizes invalid stdout into `result.meta.stdout_diagnostics`.
     - It does not use a native Python OpenClaw API.
-    - `single_llm_skills_on` includes the compact Hierarchical Skill Tree in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
-    - The single-agent runner writes `runner_meta.skill_use_audit` after OpenClaw returns, including configured skill count/list, tool-call counts, tool names, model-declared skipped traces, and no-tool-call flags.
+    - Invalid stdout, such as tool argument JSON without schema-valid answer payloads, is never passed to answer extraction or the evaluator. The record becomes failed/unscored with `agent_result_contract_invalid`.
+    - `single_llm_skills_on` includes the compact health-filtered Hierarchical Skill Tree in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
+    - The prompt tells the model to run local skill scripts through `scripts/run_skill.py`, which executes target scripts with workspace `uv run python`.
+    - The single-agent runner writes `runner_meta.skill_use_audit` after OpenClaw returns, including configured skill count/list, startup skill-health summary, tool-call counts, tool names, model-declared skipped traces, and no-tool-call flags.
   - For `chemqa_*` groups:
     - The runner shells out to ChemQA skill scripts to compile/materialize/launch the run.
     - It monitors run status via files under `chemqa-review/control/run-status/`.
