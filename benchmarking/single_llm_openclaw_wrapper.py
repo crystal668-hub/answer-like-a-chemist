@@ -15,6 +15,12 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from benchmarking.convergence import (
+    ConvergencePolicy,
+    extract_latest_complete_answer_from_transcript,
+    is_complete_benchmark_answer,
+    summarize_transcript_convergence,
+)
 from benchmarking.result_contract import contract_to_payload, parse_agent_stdout
 
 
@@ -34,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--message", required=True, help="Prompt to send to OpenClaw.")
     parser.add_argument("--thinking", help="Forward OpenClaw thinking override.")
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw timeout override in seconds.")
+    parser.add_argument("--finalization-grace-seconds", type=int, default=90)
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output and attach isolation audit.")
     return parser.parse_args()
 
@@ -246,6 +253,79 @@ def merge_isolation_audit(payload: Any, audit: dict[str, Any]) -> Any:
     return payload
 
 
+def transcript_path_from_audit(audit: dict[str, Any]) -> Path | None:
+    raw = str(audit.get("postflight_entry_session_file") or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_file() else None
+
+
+def _target_result_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    result = payload.get("result")
+    if isinstance(result, dict):
+        return result
+    return payload
+
+
+def _is_timeout_like_payload(target: dict[str, Any]) -> bool:
+    payloads = target.get("payloads")
+    payload_texts: list[str] = []
+    if isinstance(payloads, list):
+        for item in payloads:
+            if isinstance(item, dict):
+                payload_texts.append(str(item.get("text") or ""))
+    timeout_needles = (
+        "Request timed out before a response was generated",
+        "The model did not produce a response before the LLM idle timeout",
+    )
+    for text in payload_texts:
+        if any(needle in text for needle in timeout_needles):
+            return True
+    if any(is_complete_benchmark_answer(text) for text in payload_texts):
+        return False
+    meta = target.get("meta") if isinstance(target.get("meta"), dict) else {}
+    return bool(meta.get("aborted") is True or str(meta.get("livenessState") or "") == "blocked")
+
+
+def merge_convergence_metadata(payload: Any, *, args: argparse.Namespace, audit: dict[str, Any]) -> Any:
+    target = _target_result_payload(payload)
+    if target is None:
+        return payload
+    policy = ConvergencePolicy(
+        timeout_seconds=int(getattr(args, "timeout", 0) or 0),
+        finalization_grace_seconds=int(getattr(args, "finalization_grace_seconds", 90)),
+    )
+    convergence_meta: dict[str, Any] = {
+        "policy": policy.to_meta(),
+        "transcript_answer_recovered": False,
+    }
+    transcript_path = transcript_path_from_audit(audit)
+    if transcript_path is not None:
+        convergence_meta.update(summarize_transcript_convergence(transcript_path))
+
+    meta = target.setdefault("meta", {})
+    if isinstance(meta, dict):
+        existing = meta.get("convergence")
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(convergence_meta)
+        meta["convergence"] = merged
+
+    if transcript_path is not None and _is_timeout_like_payload(target):
+        recovered = extract_latest_complete_answer_from_transcript(transcript_path)
+        if recovered:
+            target["payloads"] = [{"text": recovered}]
+            meta = target.setdefault("meta", {})
+            if isinstance(meta, dict):
+                convergence = meta.setdefault("convergence", {})
+                if isinstance(convergence, dict):
+                    convergence["transcript_answer_recovered"] = True
+                    convergence["recovery_source"] = "single-llm-session-transcript"
+    return payload
+
+
 def parse_openclaw_json_output(output: str) -> Any:
     return contract_to_payload(parse_agent_stdout(output))
 
@@ -297,6 +377,7 @@ def main() -> int:
         if args.json:
             output = result.stdout.strip() or result.stderr.strip()
             payload = parse_openclaw_json_output(output)
+            payload = merge_convergence_metadata(payload, args=args, audit=audit)
             payload = merge_isolation_audit(payload, audit)
             print(json.dumps(payload, ensure_ascii=False))
         else:

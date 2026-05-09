@@ -10,8 +10,8 @@
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
   - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
-  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, treats OpenClaw response-timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, and `workspace/benchmarking/result_contract.py`.
-  - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
+  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, applies runner-level convergence policy metadata and transcript recovery for complete benchmark answers, treats unrecovered OpenClaw response-timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/convergence.py`, and `workspace/benchmarking/result_contract.py`.
+  - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, applying runner-level convergence policy to unchanged-status recovery attempts, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
   - `DONE`: Manage DebateClaw V1 runtime, slot provisioning, prompt/materialization, and launch commands via `workspace/skills/debateclaw-v1/scripts/*.py`.
   - `DONE`: Maintain live debate protocol state in SQLite and expose CLI commands for init/status/next-action/submit/advance via `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
   - `DONE`: Drive ChemQA reviewer/proposer/coordinator loops on top of DebateClaw state via `workspace/skills/chemqa-review/scripts/chemqa_review_openclaw_driver.py`, including phase-scoped multi-turn artifact production, role-phase run-status diagnostics, and deterministic coordinator fallback when model refinement aborts or leaves no valid protocol rewrite.
@@ -64,6 +64,8 @@
       - Implements benchmark scoring functions, answer parsing helpers, and the `EvaluationResult` payload.
     - `experiments.py`
       - Defines `ExperimentSpec`.
+    - `convergence.py`
+      - Defines benchmark runner convergence policy, transcript summary helpers, and complete-answer recovery from session transcripts. Tool/turn counts are diagnostics only and are not enforced as hard limits.
     - `result_contract.py`
       - Validates and normalizes OpenClaw agent stdout so only schema-valid `payloads[].text` entries become benchmark answers; invalid stdout is retained only as diagnostics.
     - `config_renderer.py`
@@ -87,7 +89,7 @@
     - `status.py`
       - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
     - `single_llm_openclaw_wrapper.py`
-      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, and emits session isolation plus stdout diagnostics metadata.
+      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, emits session isolation plus stdout diagnostics metadata, and can recover a latest complete benchmark answer from the run-scoped transcript after timeout-like OpenClaw output.
     - `runners/`
       - `single_llm.py`: baseline single-agent runner.
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
@@ -173,7 +175,7 @@
   - Status: `DONE`
 
 - Name: Benchmark visual input bundle materialization
-  - Description: Creates per-record local input bundles for benchmark records with visual inputs. SuperChem image paths are expected to be relative to the record JSONL directory, so machine-local absolute paths are cleaned at the data layer rather than remapped at runtime; required multimodal SuperChem images fail fast when unavailable. HLE image fields are materialized from base64 data URIs or local files into the bundle, and remote-only HLE images fail fast instead of silently dropping visual context.
+  - Description: Creates per-record local input bundles for benchmark records with visual inputs. SuperChem image paths are expected to be relative to the record JSONL directory, temp benchmark path repair rewrites stale machine-local absolute paths into portable relative references, and the SuperChem extractor localizes only images directly referenced by the current question/options/reference reasoning text. HLE image fields are materialized from base64 data URIs or local files into the bundle, and remote-only HLE images fail fast instead of silently dropping visual context.
   - Input / Output:
     - Input: SuperChem/HLE `BenchmarkRecord` payloads plus a run-local bundle root.
     - Output: `question.md` and localized `images/*` files referenced by single-agent and ChemQA prompts.
@@ -245,16 +247,16 @@
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
-  - Description: Builds a time-budget-aware prompt, includes run-local visual bundle instructions when a record has localized visual inputs, shells out through the single-LLM OpenClaw wrapper, validates wrapper stdout against the strict agent result contract before answer extraction, normalizes answer tracks only from schema-valid `payloads[].text`, and marks a record failed/unscored if stdout is invalid, wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`, or a schema-valid OpenClaw timeout sentinel payload reports an aborted/blocked response.
+  - Description: Builds a time-budget-aware prompt from the runner convergence policy, includes run-local visual bundle instructions when a record has localized visual inputs, shells out through the single-LLM OpenClaw wrapper, validates wrapper stdout against the strict agent result contract before answer extraction, normalizes answer tracks only from schema-valid `payloads[].text`, records transcript tool/turn diagnostics without enforcing them as limits, recovers a complete transcript answer from timeout-like OpenClaw output as scoreable `RunStatus.RECOVERED`, and marks a record failed/unscored if stdout is invalid, wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`, or a schema-valid OpenClaw timeout sentinel payload reports an aborted/blocked response with no recoverable complete answer.
   - Input / Output:
     - Input: benchmark record, group config, runtime bundle root.
-    - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`; OpenClaw response-timeout sentinel payloads with aborted/blocked metadata return `RunStatus.FAILED`, `FailureInfo.code = agent_response_timeout`, empty answer tracks, and raw payload text retained in diagnostics instead of evaluation input.
-    - Prompt behavior: `build_single_llm_prompt` receives the per-record run timeout and tells the model to stop starting new tool/skill exploration once roughly 20% or less of the budget remains, then produce the required final answer format from evidence already gathered.
-  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/result_contract.py`
+    - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, `runner_meta.convergence_policy`, `runner_meta.convergence`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`; recovered transcript answers return `RunStatus.RECOVERED` with `RecoveryInfo.source = single-llm-session-transcript`; unrecovered OpenClaw response-timeout sentinel payloads with aborted/blocked metadata return `RunStatus.FAILED`, `FailureInfo.code = agent_response_timeout`, empty answer tracks, and raw payload text retained in diagnostics instead of evaluation input.
+    - Prompt behavior: `build_single_llm_prompt` receives the per-record convergence timeout and tells the model to stop starting new tool/skill exploration once roughly 20% or less of the budget remains, then produce the required final answer format from evidence already gathered. The prompt is advisory; enforcement/recovery lives in runner/wrapper metadata and transcript handling.
+  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/convergence.py`, `workspace/benchmarking/result_contract.py`
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
-  - Description: Launches ChemQA preset flow with run-local visual bundle context when present, derives an immutable benchmark answer kind, waits for benchmark-visible terminal run-status, triggers bounded recovery when run-status stops changing, prefers canonical Artifact Flow paths, archives artifacts, keeps legacy reconstruction/fallback for compatibility, marks evaluable recovered candidate submissions as scoreable degraded executions, and writes cleanup manifest.
+  - Description: Launches ChemQA preset flow with run-local visual bundle context when present, derives an immutable benchmark answer kind, waits for benchmark-visible terminal run-status under the shared convergence policy, triggers bounded recovery when run-status stops changing, fails with structured `convergence_limit_exceeded` metadata when policy limits are exceeded, prefers canonical Artifact Flow paths, archives artifacts, keeps legacy reconstruction/fallback for compatibility, marks evaluable recovered candidate submissions as scoreable degraded executions, and writes cleanup manifest.
   - Input / Output:
     - Input: benchmark record, ChemQA skill root, config path, slot set, profile/round overrides.
     - Output: `RunnerResult` plus archived artifact tree including canonical final/failure artifacts when available.
@@ -508,12 +510,14 @@
     - The runner shells out through `benchmarking/single_llm_openclaw_wrapper.py`, which invokes `openclaw agent --local ... --json`, validates stdout with `benchmarking.result_contract`, and normalizes invalid stdout into `result.meta.stdout_diagnostics`.
     - It does not use a native Python OpenClaw API.
     - Invalid stdout, such as tool argument JSON without schema-valid answer payloads, is never passed to answer extraction or the evaluator. The record becomes failed/unscored with `agent_result_contract_invalid`.
+    - Runner-level convergence policy is written into top-level results/manifests and per-record `runner_meta`; the wrapper records transcript assistant-turn/tool-call diagnostics and can recover the latest complete benchmark answer from the session transcript after timeout-like OpenClaw output. Tool/turn counts are never hard failure limits.
     - `single_llm_skills_on` includes the compact health-filtered Hierarchical Skill Tree in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
     - When an input bundle exists, the prompt names the bundle directory, tells the agent to read `question.md`, and explicitly instructs it to inspect referenced local images before answering.
     - The prompt tells the model to run local skill scripts through `scripts/run_skill.py`, which executes target scripts with workspace `uv run python`.
     - The single-agent runner writes `runner_meta.skill_use_audit` after OpenClaw returns, including configured skill count/list, startup skill-health summary, tool-call counts, tool names, model-declared skipped traces, and no-tool-call flags.
   - For `chemqa_*` groups:
     - The runner shells out to ChemQA skill scripts to compile/materialize/launch the run.
+    - The same convergence policy controls unchanged-status recovery attempts and max recovery attempts before a structured `convergence_limit_exceeded` failure.
     - When an input bundle exists, the ChemQA goal names the bundle and instructs workers to open `question.md` and inspect referenced images; the bundle directory is also passed as an additional file workspace.
     - It monitors run status via files under `chemqa-review/control/run-status/`.
     - If run-status remains unchanged across polling intervals, it invokes `chemqa-review/scripts/recover_run.py` with the run-scoped `CLAWTEAM_DATA_DIR`; repeated recovery attempts are rate-limited while the status signature remains unchanged.

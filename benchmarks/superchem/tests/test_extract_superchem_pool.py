@@ -38,10 +38,17 @@ class SuperChemExtractionTests(unittest.TestCase):
                         "row": {
                             "uuid": "mcq-with-images",
                             "question_type": "multiple_choice",
-                            "question_en": "Which reagent gives the shown product?",
-                            "options_en": {"A": "NaBH4", "B": "LiAlH4", "C": "PCC"},
+                            "question_en": "Which reagent gives the shown product? ![question](/media/uploads/question.png)",
+                            "options_en": {
+                                "A": "NaBH4",
+                                "B": "LiAlH4 ![option-b](/media/uploads/option-b.png)",
+                                "C": "PCC",
+                            },
                             "answer_en": ["B"],
-                            "explanation_en": "<Checkpoint id='1'>Identify the reduction pattern.</Checkpoint>",
+                            "explanation_en": (
+                                "<Checkpoint id='1'>Identify the reduction pattern.</Checkpoint> "
+                                "![expl](/media/uploads/expl.png)"
+                            ),
                             "question_images": {"/media/uploads/question.png": None},
                             "options_images": {"B": {"/media/uploads/option-b.png": None}},
                             "explanation_images": {"/media/uploads/expl.png": None},
@@ -120,6 +127,79 @@ class SuperChemExtractionTests(unittest.TestCase):
             extract_module.normalize_option_images(payload, ["A", "B", "C"]),
         )
 
+    def test_extract_image_urls_from_record_text_uses_only_inline_references(self) -> None:
+        text = (
+            "Question <MultiModal>![reactant](/media/uploads/q.png)</MultiModal> "
+            "again ![duplicate](/media/uploads/q.png) "
+            "and absolute ![product](https://superchem.pku.edu.cn/media/uploads/product.jpg)."
+        )
+
+        self.assertEqual(
+            [
+                "/media/uploads/q.png",
+                "https://superchem.pku.edu.cn/media/uploads/product.jpg",
+            ],
+            extract_module.extract_image_urls_from_record_text(text),
+        )
+
+    def test_transform_row_ignores_unreferenced_shared_image_maps(self) -> None:
+        row = {
+            "uuid": "shared-map-noise",
+            "question_type": "multiple_choice",
+            "question_en": "Pick the product. ![q](/media/uploads/q.png)",
+            "options_en": {
+                "A": "No image",
+                "B": "<MultiModal>![b](/media/uploads/b.png)</MultiModal>",
+                "C": "No image",
+            },
+            "answer_en": ["B"],
+            "explanation_en": (
+                "<Checkpoint id='1'>Choose the cyclized product.</Checkpoint> "
+                "![reason](/media/uploads/reason.png)"
+            ),
+            "question_images": {
+                "/media/uploads/q.png": None,
+                "/media/uploads/unrelated-1.png": None,
+                "/media/uploads/unrelated-2.png": None,
+            },
+            "options_images": {
+                "/media/uploads/b.png": None,
+                "/media/uploads/unrelated-option.png": None,
+            },
+            "explanation_images": {
+                "/media/uploads/reason.png": None,
+                "/media/uploads/unrelated-expl.png": None,
+            },
+            "canary": "superchem-canary",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            assets_dir = Path(temp_dir_name) / "assets"
+            output_base_dir = Path(temp_dir_name) / "data"
+            with mock.patch.object(extract_module, "download_binary", side_effect=self.fake_download_binary):
+                records, stats = extract_module.transform_row(
+                    dataset="ZehuaZhao/SUPERChem",
+                    config="default",
+                    split="train",
+                    row_idx=0,
+                    row=row,
+                    assets_dir=assets_dir,
+                    output_base_dir=output_base_dir,
+                    timeout_seconds=30,
+                )
+
+        self.assertEqual(1, len(records))
+        record = records[0]
+        expected_q = str(Path("..") / "assets" / extract_module.cache_relative_path_for_url("/media/uploads/q.png"))
+        expected_b = str(Path("..") / "assets" / extract_module.cache_relative_path_for_url("/media/uploads/b.png"))
+        expected_reason = str(Path("..") / "assets" / extract_module.cache_relative_path_for_url("/media/uploads/reason.png"))
+        self.assertEqual([expected_q], record["question_image_paths"])
+        self.assertEqual({"B": [expected_b]}, record["option_image_paths"])
+        self.assertEqual([expected_reason], record["explanation_image_paths"])
+        self.assertEqual(1, stats["question_image_references"])
+        self.assertEqual(1, stats["option_image_references"])
+        self.assertEqual(1, stats["explanation_image_references"])
+
     def test_extract_pool_generates_multimodal_records_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             assets_dir = Path(temp_dir_name) / "assets"
@@ -152,7 +232,8 @@ class SuperChemExtractionTests(unittest.TestCase):
         self.assertTrue(multimodal["has_images"])
         self.assertEqual("B", multimodal["answer"])
         self.assertEqual(
-            "Which reagent gives the shown product?\n\nOptions:\nA. NaBH4\nB. LiAlH4\nC. PCC",
+            "Which reagent gives the shown product? ![question](/media/uploads/question.png)\n\n"
+            "Options:\nA. NaBH4\nB. LiAlH4 ![option-b](/media/uploads/option-b.png)\nC. PCC",
             multimodal["prompt"],
         )
         expected_question = str(Path("..") / "assets" / extract_module.cache_relative_path_for_url("/media/uploads/question.png"))

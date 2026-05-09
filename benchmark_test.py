@@ -36,6 +36,7 @@ if str(_SOURCE_ROOT) not in sys.path:
 
 try:
     from benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
+    from benchmarking.convergence import ConvergencePolicy
     from benchmarking.datasets import (
         BenchmarkRecord,
         GradingSpec,
@@ -104,6 +105,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
     if exc.name != "benchmarking":
         raise
     from workspace.benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
+    from workspace.benchmarking.convergence import ConvergencePolicy
     from workspace.benchmarking.datasets import (
         BenchmarkRecord,
         GradingSpec,
@@ -445,6 +447,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--single-timeout", type=int, default=900, help="单一 LLM 每题超时秒数")
     parser.add_argument("--chemqa-timeout", type=int, default=1800, help="ChemQA fixed-lane review 每题超时秒数")
     parser.add_argument("--judge-timeout", type=int, default=300, help="Judge 每次评测超时秒数")
+    parser.add_argument(
+        "--finalization-grace-seconds",
+        type=int,
+        default=90,
+        help="Reserved grace window for final answer recovery/finalization",
+    )
+    parser.add_argument(
+        "--max-unchanged-status-polls",
+        type=int,
+        default=2,
+        help="ChemQA convergence limit for unchanged status polls",
+    )
+    parser.add_argument(
+        "--max-recovery-attempts",
+        type=int,
+        default=2,
+        help="ChemQA convergence limit for recovery attempts",
+    )
     parser.add_argument(
         "--max-concurrent-groups",
         type=int,
@@ -1242,6 +1262,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         runtime_bundle_root: Path,
         configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
+        convergence_policy: ConvergencePolicy | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -1250,6 +1271,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
             runtime_bundle_root=runtime_bundle_root,
             configured_skills=configured_skills,
             skill_health_summary=skill_health_summary,
+            convergence_policy=convergence_policy,
             run_subprocess=run_subprocess,
             parse_json_stdout=parse_json_stdout,
             unwrap_agent_payload=unwrap_agent_payload,
@@ -1275,6 +1297,7 @@ class ChemQARunner(_BenchmarkingChemQARunner):
         model_profile: str,
         runtime_bundle_root: Path,
         launch_workspace_root: Path,
+        convergence_policy: ConvergencePolicy | None = None,
     ) -> None:
         super().__init__(
             chemqa_root=chemqa_root,
@@ -1319,6 +1342,7 @@ class ChemQARunner(_BenchmarkingChemQARunner):
             benchmark_error_factory=BenchmarkError,
             cleanup_error_factory=CleanupFatalError,
             benchmark_agent_thinking=BENCHMARK_AGENT_THINKING,
+            convergence_policy=convergence_policy,
         )
 
     def _wait_for_terminal_status(self, run_id: str, *, timeout_seconds: int) -> dict[str, Any]:
@@ -1328,6 +1352,8 @@ class ChemQARunner(_BenchmarkingChemQARunner):
             self._normalize_chemqa_run_status = normalize_chemqa_run_status
         if not hasattr(self, "_benchmark_error_factory"):
             self._benchmark_error_factory = BenchmarkError
+        if not hasattr(self, "convergence_policy"):
+            self.convergence_policy = ConvergencePolicy(timeout_seconds=timeout_seconds)
         return super()._wait_for_terminal_status(run_id, timeout_seconds=timeout_seconds)
 
     def _candidate_protocol_dirs(self, run_id: str, run_status: dict[str, Any]) -> list[Path]:
@@ -1914,6 +1940,8 @@ def run_group(
     chemqa_model_profile: str,
     review_rounds: int | None,
     rebuttal_rounds: int | None,
+    single_convergence_policy: ConvergencePolicy | None = None,
+    chemqa_convergence_policy: ConvergencePolicy | None = None,
     experiment_specs: dict[str, ExperimentSpec] | None = None,
     skill_health_summary: dict[str, Any] | None = None,
 ) -> list[GroupRecordResult]:
@@ -1966,6 +1994,7 @@ def run_group(
                 model_profile=chemqa_model_profile,
                 runtime_bundle_root=runtime_bundle_root,
                 launch_workspace_root=output_root / "chemqa-launch",
+                convergence_policy=chemqa_convergence_policy or ConvergencePolicy(timeout_seconds=chemqa_timeout),
             )
         else:
             runner = build_runner(
@@ -1976,6 +2005,7 @@ def run_group(
                 runtime_bundle_root=runtime_bundle_root,
                 configured_skills=tuple(resolved_experiment_specs[group.id].skill_allowlist or ()),
                 skill_health_summary=skill_health_summary,
+                convergence_policy=single_convergence_policy or ConvergencePolicy(timeout_seconds=single_timeout),
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
@@ -2070,6 +2100,22 @@ def run_group(
 
 def main() -> int:
     args = parse_args()
+    single_convergence_policy = ConvergencePolicy(
+        timeout_seconds=args.single_timeout,
+        finalization_grace_seconds=args.finalization_grace_seconds,
+        max_unchanged_status_polls=args.max_unchanged_status_polls,
+        max_recovery_attempts=args.max_recovery_attempts,
+    )
+    chemqa_convergence_policy = ConvergencePolicy(
+        timeout_seconds=args.chemqa_timeout,
+        finalization_grace_seconds=args.finalization_grace_seconds,
+        max_unchanged_status_polls=args.max_unchanged_status_polls,
+        max_recovery_attempts=args.max_recovery_attempts,
+    )
+    convergence_policy_meta = {
+        "single_llm": single_convergence_policy.to_meta(),
+        "chemqa": chemqa_convergence_policy.to_meta(),
+    }
     group_ids = select_group_ids(args.groups)
     dataset_files = select_dataset_files(args)
     if args.list_datasets:
@@ -2161,6 +2207,8 @@ def main() -> int:
                         chemqa_model_profile=args.chemqa_model_profile,
                         review_rounds=args.review_rounds,
                         rebuttal_rounds=args.rebuttal_rounds,
+                        single_convergence_policy=single_convergence_policy,
+                        chemqa_convergence_policy=chemqa_convergence_policy,
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                     )
@@ -2226,6 +2274,7 @@ def main() -> int:
         "groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
         "run_groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "skill_health_summary": skill_health_summary,
+        "convergence_policy": convergence_policy_meta,
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
             "enabled": args.random_count_per_subset is not None,
@@ -2269,6 +2318,7 @@ def main() -> int:
                 "summary": skill_health_summary,
                 "report_path": str(output_root / "skill-health.json"),
             },
+            "convergence_policy": convergence_policy_meta,
             "groups": {
                 group_id: {
                     "group": asdict(EXPERIMENT_GROUPS[group_id]),

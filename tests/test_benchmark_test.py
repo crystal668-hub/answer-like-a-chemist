@@ -153,6 +153,62 @@ print(json.dumps({{
         self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
 
+    def test_repair_temp_superchem_image_paths_rewrites_stale_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            jsonl_path = root / "temp-benchmarks" / "superchem" / "data" / "superchem_pool.jsonl"
+            jsonl_path.parent.mkdir(parents=True)
+            record = {
+                "id": "superchem-demo-mm",
+                "question_image_paths": [
+                    "/home/dministrator/.openclaw/benchmarks/superchem/assets/_shared/aa/demo.png"
+                ],
+                "option_image_paths": {
+                    "B": [
+                        "/home/dministrator/.openclaw/benchmarks/superchem/assets/_shared/bb/option.png"
+                    ]
+                },
+                "explanation_image_paths": [
+                    "/home/dministrator/.openclaw/benchmarks/superchem/assets/_shared/cc/expl.png"
+                ],
+            }
+            jsonl_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            script_path = MODULE_PATH.parent / "scripts" / "repair_temp_superchem_image_paths.py"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--jsonl",
+                    str(jsonl_path),
+                    "--old-prefix",
+                    "/home/dministrator/.openclaw/benchmarks/superchem/assets",
+                    "--new-prefix",
+                    "../../../benchmarks/superchem/assets",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            repaired = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                ["../../../benchmarks/superchem/assets/_shared/aa/demo.png"],
+                repaired["question_image_paths"],
+            )
+            self.assertEqual(
+                {"B": ["../../../benchmarks/superchem/assets/_shared/bb/option.png"]},
+                repaired["option_image_paths"],
+            )
+            self.assertEqual(
+                ["../../../benchmarks/superchem/assets/_shared/cc/expl.png"],
+                repaired["explanation_image_paths"],
+            )
+            summary = json.loads(completed.stdout)
+            self.assertEqual(3, summary["rewritten_paths"])
+            self.assertEqual(1, summary["records_seen"])
+
     def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
         source = Path("benchmarking/runners/single_llm.py").read_text(encoding="utf-8")
 
@@ -180,6 +236,28 @@ print(json.dumps({{
         with mock.patch.object(sys, "argv", ["benchmark_test.py", "--single-agent", "custom"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
+
+    def test_parse_args_accepts_convergence_policy_flags(self) -> None:
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "benchmark_test.py",
+                "--single-timeout",
+                "900",
+                "--finalization-grace-seconds",
+                "60",
+                "--max-unchanged-status-polls",
+                "1",
+                "--max-recovery-attempts",
+                "1",
+            ],
+        ):
+            args = benchmark_test.parse_args()
+
+        self.assertEqual(60, args.finalization_grace_seconds)
+        self.assertEqual(1, args.max_unchanged_status_polls)
+        self.assertEqual(1, args.max_recovery_attempts)
 
     def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -223,6 +301,7 @@ print(json.dumps({{
 
             def fake_run_group(**kwargs):
                 captured["single_agent"] = kwargs["single_agent"]
+                captured["single_policy_timeout"] = str(kwargs["single_convergence_policy"].timeout_seconds)
                 return []
 
             argv = [
@@ -253,6 +332,7 @@ print(json.dumps({{
 
             self.assertEqual(0, exit_code)
             self.assertEqual("custom-single-agent", captured.get("single_agent"))
+            self.assertEqual("900", captured.get("single_policy_timeout"))
 
     def test_current_python_prefers_virtualenv_python(self) -> None:
         original_virtual_env = os.environ.get("VIRTUAL_ENV")
@@ -861,6 +941,11 @@ Points: 0.5, Item: Second criterion
 
     def test_chemqa_wait_for_terminal_status_attempts_recovery_on_stagnant_status(self) -> None:
         runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
+        runner.convergence_policy = benchmark_test.ConvergencePolicy(
+            timeout_seconds=10,
+            max_unchanged_status_polls=1,
+            max_recovery_attempts=2,
+        )
         statuses = iter(
             [
                 {"status": "planned", "updated_at": "2026-04-28T15:51:48Z"},
@@ -2535,6 +2620,125 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertTrue(out.runner_meta["agent_timeout_detected"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_returns_recovered_for_transcript_answer(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Explanation: ok\nAnswer: 273\nConfidence: 60%"}],
+                                "meta": {
+                                    "aborted": True,
+                                    "durationMs": 910104,
+                                    "livenessState": "blocked",
+                                    "convergence": {
+                                        "transcript_answer_recovered": True,
+                                        "tool_call_count": 8,
+                                        "assistant_turn_count": 12,
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="hle",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="hle",
+                prompt="Question?",
+                reference_answer="273",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertIsNotNone(out.recovery)
+            assert out.recovery is not None
+            self.assertEqual("single-llm-session-transcript", out.recovery.source)
+            self.assertEqual("Explanation: ok\nAnswer: 273\nConfidence: 60%", out.full_response_text)
+            self.assertIn("convergence_policy", out.runner_meta)
+            self.assertEqual(8, out.runner_meta["convergence"]["tool_call_count"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_does_not_score_recovered_answer_when_session_isolation_fails(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Explanation: ok\nAnswer: 273\nConfidence: 60%"}],
+                                "meta": {
+                                    "aborted": True,
+                                    "livenessState": "blocked",
+                                    "convergence": {"transcript_answer_recovered": True},
+                                    "session_isolation": {
+                                        "requested_session_id": "session-new",
+                                        "postflight_entry_session_id": "session-old",
+                                        "session_isolation_ok": False,
+                                    },
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="hle",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="hle",
+                prompt="Question?",
+                reference_answer="273",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertFalse(out.should_score())
+            assert out.failure is not None
+            self.assertEqual("session_isolation_failed", out.failure.code)
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle

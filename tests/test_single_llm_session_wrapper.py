@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import subprocess
 import sys
@@ -373,6 +374,96 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("missing_payloads", diagnostics["reason"])
             self.assertEqual("not an agent result", diagnostics["invalid_stdout_payload"]["query"])
             self.assertTrue(result["meta"]["session_isolation"]["session_isolation_ok"])
+
+    def test_wrapper_records_transcript_metrics_and_recovers_transcript_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [{"type": "toolCall", "name": "read"}],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Explanation: ok\nAnswer: 273\nConfidence: 60%",
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "Request timed out before a response was generated."}],
+                            "meta": {"aborted": True, "livenessState": "blocked"},
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual("Explanation: ok\nAnswer: 273\nConfidence: 60%", result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["transcript_answer_recovered"])
+        self.assertEqual(10, convergence["policy"]["finalization_grace_seconds"])
+        self.assertEqual(1, convergence["tool_call_count"])
+        self.assertEqual(2, convergence["assistant_turn_count"])
 
 
 if __name__ == "__main__":

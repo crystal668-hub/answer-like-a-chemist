@@ -6,7 +6,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
+from ..contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
+from ..convergence import ConvergencePolicy
 from ..skill_audit import build_skill_use_audit
 
 
@@ -41,9 +42,11 @@ class SingleLLMRunner:
         benchmark_agent_thinking: str,
         configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
+        convergence_policy: ConvergencePolicy | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
+        self.convergence_policy = convergence_policy or ConvergencePolicy(timeout_seconds=timeout_seconds)
         self.config_path = config_path
         self.runtime_bundle_root = runtime_bundle_root
         self.configured_skills = tuple(str(skill) for skill in configured_skills)
@@ -66,7 +69,7 @@ class SingleLLMRunner:
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             input_bundle=input_bundle,
             available_skills=set(self.configured_skills),
-            time_budget_seconds=self.timeout_seconds,
+            time_budget_seconds=self.convergence_policy.timeout_seconds,
         )
         session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
         wrapper_path = Path(__file__).resolve().parents[1] / "single_llm_openclaw_wrapper.py"
@@ -84,15 +87,18 @@ class SingleLLMRunner:
             "--thinking",
             self._benchmark_agent_thinking,
             "--timeout",
-            str(self.timeout_seconds),
+            str(self.convergence_policy.timeout_seconds),
+            "--finalization-grace-seconds",
+            str(self.convergence_policy.finalization_grace_seconds),
             "--json",
         ]
         env = os.environ.copy()
         env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
-        result = self._run_subprocess(command, env=env, timeout=self.timeout_seconds + 30)
+        result = self._run_subprocess(command, env=env, timeout=self.convergence_policy.timeout_seconds + 30)
         payload = self._parse_json_stdout(result, command)
         result_payload = self._unwrap_agent_payload(payload)
         runner_meta = dict(result_payload.get("meta") or {})
+        runner_meta["convergence_policy"] = self.convergence_policy.to_meta()
         stdout_diagnostics = runner_meta.get("stdout_diagnostics")
         if isinstance(stdout_diagnostics, dict) and stdout_diagnostics.get("schema_valid") is False:
             message = (
@@ -133,7 +139,11 @@ class SingleLLMRunner:
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
-        if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text):
+        convergence_meta = runner_meta.get("convergence")
+        transcript_answer_recovered = (
+            isinstance(convergence_meta, dict) and convergence_meta.get("transcript_answer_recovered") is True
+        )
+        if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text) and not transcript_answer_recovered:
             message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
             runner_meta["error"] = message
             runner_meta["agent_timeout_detected"] = True
@@ -175,6 +185,28 @@ class SingleLLMRunner:
                     code="session_isolation_failed",
                     message=message,
                     details=dict(session_isolation),
+                ),
+            )
+        if transcript_answer_recovered:
+            assert isinstance(convergence_meta, dict)
+            runner_meta["degraded_execution"] = True
+            runner_meta["recovery_mode"] = "single-llm-session-transcript"
+            runner_meta["answer_reliability"] = "high_confidence_recovered"
+            return RunnerResult(
+                status=RunStatus.RECOVERED,
+                answer=AnswerPayload(
+                    short_answer_text=short_answer_text,
+                    full_response_text=full_response_text,
+                ),
+                raw=payload,
+                runner_meta=runner_meta,
+                recovery=RecoveryInfo(
+                    source="single-llm-session-transcript",
+                    scored=True,
+                    evaluable=True,
+                    reliability="high_confidence_recovered",
+                    recovery_mode="single-llm-session-transcript",
+                    details=dict(convergence_meta),
                 ),
             )
         return RunnerResult(

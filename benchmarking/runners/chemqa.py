@@ -6,7 +6,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from ..convergence import ConvergencePolicy
 from ..contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
+
+
+class ConvergenceLimitExceeded(RuntimeError):
+    pass
 
 
 class ChemQARunner:
@@ -69,9 +74,11 @@ class ChemQARunner:
         benchmark_error_factory=None,
         cleanup_error_factory=None,
         benchmark_agent_thinking: str | None = None,
+        convergence_policy: ConvergencePolicy | None = None,
     ) -> None:
         self.chemqa_root = chemqa_root
         self.timeout_seconds = timeout_seconds
+        self.convergence_policy = convergence_policy or ConvergencePolicy(timeout_seconds=timeout_seconds)
         self.config_path = config_path
         self.slot_set = slot_set
         self.review_rounds = review_rounds
@@ -182,11 +189,13 @@ class ChemQARunner:
     def _wait_for_terminal_status(self, run_id: str, *, timeout_seconds: int) -> dict[str, Any]:
         import time
 
-        deadline = time.time() + timeout_seconds
+        policy = getattr(self, "convergence_policy", ConvergencePolicy(timeout_seconds=timeout_seconds))
+        deadline = time.time() + int(policy.timeout_seconds or timeout_seconds)
         last_status: dict[str, Any] = {}
         last_signature = ""
         unchanged_polls = 0
         last_recovery_attempt_at = 0.0
+        recovery_attempts = 0
         while time.time() < deadline:
             now = time.time()
             last_status = self._read_run_status(run_id)
@@ -199,9 +208,19 @@ class ChemQARunner:
                 unchanged_polls = 0
                 last_signature = signature
                 last_recovery_attempt_at = 0.0
-            if unchanged_polls >= 1 and (last_recovery_attempt_at <= 0.0 or now - last_recovery_attempt_at >= 120):
+            if unchanged_polls >= max(1, int(policy.max_unchanged_status_polls)):
+                if recovery_attempts >= max(0, int(policy.max_recovery_attempts)):
+                    error_message = (
+                        f"ChemQA run `{run_id}` exceeded convergence limits before terminal status. "
+                        f"Last status: {last_status}"
+                    )
+                    if self._benchmark_error_factory is not None:
+                        raise self._benchmark_error_factory(error_message)
+                    raise ConvergenceLimitExceeded(error_message)
+                recovery_attempts += 1
                 last_recovery_attempt_at = now
                 self._recover_stalled_run(run_id, last_status)
+                unchanged_polls = 0
             time.sleep(30)
         error_message = (
             f"ChemQA run `{run_id}` did not reach a terminal state within {timeout_seconds}s. Last status: {last_status}"
@@ -789,7 +808,12 @@ class ChemQARunner:
         env["BENCHMARK_CLEANROOM_LEASE_DIR"] = str((self.launch_workspace_root.parent / "cleanroom" / "leases").resolve())
 
         try:
-            result = self._run_subprocess(command, env=env, cwd=self.chemqa_root, timeout=self.timeout_seconds)
+            result = self._run_subprocess(
+                command,
+                env=env,
+                cwd=self.chemqa_root,
+                timeout=self.convergence_policy.timeout_seconds,
+            )
             payload = self._parse_json_stdout(result, command)
             materialize = self._deep_copy_jsonish((payload.get("materialize") or {}))
             self._update_cleanup_manifest(
@@ -820,7 +844,48 @@ class ChemQARunner:
                     "launch_payload": self._deep_copy_jsonish(payload),
                 },
             )
-            run_status = self._wait_for_terminal_status(run_id, timeout_seconds=self.timeout_seconds)
+            try:
+                run_status = self._wait_for_terminal_status(run_id, timeout_seconds=self.convergence_policy.timeout_seconds)
+            except Exception as exc:
+                message = str(exc)
+                is_convergence_stop = "convergence limit" in message.lower() or "exceeded convergence" in message.lower()
+                if not is_convergence_stop:
+                    raise
+                run_status = self._read_run_status(run_id)
+                archive_meta = self._archive_artifacts(
+                    run_id=run_id,
+                    group_id=group.id,
+                    record_id=record.record_id,
+                    run_status=run_status,
+                    env=env,
+                )
+                runner_meta = {
+                    "run_id": run_id,
+                    "launch": payload,
+                    "convergence_policy": self.convergence_policy.to_meta(),
+                    "terminal_state": "failed",
+                    "terminal_reason_code": "convergence_limit_exceeded",
+                    "run_status": run_status,
+                    "error": message,
+                    **archive_meta,
+                }
+                if input_bundle is not None:
+                    runner_meta["runtime_bundle"] = input_bundle.to_meta()
+                return RunnerResult(
+                    status=RunStatus.FAILED,
+                    answer=AnswerPayload(),
+                    raw={"run_status": run_status},
+                    runner_meta=runner_meta,
+                    failure=FailureInfo(
+                        code="convergence_limit_exceeded",
+                        message=message,
+                        details={
+                            "policy": self.convergence_policy.to_meta(),
+                            "run_id": run_id,
+                            "run_status": run_status,
+                        },
+                    ),
+                )
             terminal_state = str(run_status.get("terminal_state") or "")
             terminal_reason_code = str(run_status.get("terminal_reason_code") or "")
             legacy_status = str(run_status.get("legacy_status") or "")
@@ -841,6 +906,7 @@ class ChemQARunner:
                     runner_meta = {
                         "run_id": run_id,
                         "launch": payload,
+                        "convergence_policy": self.convergence_policy.to_meta(),
                         "qa_result_path": str(qa_result_path),
                         "acceptance_status": qa_result.get("acceptance_status"),
                         "terminal_state": qa_result.get("terminal_state"),
@@ -870,6 +936,7 @@ class ChemQARunner:
                 runner_meta = {
                     "run_id": run_id,
                     "launch": payload,
+                    "convergence_policy": self.convergence_policy.to_meta(),
                     "acceptance_status": None,
                     "terminal_state": terminal_state or "unknown",
                     "terminal_reason_code": terminal_reason_code or "",
@@ -958,6 +1025,7 @@ class ChemQARunner:
             runner_meta = {
                 "run_id": run_id,
                 "launch": payload,
+                "convergence_policy": self.convergence_policy.to_meta(),
                 "qa_result_path": str(qa_result_path),
                 "acceptance_status": qa_result.get("acceptance_status"),
                 "terminal_state": terminal_state or qa_result.get("terminal_state"),

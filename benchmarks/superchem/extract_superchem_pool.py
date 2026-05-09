@@ -30,6 +30,8 @@ DEFAULT_SPLIT = "train"
 CHECKPOINT_TAG_RE = re.compile(r"<\s*checkpoint\b", re.IGNORECASE)
 OPTION_LETTER_RE = re.compile(r"[A-Z]")
 MEDIA_UPLOAD_PATH_RE = re.compile(r"^/media/uploads/[^?#]+\.(?:png|jpg|jpeg|gif|webp|bmp|svg|tif|tiff)$", re.IGNORECASE)
+MARKDOWN_IMAGE_URL_RE = re.compile(r"!\[[^\]]*]\((?P<url>[^)\s]+)(?:\s+\"[^\"]*\")?\)")
+MEDIA_UPLOAD_URL_RE = re.compile(r"https?://superchem\.pku\.edu\.cn/media/uploads/[^\s)>'\"]+|/media/uploads/[^\s)>'\"]+")
 
 
 class ExtractionError(RuntimeError):
@@ -338,6 +340,39 @@ def extract_image_urls(value: Any) -> list[str]:
     return []
 
 
+def dedupe_preserve_order(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = normalize_text(value).rstrip(".,;:")
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def extract_image_urls_from_record_text(text: Any) -> list[str]:
+    raw = normalize_text(text)
+    if not raw:
+        return []
+    candidates: list[str] = []
+    for match in MARKDOWN_IMAGE_URL_RE.finditer(raw):
+        candidates.append(match.group("url"))
+    for match in MEDIA_UPLOAD_URL_RE.finditer(raw):
+        candidates.append(match.group(0))
+    return dedupe_preserve_order(candidates)
+
+
+def extract_option_image_urls_from_record_text(options: dict[str, str]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for letter, text in options.items():
+        urls = extract_image_urls_from_record_text(text)
+        if urls:
+            result[letter] = urls
+    return result
+
+
 def normalize_option_images(value: Any, option_keys: Iterable[str]) -> dict[str, list[str]]:
     parsed = parse_json_if_needed(value)
     valid_keys = {str(key).strip().upper() for key in option_keys if str(key).strip()}
@@ -508,14 +543,18 @@ def transform_row(
     answer_letters = normalize_answer_letters(row.get("answer_en"), options.keys())
     prompt = build_prompt(question, options)
 
-    question_image_locators = extract_image_urls(row.get("question_images"))
+    source_question_image_locators = extract_image_urls(row.get("question_images"))
+    source_option_images_raw = normalize_option_images(row.get("options_images"), options.keys())
+    source_explanation_image_locators = extract_image_urls(row.get("explanation_images"))
+
+    question_image_locators = extract_image_urls_from_record_text(question)
     question_images, question_downloaded, question_refs = localize_images(
         image_urls=question_image_locators,
         assets_dir=assets_dir,
         path_base_dir=output_base_dir,
         timeout_seconds=timeout_seconds,
     )
-    option_images_raw = normalize_option_images(row.get("options_images"), options.keys())
+    option_images_raw = extract_option_image_urls_from_record_text(options)
     option_images: dict[str, list[str]] = {}
     option_downloaded = 0
     option_refs = 0
@@ -530,7 +569,7 @@ def transform_row(
             option_images[letter] = localized
         option_downloaded += downloaded
         option_refs += refs
-    explanation_image_locators = extract_image_urls(row.get("explanation_images"))
+    explanation_image_locators = extract_image_urls_from_record_text(explanation)
     explanation_images, explanation_downloaded, explanation_refs = localize_images(
         image_urls=explanation_image_locators,
         assets_dir=assets_dir,
@@ -556,9 +595,9 @@ def transform_row(
         "question_image_paths": [],
         "option_image_paths": {},
         "explanation_image_paths": explanation_images,
-        "source_question_image_paths": question_image_locators,
-        "source_option_image_paths": option_images_raw,
-        "source_explanation_image_paths": explanation_image_locators,
+        "source_question_image_paths": source_question_image_locators,
+        "source_option_image_paths": source_option_images_raw,
+        "source_explanation_image_paths": source_explanation_image_locators,
         "source_has_images": has_images,
         "canary": normalize_text(row.get("canary")),
         "eval_kind": "superchem_multiple_choice_rpf",
