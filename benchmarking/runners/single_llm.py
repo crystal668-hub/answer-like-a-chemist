@@ -76,10 +76,37 @@ class SingleLLMRunner:
         result = self._run_subprocess(command, env=env, timeout=self.timeout_seconds + 30)
         payload = self._parse_json_stdout(result, command)
         result_payload = self._unwrap_agent_payload(payload)
+        runner_meta = dict(result_payload.get("meta") or {})
+        stdout_diagnostics = runner_meta.get("stdout_diagnostics")
+        if isinstance(stdout_diagnostics, dict) and stdout_diagnostics.get("schema_valid") is False:
+            message = (
+                "Single-LLM OpenClaw stdout did not contain a schema-valid agent result payload: "
+                + str(stdout_diagnostics.get("reason") or "invalid_stdout")
+            )
+            runner_meta["error"] = message
+            runner_meta["stdout_diagnostics"] = dict(stdout_diagnostics)
+            runner_meta["skill_use_audit"] = build_skill_use_audit(
+                skills_enabled=bool(getattr(group, "skills_enabled", True)),
+                configured_skills=self.configured_skills,
+                runner_meta=runner_meta,
+                final_response_text="",
+            )
+            if input_bundle is not None:
+                runner_meta["runtime_bundle"] = input_bundle.to_meta()
+            return RunnerResult(
+                status=RunStatus.FAILED,
+                answer=AnswerPayload(),
+                raw=payload,
+                runner_meta=runner_meta,
+                failure=FailureInfo(
+                    code="agent_result_contract_invalid",
+                    message=message,
+                    details=dict(stdout_diagnostics),
+                ),
+            )
         payloads = list((result_payload.get("payloads") or []))
         full_response_text = self._summarize_payloads(payloads)
         short_answer_text, full_response_text = self._normalize_answer_tracks(full_response_text=full_response_text)
-        runner_meta = dict(result_payload.get("meta") or {})
         runner_meta["skill_use_audit"] = build_skill_use_audit(
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             configured_skills=self.configured_skills,

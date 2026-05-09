@@ -327,6 +327,53 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("FINAL ANSWER: 1", payload["result"]["payloads"][0]["text"])
             self.assertTrue(payload["result"]["meta"]["session_isolation"]["session_isolation_ok"])
 
+    def test_main_keeps_invalid_stdout_as_diagnostics_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps({"query": "not an agent result", "count": 3}),
+                stderr="",
+            )
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": str(root / "session-a.jsonl"),
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args):
+                with mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit):
+                    with mock.patch.object(wrapper, "run_openclaw", return_value=completed):
+                        with mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit):
+                            with mock.patch("builtins.print") as print_mock:
+                                exit_code = wrapper.main()
+
+            self.assertEqual(0, exit_code)
+            payload = json.loads(print_mock.call_args.args[0])
+            result = payload["result"]
+            self.assertEqual([], result["payloads"])
+            diagnostics = result["meta"]["stdout_diagnostics"]
+            self.assertFalse(diagnostics["schema_valid"])
+            self.assertEqual("missing_payloads", diagnostics["reason"])
+            self.assertEqual("not an agent result", diagnostics["invalid_stdout_payload"]["query"])
+            self.assertTrue(result["meta"]["session_isolation"]["session_isolation_ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

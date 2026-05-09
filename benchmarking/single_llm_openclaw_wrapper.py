@@ -15,7 +15,7 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from benchmarking.evaluators import safe_json_extract
+from benchmarking.result_contract import contract_to_payload, parse_agent_stdout
 
 
 class SessionIsolationError(RuntimeError):
@@ -247,13 +247,7 @@ def merge_isolation_audit(payload: Any, audit: dict[str, Any]) -> Any:
 
 
 def parse_openclaw_json_output(output: str) -> Any:
-    stripped = str(output or "").strip()
-    if not stripped:
-        raise SessionIsolationError("OpenClaw returned empty JSON output.")
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        return safe_json_extract(stripped)
+    return contract_to_payload(parse_agent_stdout(output))
 
 
 def resolve_openclaw_executable() -> str:

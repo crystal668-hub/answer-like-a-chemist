@@ -2107,6 +2107,63 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
 
+    def test_single_llm_runner_rejects_invalid_stdout_payloads_without_scoring_empty_answer(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [],
+                                "meta": {
+                                    "stdout_diagnostics": {
+                                        "schema_valid": False,
+                                        "reason": "missing_payloads",
+                                        "invalid_stdout_payload": {"query": "tool args"},
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="chembench",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_result_contract_invalid", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
     def test_chemqa_runner_uses_run_scoped_writable_template_and_command_map_dirs(self) -> None:
         captured: dict[str, object] = {}
         original_run_subprocess = benchmark_test.run_subprocess
