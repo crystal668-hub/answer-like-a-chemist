@@ -126,7 +126,7 @@
     - Input: benchmark root or dataset files, group list, timeouts, config path, model/profile overrides.
     - Output: `results.json`, `results.partial.json`, `runtime-manifest.json`, `runtime-config/*.json`, `per-record/*/*.json`, CSV summaries.
     - Per-record JSON entries are on schema version `2` and include `skills_enabled` plus explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
-    - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, and degraded execution counts.
+    - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, degraded execution counts, and HLE calibration RMSE for confidence diagnostics.
   - Implementation location: `workspace/benchmark_test.py`, `workspace/benchmarking/*`
   - Status: `DONE`
 
@@ -202,7 +202,7 @@
   - Status: `DONE`
 
 - Name: HLE chemistry scoring
-  - Description: Scores Humanity's Last Exam chemistry-subset records with the official HLE-style LLM judge rule over the complete candidate answer text: extract the final answer from the response, compare against the precise reference answer with small numeric tolerance allowed by the judge prompt, and return binary accuracy plus confidence metadata.
+  - Description: Scores Humanity's Last Exam chemistry-subset records with the official HLE-style LLM judge rule over the complete candidate answer text: extract the final answer from the response, compare against the precise reference answer with small numeric tolerance allowed by the judge prompt, and return binary accuracy plus confidence metadata. Aggregate reporting computes HLE calibration RMSE from the candidate response confidence and binary correctness as a diagnostic of self-reported reliability; it does not affect per-record `score`, `normalized_score`, or `passed`.
   - Input / Output:
     - Input: HLE chemistry `BenchmarkRecord` plus model response text.
     - Output: `EvaluationResult` with `primary_metric = hle_judge_accuracy` and judge details including extracted final answer and confidence.

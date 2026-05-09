@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -52,6 +53,23 @@ def average_optional_metric(items: list[GroupRecordResult], key: str) -> float |
     return sum(values) / len(values)
 
 
+def hle_calibration_rmse(items: list[GroupRecordResult]) -> float | None:
+    squared_errors: list[float] = []
+    for item in items:
+        if item.eval_kind != "hle":
+            continue
+        details = item.evaluation.get("details") or {}
+        confidence = details.get("confidence")
+        if not isinstance(confidence, (int, float)):
+            continue
+        confidence_probability = max(0.0, min(100.0, float(confidence))) / 100.0
+        correctness = 1.0 if item.evaluation.get("passed") else 0.0
+        squared_errors.append((confidence_probability - correctness) ** 2)
+    if not squared_errors:
+        return None
+    return math.sqrt(sum(squared_errors) / len(squared_errors))
+
+
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
     return {
         "count": len(items),
@@ -71,6 +89,7 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "avg_elapsed_seconds": sum(float(item.elapsed_seconds) for item in items) / len(items),
         "avg_answer_accuracy": average_optional_metric(items, "answer_accuracy"),
         "avg_rpf": average_optional_metric(items, "rpf"),
+        "hle_calibration_rmse": hle_calibration_rmse(items),
     }
 
 

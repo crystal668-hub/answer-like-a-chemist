@@ -1703,6 +1703,141 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1.0, summary["groups"]["g1"]["avg_answer_accuracy"])
         self.assertEqual(0.75, summary["groups"]["g1"]["avg_rpf"])
 
+    def test_aggregate_results_includes_hle_calibration_error(self) -> None:
+        sample = [
+            benchmark_test.GroupRecordResult(
+                schema_version=2,
+                group_id="g1",
+                group_label="Group 1",
+                runner="single_llm",
+                websearch=False,
+                record_id="hle-1",
+                subset="hle_chemistry",
+                dataset="hle",
+                source_file="/tmp/hle.jsonl",
+                eval_kind="hle",
+                prompt="Q1",
+                reference_answer="A",
+                answer_text="A",
+                evaluation={
+                    "eval_kind": "hle",
+                    "score": 1.0,
+                    "max_score": 1.0,
+                    "normalized_score": 1.0,
+                    "passed": True,
+                    "primary_metric": "hle_judge_accuracy",
+                    "primary_metric_direction": "higher_is_better",
+                    "details": {"confidence": 80},
+                },
+                runner_meta={},
+                raw={},
+                elapsed_seconds=5.0,
+                run_lifecycle_status="completed",
+                protocol_completion_status="completed",
+                protocol_acceptance_status=None,
+                answer_availability="native_final",
+                answer_reliability="native",
+                evaluable=True,
+                scored=True,
+                recovery_mode="none",
+                degraded_execution=False,
+                execution_error_kind=None,
+            ),
+            benchmark_test.GroupRecordResult(
+                schema_version=2,
+                group_id="g1",
+                group_label="Group 1",
+                runner="single_llm",
+                websearch=False,
+                record_id="hle-2",
+                subset="hle_chemistry",
+                dataset="hle",
+                source_file="/tmp/hle.jsonl",
+                eval_kind="hle",
+                prompt="Q2",
+                reference_answer="B",
+                answer_text="C",
+                evaluation={
+                    "eval_kind": "hle",
+                    "score": 0.0,
+                    "max_score": 1.0,
+                    "normalized_score": 0.0,
+                    "passed": False,
+                    "primary_metric": "hle_judge_accuracy",
+                    "primary_metric_direction": "higher_is_better",
+                    "details": {"confidence": 60},
+                },
+                runner_meta={},
+                raw={},
+                elapsed_seconds=5.0,
+                run_lifecycle_status="completed",
+                protocol_completion_status="completed",
+                protocol_acceptance_status=None,
+                answer_availability="native_final",
+                answer_reliability="native",
+                evaluable=True,
+                scored=True,
+                recovery_mode="none",
+                degraded_execution=False,
+                execution_error_kind=None,
+            ),
+            benchmark_test.GroupRecordResult(
+                schema_version=2,
+                group_id="g1",
+                group_label="Group 1",
+                runner="single_llm",
+                websearch=False,
+                record_id="chembench-1",
+                subset="chembench",
+                dataset="chembench",
+                source_file="/tmp/chembench.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="Q3",
+                reference_answer="D",
+                answer_text="D",
+                evaluation={
+                    "eval_kind": "chembench_open_ended",
+                    "score": 1.0,
+                    "max_score": 1.0,
+                    "normalized_score": 1.0,
+                    "passed": True,
+                    "primary_metric": "judge_accuracy",
+                    "primary_metric_direction": "higher_is_better",
+                    "details": {"confidence": 0},
+                },
+                runner_meta={},
+                raw={},
+                elapsed_seconds=5.0,
+                run_lifecycle_status="completed",
+                protocol_completion_status="completed",
+                protocol_acceptance_status=None,
+                answer_availability="native_final",
+                answer_reliability="native",
+                evaluable=True,
+                scored=True,
+                recovery_mode="none",
+                degraded_execution=False,
+                execution_error_kind=None,
+            ),
+        ]
+
+        summary = benchmark_test.aggregate_results(sample)
+
+        self.assertAlmostEqual(
+            ((0.8 - 1.0) ** 2 + (0.6 - 0.0) ** 2) ** 0.5 / (2 ** 0.5),
+            summary["groups"]["g1"]["hle_calibration_rmse"],
+        )
+        self.assertAlmostEqual(
+            summary["groups"]["g1"]["hle_calibration_rmse"],
+            summary["groups"]["g1"]["by_eval_kind"]["hle"]["hle_calibration_rmse"],
+        )
+        self.assertAlmostEqual(
+            summary["groups"]["g1"]["hle_calibration_rmse"],
+            summary["group_subset"]["g1::hle_chemistry"]["hle_calibration_rmse"],
+        )
+        self.assertIsNone(summary["groups"]["g1"]["by_eval_kind"]["chembench_open_ended"]["hle_calibration_rmse"])
+        self.assertIsNone(summary["group_subset"]["g1::chembench"]["hle_calibration_rmse"])
+
     def test_results_json_keeps_legacy_top_level_shape(self) -> None:
         sample = [
             benchmark_test.GroupRecordResult(
@@ -1911,6 +2046,7 @@ Points: 0.5, Item: Second criterion
                     "avg_normalized_score": 0.5,
                     "avg_answer_accuracy": 1.0,
                     "avg_rpf": 0.75,
+                    "hle_calibration_rmse": 0.2,
                 }
             },
             "group_subset": {
@@ -1934,6 +2070,7 @@ Points: 0.5, Item: Second criterion
                     "avg_normalized_score": 0.5,
                     "avg_answer_accuracy": None,
                     "avg_rpf": None,
+                    "hle_calibration_rmse": None,
                 }
             },
         }
@@ -1966,6 +2103,7 @@ Points: 0.5, Item: Second criterion
                     "avg_normalized_score",
                     "avg_answer_accuracy",
                     "avg_rpf",
+                    "hle_calibration_rmse",
                 ],
                 list(rows[0].keys()),
             )
@@ -1974,6 +2112,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("0.5", rows[0]["avg_normalized_score"])
             self.assertEqual("1.0", rows[0]["avg_answer_accuracy"])
             self.assertEqual("0.75", rows[0]["avg_rpf"])
+            self.assertEqual("0.2", rows[0]["hle_calibration_rmse"])
             self.assertEqual("2", rows[0]["run_completed_count"])
             self.assertEqual("2", rows[0]["evaluable_count"])
             self.assertEqual("0", rows[0]["degraded_execution_count"])
@@ -2002,6 +2141,7 @@ Points: 0.5, Item: Second criterion
                     "avg_normalized_score",
                     "avg_answer_accuracy",
                     "avg_rpf",
+                    "hle_calibration_rmse",
                 ],
                 list(subset_rows[0].keys()),
             )

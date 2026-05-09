@@ -1451,6 +1451,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "avg_normalized_score": group_summary["avg_normalized_score"],
                 "avg_answer_accuracy": group_summary.get("avg_answer_accuracy"),
                 "avg_rpf": group_summary.get("avg_rpf"),
+                "hle_calibration_rmse": group_summary.get("hle_calibration_rmse"),
             }
         )
     write_csv(
@@ -1476,6 +1477,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "avg_normalized_score",
             "avg_answer_accuracy",
             "avg_rpf",
+            "hle_calibration_rmse",
         ],
     )
 
@@ -1504,6 +1506,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "avg_normalized_score": row["avg_normalized_score"],
                 "avg_answer_accuracy": row.get("avg_answer_accuracy"),
                 "avg_rpf": row.get("avg_rpf"),
+                "hle_calibration_rmse": row.get("hle_calibration_rmse"),
             }
         )
     write_csv(
@@ -1530,6 +1533,7 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "avg_normalized_score",
             "avg_answer_accuracy",
             "avg_rpf",
+            "hle_calibration_rmse",
         ],
     )
 
