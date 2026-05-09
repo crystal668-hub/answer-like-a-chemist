@@ -19,8 +19,8 @@
   - `DONE`: Collect ChemQA protocol outputs through Artifact Flow into canonical terminal artifacts, `artifact_manifest.json`, and legacy-compatible `qa_result.json` via `workspace/skills/chemqa-review/scripts/chemqa_artifact_flow.py` and `collect_artifacts.py`; finalization applies structured `answer_revision` rebuttals and repairs numeric short-answer projections from anchored final values in the full answer when the raw direct answer is a setup/process sentence.
   - `DONE`: Provide deterministic first-batch chemistry provider skills for local structure reasoning, name resolution, public compound lookup, and numeric chemistry calculations via `workspace/skills/rdkit`, `workspace/skills/opsin`, `workspace/skills/pubchem`, and `workspace/skills/chem-calculator`.
   - `DONE`: Provide an experimental medium-or-higher-value chemistry skill inventory via `workspace/skills/chemistry-routing-matrix.json`, covering 84 local skills from structure/materials, atomistic simulation, quantum chemistry, bioactivity/safety, molecular/materials ML, databases, spectra/formats, paper retrieval/access/parse/rerank, and workflow automation. Despite the historical filename, runtime benchmark prompts now treat it as inventory data, not as a deterministic router.
-  - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, executables, API keys, data files, and network providers; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`.
-  - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run python` and return structured unavailable payloads such as `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
+  - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, paper PDF backend imports through the `paper-parse` optional extra, executables, API keys loaded from process env or the OpenClaw runtime `.env`, data files, and network providers; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`.
+  - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run python`, with `paper-parse` scripts executed via `uv run --extra paper-parse python`, and return structured unavailable payloads such as `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
   - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, and post-run reporting tracks actual tool calls separately from answer scoring.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
@@ -81,9 +81,9 @@
     - `skill_audit.py`
       - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata, final answer text, and benchmark skill-health summary.
     - `skill_health.py`
-      - Defines benchmark skill health requirements and startup checks for Python imports, executables, API keys, data files, and network providers.
+      - Defines benchmark skill health requirements and startup checks for Python imports, optional-extra PDF backends, executables, API keys from process env/OpenClaw `.env`, data files, and network providers.
     - `skill_runtime.py`
-      - Provides the workspace `uv run python` skill runner and structured unavailable/failure payload normalization.
+      - Provides the workspace `uv run python` skill runner, paper-parse optional-extra command selection, and structured unavailable/failure payload normalization.
     - `status.py`
       - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
     - `single_llm_openclaw_wrapper.py`
@@ -109,9 +109,9 @@
   - `chemistry-routing-matrix.json`
     - Historical experimental chemistry skill inventory for medium-or-higher-value chemistry capabilities. Despite the historical filename, runtime benchmark prompts treat this as inventory data, not as a deterministic router.
     - `workspace/benchmarking/skill_tree.py` defines the benchmark skill allowlist and a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill.
-    - Benchmark startup checks the allowlist with `workspace/benchmarking/skill_health.py`; only health-available skills remain in effective skills-on runtime configs and prompts.
+    - Benchmark startup checks the allowlist with `workspace/benchmarking/skill_health.py`; only health-available skills remain in effective skills-on runtime configs and prompts. Health checks merge API keys from the OpenClaw runtime `.env` when they are not present in the process environment.
     - Single-agent skills-on runs expose the health-filtered benchmark skill allowlist to the model. Prompts include a lightweight hierarchical skill tree and rely on the model to choose and call relevant skills when they help answer the record.
-    - Agent-invoked skill scripts should go through `workspace/scripts/run_skill.py`, which executes target scripts via workspace `uv run python` and reports structured unavailable/failure payloads instead of raw shell failures.
+    - Agent-invoked skill scripts should go through `workspace/scripts/run_skill.py`, which executes target scripts via workspace `uv run python` or `uv run --extra paper-parse python` for `paper-parse` scripts, and reports structured unavailable/failure payloads instead of raw shell failures.
     - Post-run reporting records actual tool-use audit metadata such as tool-call counts, model-declared skipped traces, skill-health summary, and no-tool-call outcomes. Skipped traces are diagnostic only and do not count as executed skill use.
     - Core executable wrappers for `cclib`, `pymatgen`, `molecular-dynamics`, and `chembl-database` return structured error payloads for missing dependencies, missing input files, parse failures, and provider/API failures instead of crashing.
   - `benchmark-cleanroom/`
@@ -374,7 +374,7 @@
   - Status: `DONE`
 
 - Name: Benchmark skill runtime health and fixed script runner
-  - Description: Runs startup health checks for benchmark-visible skills and routes agent-invoked local skill scripts through a fixed workspace `uv run python` runner. Health checks verify declared Python modules, executables, API keys, data files, and network providers. Unavailable skills are removed from effective skills-on allowlists and emitted as structured diagnostics.
+  - Description: Runs startup health checks for benchmark-visible skills and routes agent-invoked local skill scripts through a fixed workspace `uv run python` runner. Health checks verify declared Python modules, paper PDF backend imports via the `paper-parse` optional extra, executables, API keys from process env/OpenClaw `.env`, data files, and network providers. Unavailable skills are removed from effective skills-on allowlists and emitted as structured diagnostics.
   - Input / Output:
     - Input: benchmark skill allowlist plus workspace root and environment variables.
     - Output: `skill-health.json`, runtime manifest health summary/effective allowlists, and structured skill runner payloads with `available=false`, `error_kind`, and `reason` on failure.

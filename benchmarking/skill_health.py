@@ -4,8 +4,11 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+import runtime_paths
 
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
@@ -15,6 +18,7 @@ RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 class HealthRequirement:
     skill: str
     python_modules: tuple[str, ...] = ()
+    pdf_backend_modules: tuple[tuple[str, ...], ...] = ()
     executables: tuple[str, ...] = ()
     api_keys: tuple[str, ...] = ()
     data_files: tuple[str, ...] = ()
@@ -39,8 +43,7 @@ REQUIREMENT_OVERRIDES: dict[str, HealthRequirement] = {
     ),
     "paper-parse": HealthRequirement(
         skill="paper-parse",
-        python_modules=("fitz",),
-        executables=("pdfinfo",),
+        pdf_backend_modules=(("pymupdf", "fitz"),),
         data_files=("skills/paper-parse/SKILL.md",),
     ),
     "paper-rerank": HealthRequirement(
@@ -73,6 +76,35 @@ REQUIREMENT_OVERRIDES: dict[str, HealthRequirement] = {
 }
 
 
+@lru_cache(maxsize=4)
+def _read_dotenv(path: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    env_path = Path(path)
+    if not env_path.is_file():
+        return env
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key.startswith("export "):
+            key = key.removeprefix("export ").strip()
+        if not key:
+            continue
+        value = value.strip().strip("'\"")
+        env[key] = value
+    return env
+
+
+def _health_environment(env: dict[str, str] | None) -> dict[str, str]:
+    environment = os.environ.copy() if env is None else dict(env)
+    for key, value in _read_dotenv(str(runtime_paths.openclaw_env)).items():
+        if value and not str(environment.get(key) or "").strip():
+            environment[key] = value
+    return environment
+
+
 def health_requirements_for_allowlist(allowlist: Iterable[str]) -> dict[str, HealthRequirement]:
     requirements: dict[str, HealthRequirement] = {}
     for skill in allowlist:
@@ -92,10 +124,8 @@ def check_skill_health(
     run_subprocess: RunSubprocess = subprocess.run,
     network_timeout_seconds: int = 3,
 ) -> dict[str, Any]:
-    environment = os.environ.copy()
-    if env is not None:
-        environment = dict(env)
-    checks: dict[str, Any] = {"python_modules": {}, "executables": {}, "api_keys": {}, "data_files": {}, "network": {}}
+    environment = _health_environment(env)
+    checks: dict[str, Any] = {"python_modules": {}, "pdf_backends": {}, "executables": {}, "api_keys": {}, "data_files": {}, "network": {}}
     unavailable: list[dict[str, str]] = []
 
     for module in requirement.python_modules:
@@ -113,6 +143,38 @@ def check_skill_health(
         checks["python_modules"][module] = {"ok": ok, "returncode": completed.returncode}
         if not ok:
             unavailable.append({"kind": "missing_dependency", "name": module, "reason": (completed.stderr or completed.stdout).strip()[:500]})
+
+    for backend_modules in requirement.pdf_backend_modules:
+        backend_name = "/".join(backend_modules)
+        module_results: dict[str, dict[str, Any]] = {}
+        backend_ok = False
+        failure_reasons: list[str] = []
+        for module in backend_modules:
+            command = ["uv", "run", "--extra", requirement.skill, "python", "-c", f"import {module}"]
+            completed = run_subprocess(
+                command,
+                cwd=str(workspace_root),
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=network_timeout_seconds,
+            )
+            ok = completed.returncode == 0
+            module_results[module] = {"ok": ok, "returncode": completed.returncode}
+            if ok:
+                backend_ok = True
+            else:
+                failure_reasons.append((completed.stderr or completed.stdout).strip())
+        checks["pdf_backends"][backend_name] = {"ok": backend_ok, "modules": module_results}
+        if not backend_ok:
+            unavailable.append(
+                {
+                    "kind": "missing_dependency",
+                    "name": backend_name,
+                    "reason": "\n".join(reason for reason in failure_reasons if reason).strip()[:500],
+                }
+            )
 
     for executable in requirement.executables:
         ok = shutil.which(executable) is not None

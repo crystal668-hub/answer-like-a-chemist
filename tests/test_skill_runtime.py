@@ -16,6 +16,15 @@ def test_builds_workspace_uv_python_command() -> None:
     assert command == ["/usr/bin/uv", "run", "python", "/repo/skills/chem-calculator/scripts/ksp_solver.py", "--json"]
 
 
+def test_paper_parse_command_includes_optional_extra() -> None:
+    runner = WorkspaceUvSkillRunner(workspace_root=Path("/repo"), uv_executable="/usr/bin/uv")
+
+    command = runner.build_command(Path("/repo/skills/paper-parse/scripts/paper_parse.py"), ["--help"])
+
+    assert command[:4] == ["/usr/bin/uv", "run", "--extra", "paper-parse"]
+    assert command[4:] == ["python", "/repo/skills/paper-parse/scripts/paper_parse.py", "--help"]
+
+
 def test_missing_module_stderr_is_structured_missing_dependency() -> None:
     payload = classify_skill_process_failure(
         returncode=1,

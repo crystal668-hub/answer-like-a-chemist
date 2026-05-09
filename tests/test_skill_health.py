@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import runtime_paths
 from benchmarking.skill_health import (
     HealthRequirement,
     check_skill_health,
@@ -39,6 +40,26 @@ def test_missing_api_key_marks_skill_unavailable() -> None:
     assert report["available"] is False
     assert report["checks"]["api_keys"]["MP_API_KEY"]["ok"] is False
     assert report["unavailable_reasons"][0]["kind"] == "missing_api_key"
+
+
+def test_api_key_can_be_read_from_openclaw_env_file(tmp_path, monkeypatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("SU8_API_KEY=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(runtime_paths, "openclaw_env", env_file)
+
+    requirement = HealthRequirement(skill="paper-rerank", api_keys=("SU8_API_KEY",))
+    report = check_skill_health(requirement, workspace_root=tmp_path, env={})
+
+    assert report["available"] is True
+    assert report["checks"]["api_keys"]["SU8_API_KEY"]["ok"] is True
+
+
+def test_paper_parse_health_uses_pdf_backend_without_pdfinfo() -> None:
+    requirements = health_requirements_for_allowlist(["paper-parse"])
+    requirement = requirements["paper-parse"]
+
+    assert requirement.pdf_backend_modules == (("pymupdf", "fitz"),)
+    assert "pdfinfo" not in requirement.executables
 
 
 def test_missing_data_file_marks_skill_unavailable() -> None:

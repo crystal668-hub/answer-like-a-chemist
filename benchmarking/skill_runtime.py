@@ -30,7 +30,11 @@ class WorkspaceUvSkillRunner:
         return executable
 
     def build_command(self, script_path: Path, args: list[str]) -> list[str]:
-        return [self.resolved_uv(), "run", "python", str(script_path), *args]
+        command = [self.resolved_uv(), "run"]
+        if _script_uses_optional_extra(self.workspace_root, script_path) == "paper-parse":
+            command.extend(["--extra", "paper-parse"])
+        command.extend(["python", str(script_path), *args])
+        return command
 
     def run_script(self, script_path: Path, args: list[str], *, env: dict[str, str] | None = None) -> dict[str, Any]:
         command = self.build_command(script_path, args)
@@ -137,3 +141,13 @@ def _unavailable(
 
 def _single_line(text: str) -> str:
     return " ".join(str(text or "").split())[:500]
+
+
+def _script_uses_optional_extra(workspace_root: Path, script_path: Path) -> str | None:
+    try:
+        relative_path = script_path.resolve().relative_to(workspace_root.resolve())
+    except ValueError:
+        return None
+    if relative_path.parts[:3] == ("skills", "paper-parse", "scripts"):
+        return "paper-parse"
+    return None
