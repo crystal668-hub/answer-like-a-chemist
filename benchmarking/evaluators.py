@@ -562,12 +562,17 @@ CANDIDATE ANSWER:
         )
 
     normalized_score = 0.0 if max_score <= 0 else total_awarded / max_score
+    full_credit = bool(awarded_items) and math.isclose(total_awarded, max_score, rel_tol=1e-9, abs_tol=1e-9)
+    full_credit = full_credit and all(
+        bool(item["met"]) and math.isclose(float(item["awarded"]), float(item["max_points"]), rel_tol=1e-9, abs_tol=1e-9)
+        for item in awarded_items
+    )
     return EvaluationResult(
         eval_kind=record.eval_kind,
         score=total_awarded,
         max_score=max_score,
         normalized_score=normalized_score,
-        passed=normalized_score > 0.0,
+        passed=full_credit,
         primary_metric="rubric_points",
         primary_metric_direction="higher_is_better",
         details={

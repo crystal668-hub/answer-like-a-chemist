@@ -186,7 +186,7 @@
   - Status: `DONE`
 
 - Name: FrontierScience Research scoring
-  - Description: Uses rubric parsing plus LLM judge scoring for research track outputs; parsed rubric items structure the prompt, and the judge decides item satisfaction from the complete candidate answer text.
+  - Description: Uses rubric parsing plus LLM judge scoring for research track outputs; parsed rubric items structure the prompt, and the judge decides item satisfaction from the complete candidate answer text. Rubric points and `normalized_score` retain partial-credit information, while `passed` is true only when every rubric item receives full credit.
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.

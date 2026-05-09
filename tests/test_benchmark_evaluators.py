@@ -4,6 +4,7 @@ from benchmarking.datasets import BenchmarkRecord
 from benchmarking.evaluators import (
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
+    evaluate_frontierscience_research,
     evaluate_generic_semantic,
     evaluate_hle,
     parse_frontierscience_research_rubric,
@@ -102,6 +103,82 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual("judge", result.details["method"])
         self.assertEqual(1, len(judge.prompts))
         self.assertIn("3-(trifluoromethyl)aniline", result.details["candidate_answer_text"])
+
+    def test_frontierscience_research_partial_credit_does_not_pass(self) -> None:
+        judge = JudgeStub(
+            {
+                "items": [
+                    {"index": 1, "awarded": 1.0, "max_points": 1.0, "met": True, "rationale": "covered"},
+                    {"index": 2, "awarded": 0.0, "max_points": 1.0, "met": False, "rationale": "missing"},
+                ],
+                "total_awarded": 1.0,
+                "max_points": 2.0,
+                "summary": "partial credit only",
+            }
+        )
+        record = BenchmarkRecord(
+            record_id="fs-research-demo",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_research",
+            prompt="Design an experiment and justify it.",
+            reference_answer=(
+                "Points: 1, Item: Identify the relevant catalyst.\n"
+                "Points: 1, Item: Justify the proposed mechanism."
+            ),
+            payload={"track": "research"},
+        )
+
+        result = evaluate_frontierscience_research(
+            record,
+            short_answer_text="partial",
+            full_response_text="The answer identifies the catalyst only.",
+            answer_text="The answer identifies the catalyst only.",
+            judge=judge,
+        )
+
+        self.assertEqual(1.0, result.score)
+        self.assertEqual(2.0, result.max_score)
+        self.assertEqual(0.5, result.normalized_score)
+        self.assertFalse(result.passed)
+        self.assertEqual("rubric_points", result.primary_metric)
+
+    def test_frontierscience_research_full_credit_passes(self) -> None:
+        judge = JudgeStub(
+            {
+                "items": [
+                    {"index": 1, "awarded": 1.0, "max_points": 1.0, "met": True, "rationale": "covered"},
+                    {"index": 2, "awarded": 1.0, "max_points": 1.0, "met": True, "rationale": "covered"},
+                ],
+                "total_awarded": 2.0,
+                "max_points": 2.0,
+                "summary": "full credit",
+            }
+        )
+        record = BenchmarkRecord(
+            record_id="fs-research-full-credit",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_research",
+            prompt="Design an experiment and justify it.",
+            reference_answer=(
+                "Points: 1, Item: Identify the relevant catalyst.\n"
+                "Points: 1, Item: Justify the proposed mechanism."
+            ),
+            payload={"track": "research"},
+        )
+
+        result = evaluate_frontierscience_research(
+            record,
+            short_answer_text="complete",
+            full_response_text="The answer covers both rubric items.",
+            answer_text="The answer covers both rubric items.",
+            judge=judge,
+        )
+
+        self.assertEqual(2.0, result.score)
+        self.assertEqual(1.0, result.normalized_score)
+        self.assertTrue(result.passed)
 
     def test_generic_semantic_uses_judge_full_answer_text(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer contains the match"})
