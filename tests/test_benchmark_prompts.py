@@ -87,8 +87,55 @@ class BenchmarkPromptsTests(unittest.TestCase):
         skills_on = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
         skills_off = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
 
-        self.assertIn("Experimental chemistry skill routing rules", skills_on)
-        self.assertIn("`chem-calculator`", skills_on)
+        self.assertIn("Skill capability tree", skills_on)
+        self.assertIn("First choose a capability domain", skills_on)
+        self.assertIn("paper-pipeline", skills_on)
+        self.assertIn("calculation-math", skills_on)
+        self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
+        self.assertNotIn("first matching primary route", skills_on)
+        self.assertNotIn("SKILL TRACE: skipped", skills_on)
         self.assertNotIn("Do not use OpenClaw skills", skills_on)
-        self.assertNotIn("Experimental chemistry skill routing rules", skills_off)
+        self.assertNotIn("Skill capability tree", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
+
+    def test_single_llm_prompt_omits_websearch_guidance(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        web_on = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+        web_off = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+
+        self.assertNotIn("You may use web search", web_on)
+        self.assertNotIn("Do not use web search", web_on)
+        self.assertNotIn("external browsing", web_on)
+        self.assertNotIn("You may use web search", web_off)
+        self.assertNotIn("Do not use web search", web_off)
+        self.assertNotIn("external browsing", web_off)
+
+    def test_chemqa_goal_omits_websearch_guidance(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        web_on = build_chemqa_goal(record, websearch_enabled=True)
+        web_off = build_chemqa_goal(record, websearch_enabled=False)
+
+        self.assertNotIn("Web search may be used", web_on)
+        self.assertNotIn("Do not use web search", web_on)
+        self.assertNotIn("external browsing", web_on)
+        self.assertNotIn("Web search may be used", web_off)
+        self.assertNotIn("Do not use web search", web_off)
+        self.assertNotIn("external browsing", web_off)

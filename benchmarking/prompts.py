@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
-from .chemistry_routing import render_compact_skill_routing_table
 from .datasets import BenchmarkRecord
+from .skill_tree import render_top_level_skill_tree
 
 
 FORMULA_SIGNAL_RE = re.compile(
@@ -60,19 +60,26 @@ def build_single_llm_prompt(
     websearch_enabled: bool,
     skills_enabled: bool = True,
     input_bundle: RuntimeBundleLike | None = None,
+    available_skills: set[str] | None = None,
+    time_budget_seconds: int | None = None,
 ) -> str:
     instructions = [
         "You are answering a chemistry benchmark question.",
         "Be careful, concise, and do not fabricate missing facts.",
     ]
+    if isinstance(time_budget_seconds, int) and time_budget_seconds > 0:
+        instructions.extend(
+            [
+                f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.",
+                "When roughly 20% or less of the budget remains, stop starting new tool or skill exploration.",
+                "At that point, use the evidence already gathered and produce the requested final answer format immediately, even if uncertain.",
+                "If a tool path fails twice or is unavailable, switch to best-effort chemistry reasoning instead of trying more variants of the same path.",
+            ]
+        )
     if skills_enabled:
-        instructions.append(render_compact_skill_routing_table())
+        instructions.append(render_top_level_skill_tree(available_skills=available_skills))
     else:
         instructions.append("Do not use OpenClaw skills or local skill tools for this run.")
-    if websearch_enabled:
-        instructions.append("You may use web search if it is genuinely helpful.")
-    else:
-        instructions.append("Do not use web search or external browsing.")
 
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("This is a chemistry multiple-choice question.")
@@ -113,10 +120,6 @@ def build_chemqa_goal(
         "Solve the following chemistry benchmark question.",
         "Return a final answer that is faithful to the prompt.",
     ]
-    if websearch_enabled:
-        instructions.append("Web search may be used if helpful.")
-    else:
-        instructions.append("Do not use web search or external browsing.")
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("This is a multiple-choice chemistry question.")
         instructions.append("End with a line `FINAL ANSWER: <option letters>`.")

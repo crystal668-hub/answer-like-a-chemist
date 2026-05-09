@@ -3,16 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import sys
 from typing import Any
 
 
 PROVIDER_TRACE_MODES = {"off", "audit", "enforce"}
-WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-if str(WORKSPACE_ROOT) not in sys.path:
-    sys.path.insert(0, str(WORKSPACE_ROOT))
-
-from benchmarking.chemistry_routing import requirements_for_text  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -36,36 +30,21 @@ def requirements_for_candidate(
     eval_kind: str = "",
     dataset: str = "",
 ) -> list[ProviderTraceRequirement]:
-    text = " ".join([answer_kind, eval_kind, dataset, prompt])
+    return []
+
+
+def _submitted_trace_requirements(trace_entries: list[dict[str, Any]]) -> list[ProviderTraceRequirement]:
     requirements: list[ProviderTraceRequirement] = []
-    if answer_kind in {"numeric_short_answer", "formula_short_answer"} or any(
-        token in text.lower()
-        for token in (
-            "stoichiometric",
-            "stoichiometry",
-            "equilibrium",
-            "acid-base",
-            "gas-law",
-            "unit-conversion",
-            "concentration",
-            "electrochemistry",
-            "formula-math",
-            "molar mass",
-        )
-    ):
+    for entry in trace_entries:
+        skill = str(entry.get("skill") or entry.get("tool") or entry.get("provider") or "").strip()
+        if not skill:
+            continue
+        trigger = str(entry.get("trigger") or entry.get("step") or "submitted_trace").strip()
         requirements.append(
             ProviderTraceRequirement(
-                "chem-calculator",
-                "numeric_or_formula_math",
-                "Numeric or formula-math answer requires deterministic calculation trace.",
-            )
-        )
-    for requirement in requirements_for_text(text):
-        requirements.append(
-            ProviderTraceRequirement(
-                requirement["skill"],
-                requirement["trigger"],
-                requirement["reason"],
+                skill=skill,
+                trigger=trigger,
+                reason="Model submitted a provider trace for this skill.",
             )
         )
     return _dedupe_requirements(requirements)
@@ -88,14 +67,21 @@ def validate_provider_traces(
     )
     errors: list[str] = []
     trace_entries = _provider_trace_entries(payload)
+    requirements = _dedupe_requirements(requirements + _submitted_trace_requirements(trace_entries))
     for requirement in requirements:
         matching_entries = [entry for entry in trace_entries if _entry_mentions_skill(entry, requirement.skill)]
         if any(_entry_is_acceptable(entry, requirement, require_existing_provider_paths=require_existing_provider_paths) for entry in matching_entries):
             continue
         if matching_entries:
+            if any(str(entry.get("status") or "").strip().lower() == "skipped" for entry in matching_entries):
+                errors.append(
+                    f"provider trace for `{requirement.skill}` is skipped for trigger `{requirement.trigger}`; "
+                    "unexecuted provider traces do not satisfy tool-backed evidence."
+                )
+                continue
             errors.append(
                 f"provider trace for `{requirement.skill}` is incomplete for trigger `{requirement.trigger}`; "
-                "provide status success/partial with a provider result JSON artifact path or a skipped trace with trigger, reason, and risk."
+                "provide status success/partial with a provider result JSON artifact path or structured tool_trace conclusion."
             )
             continue
         errors.append(f"missing required provider trace for `{requirement.skill}` triggered by `{requirement.trigger}`: {requirement.reason}")
@@ -163,7 +149,7 @@ def _entry_is_acceptable(
         ).strip()
         return bool(result_path and Path(result_path).expanduser().is_file())
     if status == "skipped":
-        return all(str(entry.get(key) or "").strip() for key in ("trigger", "reason", "risk"))
+        return False
     return False
 
 

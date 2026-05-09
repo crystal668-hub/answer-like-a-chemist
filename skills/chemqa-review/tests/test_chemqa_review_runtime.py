@@ -182,7 +182,7 @@ submission_trace:
         self.assertFalse(checked.ok)
         self.assertIn("direct_answer", " ".join(checked.errors))
 
-    def test_numeric_answer_kind_audits_missing_chem_calculator_trace(self) -> None:
+    def test_numeric_answer_kind_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -201,9 +201,9 @@ submission_trace:
             provider_trace_mode="audit",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
+        self.assertFalse(any("chem-calculator" in warning for warning in checked.warnings))
 
-    def test_formula_answer_kind_audits_missing_chem_calculator_trace(self) -> None:
+    def test_formula_answer_kind_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -222,7 +222,7 @@ submission_trace:
             provider_trace_mode="audit",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chem-calculator" in warning for warning in checked.warnings))
+        self.assertFalse(any("chem-calculator" in warning for warning in checked.warnings))
 
     def test_numeric_answer_kind_enforces_valid_chem_calculator_trace(self) -> None:
         candidate = """
@@ -247,7 +247,7 @@ submission_trace:
         )
         self.assertTrue(checked.ok)
 
-    def test_triggered_skill_skip_requires_reason_and_risk(self) -> None:
+    def test_skipped_provider_trace_is_not_valid_compliance(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -255,7 +255,7 @@ owner: proposer-1
 direct_answer: "42"
 summary: numeric answer
 submission_trace:
-  - step: chem-calculator
+  - skill: chem-calculator
     status: skipped
     trigger: numeric_short_answer
     reason: calculator unsupported for this symbolic prompt
@@ -267,9 +267,10 @@ submission_trace:
             answer_kind="numeric_short_answer",
             provider_trace_mode="enforce",
         )
-        self.assertTrue(checked.ok)
+        self.assertFalse(checked.ok)
+        self.assertTrue(any("skipped" in error.lower() for error in checked.errors))
 
-    def test_experimental_matrix_audits_materials_route(self) -> None:
+    def test_materials_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -289,9 +290,9 @@ submission_trace:
             prompt="What coordination polyhedra does this CIF crystal structure contain?",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("pymatgen" in warning for warning in checked.warnings))
+        self.assertFalse(any("pymatgen" in warning for warning in checked.warnings))
 
-    def test_experimental_matrix_audits_bioactivity_route(self) -> None:
+    def test_bioactivity_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -311,9 +312,9 @@ submission_trace:
             prompt="Find EGFR inhibitors with IC50 below 100 nM and summarize SAR.",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("chembl-database" in warning for warning in checked.warnings))
+        self.assertFalse(any("chembl-database" in warning for warning in checked.warnings))
 
-    def test_experimental_matrix_audits_safety_route(self) -> None:
+    def test_safety_prompt_does_not_create_hidden_provider_trace_requirement(self) -> None:
         candidate = """
 artifact_kind: candidate_submission
 phase: propose
@@ -333,7 +334,7 @@ submission_trace:
             prompt="Assess chemical safety with ADMET, FDA labels, CTD, and STITCH evidence.",
         )
         self.assertTrue(checked.ok)
-        self.assertTrue(any("tooluniverse-chemical-safety" in warning for warning in checked.warnings))
+        self.assertFalse(any("tooluniverse-chemical-safety" in warning for warning in checked.warnings))
 
     def test_formal_review_prose_recovers_summary_and_review_items(self) -> None:
         review = """
@@ -755,7 +756,7 @@ class MaterializeRunplanTest(unittest.TestCase):
         self.assertIn("--provider-trace-mode", command)
         self.assertEqual("enforce", command[command.index("--provider-trace-mode") + 1])
 
-    def test_render_role_prompt_includes_chem_provider_routing_rules_for_proposer(self) -> None:
+    def test_render_role_prompt_includes_chem_skill_discovery_policy_for_proposer(self) -> None:
         run_plan = {
             "run_id": "chemqa-review-test-run",
             "request_snapshot": {"goal": "Calculate an equilibrium answer."},
@@ -780,16 +781,33 @@ class MaterializeRunplanTest(unittest.TestCase):
             runtime_root="/tmp/runtime",
         )
 
-        self.assertIn("Skill routing rules", prompt)
-        self.assertIn("must use `chem-calculator`", prompt)
-        self.assertIn("must use `rdkit`", prompt)
-        self.assertIn("must use `opsin`", prompt)
-        self.assertIn("must use `pubchem`", prompt)
-        self.assertIn("status: skipped", prompt)
-        self.assertIn("trigger", prompt)
-        self.assertIn("reason", prompt)
+        self.assertIn("Skill discovery policy", prompt)
+        self.assertIn("Benchmark chemistry skills are available", prompt)
+        self.assertIn("provider skills directly", prompt)
+        self.assertIn("capability domain and family", prompt)
+        self.assertIn("paper-pipeline", prompt)
+        self.assertNotIn("Skill routing rules", prompt)
+        self.assertNotIn("must use `chem-calculator`", prompt)
+        self.assertNotIn("status: skipped", prompt)
         self.assertIn("provider result JSON artifact path", prompt)
         self.assertIn("tool_trace", prompt)
+
+    def test_chemqa_prompts_do_not_accept_skipped_skill_trace_as_compliance(self) -> None:
+        prompt_root = SKILL_ROOT / "prompts"
+        checked = [
+            prompt_root / "contracts" / "proposer-main.md",
+            prompt_root / "contracts" / "reviewer-evidence-trace.md",
+            prompt_root / "contracts" / "reviewer-counterevidence.md",
+            prompt_root / "contracts" / "reviewer-reasoning-consistency.md",
+            prompt_root / "modules" / "context" / "required-skills.md",
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in checked)
+
+        self.assertNotIn("intentionally skipped", combined)
+        self.assertNotIn("not applicable after inspecting the prompt", combined)
+        self.assertNotIn("status: skipped", combined)
+        self.assertNotIn("valid `submission_trace` entry with `status: skipped`", combined)
+        self.assertNotIn("triggered route is skipped", combined)
 
     def test_render_role_prompt_compact_snapshot_uses_same_runtime_dir(self) -> None:
         run_plan = {
@@ -1210,7 +1228,7 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertEqual(expected, set(report))
         self.assertEqual([], bundle_common.missing_skills_from_report(report))
 
-    def test_prompt_contracts_include_chem_provider_routing_rules(self) -> None:
+    def test_prompt_contracts_include_chem_skill_discovery_policy(self) -> None:
         proposer = (SKILL_ROOT / "prompts" / "contracts" / "proposer-main.md").read_text(encoding="utf-8")
         reasoning = (SKILL_ROOT / "prompts" / "contracts" / "reviewer-reasoning-consistency.md").read_text(
             encoding="utf-8"
@@ -1232,27 +1250,22 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertEqual(len(listed_required_skills), len(set(listed_required_skills)))
 
         self.assertIn("chem-calculator", proposer)
-        self.assertIn("FrontierScience", proposer)
-        self.assertIn("SuperChem", proposer)
-        self.assertIn("Skill routing rules", proposer)
-        self.assertIn("must use `chem-calculator`", proposer)
-        self.assertIn("must use `rdkit`", proposer)
-        self.assertIn("must use `opsin`", proposer)
-        self.assertIn("must use `pubchem`", proposer)
-        self.assertIn("status: skipped", proposer)
-        self.assertIn("trigger", proposer)
-        self.assertIn("reason", proposer)
-        self.assertIn("risk", proposer)
-        self.assertIn("extract available SMILES/name text first", proposer)
+        self.assertIn("Skill discovery rules", proposer)
+        self.assertIn("capability domain and family", proposer)
+        self.assertIn("Do not treat an unexecuted skill as a valid provider trace", proposer)
+        self.assertNotIn("Skill routing rules", proposer)
+        self.assertNotIn("must use `chem-calculator`", proposer)
+        self.assertNotIn("status: skipped", proposer)
         self.assertIn("rdkit", proposer)
         self.assertIn("opsin", proposer)
         self.assertIn("pubchem", proposer)
         self.assertIn("provider result JSON artifact path", proposer)
 
         for reviewer_prompt in (reasoning, evidence, counter):
-            self.assertIn("missing required tool trace", reviewer_prompt)
-            self.assertIn("blocking", reviewer_prompt)
-            self.assertIn("status: skipped", reviewer_prompt)
+            self.assertIn("missing provider artifact or structured `tool_trace`", reviewer_prompt)
+            self.assertIn("finding", reviewer_prompt)
+            self.assertNotIn("missing required tool trace", reviewer_prompt)
+            self.assertNotIn("status: skipped", reviewer_prompt)
             self.assertIn("provider result JSON artifact path", reviewer_prompt)
 
         self.assertIn("chem-calculator", reasoning)
@@ -1265,9 +1278,12 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertIn("pubchem", required_skills)
         self.assertIn("opsin", required_skills)
         self.assertIn("chem-calculator", required_skills)
-        self.assertIn("Experimental chemistry skill routing rules", required_skills)
-        self.assertIn("Compact route inventory", required_skills)
-        self.assertIn("first matching primary route", required_skills)
+        self.assertIn("Skill discovery policy", required_skills)
+        self.assertIn("capability domain and family", required_skills)
+        self.assertIn("paper-pipeline", required_skills)
+        self.assertNotIn("Experimental chemistry skill routing rules", required_skills)
+        self.assertNotIn("Compact route inventory", required_skills)
+        self.assertNotIn("first matching primary route", required_skills)
         self.assertIn("pymatgen", required_skills)
         self.assertIn("cclib", required_skills)
         self.assertIn("chembl-database", required_skills)
@@ -2196,7 +2212,7 @@ class CoordinatorTimeoutSalvageTest(unittest.TestCase):
 
 
 class RunStatusShapeTest(unittest.TestCase):
-    def test_artifact_outcome_surfaces_provider_trace_audit_warnings(self) -> None:
+    def test_artifact_outcome_accepts_no_provider_trace_when_model_makes_no_tool_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
             proposal_path = Path(tmpdir) / transport.proposal_filename()
@@ -2234,10 +2250,9 @@ class RunStatusShapeTest(unittest.TestCase):
             )
 
             self.assertEqual("present_valid", outcome.state)
-            self.assertTrue(any("chem-calculator" in warning for warning in outcome.validation_warnings))
-            self.assertTrue(any("chem-calculator" in warning for warning in outcome.as_payload()["validation_warnings"]))
+            self.assertFalse(any("chem-calculator" in warning for warning in outcome.validation_warnings))
 
-    def test_candidate_submission_enforces_provider_trace_mode(self) -> None:
+    def test_candidate_submission_rejects_skipped_provider_trace_even_in_enforce_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
             driver.args = argparse.Namespace(role="proposer-1", provider_trace_mode="enforce")
@@ -2251,11 +2266,13 @@ class RunStatusShapeTest(unittest.TestCase):
                         "phase: propose",
                         "owner: proposer-1",
                         "direct_answer: '42'",
-                        "summary: numeric answer without provider trace.",
+                        "summary: claims skipped provider trace.",
                         "submission_trace:",
-                        "- step: reasoning",
-                        "  status: success",
-                        "  detail: mental arithmetic only.",
+                        "- skill: chem-calculator",
+                        "  status: skipped",
+                        "  trigger: numeric_or_formula_math",
+                        "  reason: model chose ordinary reasoning",
+                        "  risk: calculation may be wrong",
                     ]
                 ),
                 encoding="utf-8",
@@ -2272,7 +2289,7 @@ class RunStatusShapeTest(unittest.TestCase):
             )
 
             self.assertEqual("present_invalid", outcome.state)
-            self.assertTrue(any("chem-calculator" in error for error in outcome.validation_errors))
+            self.assertTrue(any("skipped" in error.lower() for error in outcome.validation_errors))
 
     def test_provider_trace_mode_defaults_to_env_then_audit(self) -> None:
         driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)

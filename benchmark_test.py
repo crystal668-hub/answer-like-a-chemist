@@ -23,7 +23,7 @@ import traceback
 import uuid
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, Iterable
@@ -34,70 +34,140 @@ _SOURCE_ROOT = Path(__file__).resolve().parent
 if str(_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SOURCE_ROOT))
 
-from benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
-from benchmarking.datasets import (
-    BenchmarkRecord,
-    GradingSpec,
-    RecordValidationError,
-    classify_subset as classify_record_subset,
-    dataset_name_from_file as dataset_name_from_record_file,
-    load_records as load_benchmark_records,
-    source_pair_key as record_source_pair_key,
-)
-from benchmarking.evaluation import evaluate_record, register_evaluator
-from benchmarking.chemistry_routing import load_chemistry_routing_matrix
-from benchmarking.evaluators import (
-    EvaluationError,
-    EvaluationResult,
-    build_execution_error_evaluation as _shared_build_execution_error_evaluation,
-    evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
-    evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
-    evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
-    evaluate_generic_semantic as _shared_evaluate_generic_semantic,
-    evaluate_hle as _shared_evaluate_hle,
-    evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
-    extract_candidate_short_answer,
-    extract_final_answer_line,
-    last_nonempty_line,
-    maybe_json_loads,
-    normalize_answer_tracks,
-    normalize_space,
-    parse_frontierscience_research_rubric,
-    parse_superchem_checkpoint_weight,
-    parse_superchem_checkpoints,
-    parse_superchem_option_answer as _shared_parse_superchem_option_answer,
-    safe_json_extract as _shared_safe_json_extract,
-    superchem_valid_options,
-)
-from benchmarking.experiments import ExperimentSpec
-from benchmarking.runners import build_runner
-from benchmarking.runners import ChemQARunner as _BenchmarkingChemQARunner
-from benchmarking.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
-from benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
-from benchmarking.reporting import (
-    GroupRecordResult as _SharedGroupRecordResult,
-    aggregate_bucket,
-    aggregate_results,
-    average_optional_metric,
-    build_error_group_record_result as _shared_build_error_group_record_result,
-    materialize_group_failure_results as _shared_materialize_group_failure_results,
-)
-from benchmarking.status import (
-    build_result_axes_from_runner,
-    is_chemqa_success_status,
-    is_chemqa_terminal_status,
-    normalize_chemqa_run_status,
-    normalize_run_status_value,
-)
-from benchmarking.runtime_config import (
-    ConfigPool as _RuntimeConfigPool,
-    RuntimeConfigContext,
-    RuntimeConfigError,
-    actual_slot_ids,
-    build_run_scoped_config_payload as _build_run_scoped_config_payload,
-    logical_slot_ids,
-    slot_role_map,
-)
+try:
+    from benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
+    from benchmarking.datasets import (
+        BenchmarkRecord,
+        GradingSpec,
+        RecordValidationError,
+        classify_subset as classify_record_subset,
+        dataset_name_from_file as dataset_name_from_record_file,
+        load_records as load_benchmark_records,
+        source_pair_key as record_source_pair_key,
+    )
+    from benchmarking.evaluation import evaluate_record, register_evaluator
+    from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
+    from benchmarking.evaluators import (
+        EvaluationError,
+        EvaluationResult,
+        build_execution_error_evaluation as _shared_build_execution_error_evaluation,
+        evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
+        evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
+        evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
+        evaluate_generic_semantic as _shared_evaluate_generic_semantic,
+        evaluate_hle as _shared_evaluate_hle,
+        evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
+        extract_candidate_short_answer,
+        extract_final_answer_line,
+        last_nonempty_line,
+        maybe_json_loads,
+        normalize_answer_tracks,
+        normalize_space,
+        parse_frontierscience_research_rubric,
+        parse_superchem_checkpoint_weight,
+        parse_superchem_checkpoints,
+        parse_superchem_option_answer as _shared_parse_superchem_option_answer,
+        safe_json_extract as _shared_safe_json_extract,
+        superchem_valid_options,
+    )
+    from benchmarking.experiments import ExperimentSpec
+    from benchmarking.runners import build_runner
+    from benchmarking.runners import ChemQARunner as _BenchmarkingChemQARunner
+    from benchmarking.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
+    from benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
+    from benchmarking.skill_health import check_all_skill_health, summarize_skill_health
+    from benchmarking.reporting import (
+        GroupRecordResult as _SharedGroupRecordResult,
+        aggregate_bucket,
+        aggregate_results,
+        average_optional_metric,
+        build_error_group_record_result as _shared_build_error_group_record_result,
+        materialize_group_failure_results as _shared_materialize_group_failure_results,
+    )
+    from benchmarking.status import (
+        build_result_axes_from_runner,
+        is_chemqa_success_status,
+        is_chemqa_terminal_status,
+        normalize_chemqa_run_status,
+        normalize_run_status_value,
+    )
+    from benchmarking.runtime_config import (
+        ConfigPool as _RuntimeConfigPool,
+        RuntimeConfigContext,
+        RuntimeConfigError,
+        actual_slot_ids,
+        build_run_scoped_config_payload as _build_run_scoped_config_payload,
+        logical_slot_ids,
+        slot_role_map,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fallback
+    if exc.name != "benchmarking":
+        raise
+    from workspace.benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
+    from workspace.benchmarking.datasets import (
+        BenchmarkRecord,
+        GradingSpec,
+        RecordValidationError,
+        classify_subset as classify_record_subset,
+        dataset_name_from_file as dataset_name_from_record_file,
+        load_records as load_benchmark_records,
+        source_pair_key as record_source_pair_key,
+    )
+    from workspace.benchmarking.evaluation import evaluate_record, register_evaluator
+    from workspace.benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
+    from workspace.benchmarking.evaluators import (
+        EvaluationError,
+        EvaluationResult,
+        build_execution_error_evaluation as _shared_build_execution_error_evaluation,
+        evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
+        evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
+        evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
+        evaluate_generic_semantic as _shared_evaluate_generic_semantic,
+        evaluate_hle as _shared_evaluate_hle,
+        evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
+        extract_candidate_short_answer,
+        extract_final_answer_line,
+        last_nonempty_line,
+        maybe_json_loads,
+        normalize_answer_tracks,
+        normalize_space,
+        parse_frontierscience_research_rubric,
+        parse_superchem_checkpoint_weight,
+        parse_superchem_checkpoints,
+        parse_superchem_option_answer as _shared_parse_superchem_option_answer,
+        safe_json_extract as _shared_safe_json_extract,
+        superchem_valid_options,
+    )
+    from workspace.benchmarking.experiments import ExperimentSpec
+    from workspace.benchmarking.runners import build_runner
+    from workspace.benchmarking.runners import ChemQARunner as _BenchmarkingChemQARunner
+    from workspace.benchmarking.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
+    from workspace.benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
+    from workspace.benchmarking.skill_health import check_all_skill_health, summarize_skill_health
+    from workspace.benchmarking.reporting import (
+        GroupRecordResult as _SharedGroupRecordResult,
+        aggregate_bucket,
+        aggregate_results,
+        average_optional_metric,
+        build_error_group_record_result as _shared_build_error_group_record_result,
+        materialize_group_failure_results as _shared_materialize_group_failure_results,
+    )
+    from workspace.benchmarking.status import (
+        build_result_axes_from_runner,
+        is_chemqa_success_status,
+        is_chemqa_terminal_status,
+        normalize_chemqa_run_status,
+        normalize_run_status_value,
+    )
+    from workspace.benchmarking.runtime_config import (
+        ConfigPool as _RuntimeConfigPool,
+        RuntimeConfigContext,
+        RuntimeConfigError,
+        actual_slot_ids,
+        build_run_scoped_config_payload as _build_run_scoped_config_payload,
+        logical_slot_ids,
+        slot_role_map,
+    )
 
 _runner_factory = build_runner
 
@@ -118,10 +188,7 @@ DEFAULT_JUDGE_MODEL = "su8/gpt-5.4"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
 BASELINE_WORKSPACE_ROOT = runtime_paths.benchmark_runtime_root
-BENCHMARK_SKILLS_ALLOWLIST = [
-    str(entry["skill"])
-    for entry in load_chemistry_routing_matrix().get("skills", [])
-]
+BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
 CHEMQA_SLOT_SETS = {
     "chemqa_skills_on": "A",
 }
@@ -245,6 +312,22 @@ EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
         skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
     ),
 }
+
+
+def build_effective_experiment_specs(
+    specs: dict[str, ExperimentSpec],
+    *,
+    skill_health_reports: dict[str, dict[str, Any]],
+) -> dict[str, ExperimentSpec]:
+    available = {skill for skill, report in skill_health_reports.items() if report.get("available") is True}
+    effective: dict[str, ExperimentSpec] = {}
+    for group_id, spec in specs.items():
+        if spec.skills_enabled and spec.skill_allowlist:
+            filtered = tuple(skill for skill in spec.skill_allowlist if skill in available)
+            effective[group_id] = replace(spec, skill_allowlist=filtered)
+        else:
+            effective[group_id] = spec
+    return effective
 
 
 @dataclass
@@ -539,14 +622,14 @@ def load_slot_agents_template() -> str:
     return path.read_text(encoding="utf-8").rstrip() + "\n"
 
 
-def runtime_config_context() -> RuntimeConfigContext:
+def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = None) -> RuntimeConfigContext:
     return RuntimeConfigContext(
         baseline_workspace_root=BASELINE_WORKSPACE_ROOT,
         chemqa_workspace_roots=CHEMQA_WORKSPACE_ROOTS,
         agents_root=runtime_paths.agents_root,
         judge_agent_id=JUDGE_AGENT_ID,
         chemqa_slot_sets=CHEMQA_SLOT_SETS,
-        experiment_specs=EXPERIMENT_SPECS,
+        experiment_specs=experiment_specs or EXPERIMENT_SPECS,
         load_slot_agents_template=load_slot_agents_template,
         benchmark_skills_root=runtime_paths.skills_root,
     )
@@ -656,11 +739,12 @@ class ConfigPool(_RuntimeConfigPool):
         single_agent_model: str | None = None,
         judge_model: str | None = None,
         single_agent_id_override: str | None = None,
+        experiment_specs: dict[str, ExperimentSpec] | None = None,
     ) -> None:
         super().__init__(
             base_config_path=base_config_path,
             output_root=output_root,
-            context=runtime_config_context(),
+            context=runtime_config_context(experiment_specs=experiment_specs),
             single_agent_model=single_agent_model,
             judge_model=judge_model,
             single_agent_id_override=single_agent_id_override,
@@ -1156,12 +1240,16 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         timeout_seconds: int,
         config_path: Path,
         runtime_bundle_root: Path,
+        configured_skills: tuple[str, ...] | list[str] = (),
+        skill_health_summary: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
             timeout_seconds=timeout_seconds,
             config_path=config_path,
             runtime_bundle_root=runtime_bundle_root,
+            configured_skills=configured_skills,
+            skill_health_summary=skill_health_summary,
             run_subprocess=run_subprocess,
             parse_json_stdout=parse_json_stdout,
             unwrap_agent_payload=unwrap_agent_payload,
@@ -1448,6 +1536,9 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "native_evaluable_count": group_summary["native_evaluable_count"],
                 "degraded_execution_count": group_summary["degraded_execution_count"],
                 "non_evaluable_count": group_summary["non_evaluable_count"],
+                "session_isolation_ok_count": group_summary.get("session_isolation_ok_count", 0),
+                "session_isolation_failed_count": group_summary.get("session_isolation_failed_count", 0),
+                "session_contaminated_count": group_summary.get("session_contaminated_count", 0),
                 "avg_normalized_score": group_summary["avg_normalized_score"],
                 "avg_answer_accuracy": group_summary.get("avg_answer_accuracy"),
                 "avg_rpf": group_summary.get("avg_rpf"),
@@ -1474,6 +1565,9 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "native_evaluable_count",
             "degraded_execution_count",
             "non_evaluable_count",
+            "session_isolation_ok_count",
+            "session_isolation_failed_count",
+            "session_contaminated_count",
             "avg_normalized_score",
             "avg_answer_accuracy",
             "avg_rpf",
@@ -1503,6 +1597,9 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
                 "native_evaluable_count": row["native_evaluable_count"],
                 "degraded_execution_count": row["degraded_execution_count"],
                 "non_evaluable_count": row["non_evaluable_count"],
+                "session_isolation_ok_count": row.get("session_isolation_ok_count", 0),
+                "session_isolation_failed_count": row.get("session_isolation_failed_count", 0),
+                "session_contaminated_count": row.get("session_contaminated_count", 0),
                 "avg_normalized_score": row["avg_normalized_score"],
                 "avg_answer_accuracy": row.get("avg_answer_accuracy"),
                 "avg_rpf": row.get("avg_rpf"),
@@ -1530,6 +1627,9 @@ def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: li
             "native_evaluable_count",
             "degraded_execution_count",
             "non_evaluable_count",
+            "session_isolation_ok_count",
+            "session_isolation_failed_count",
+            "session_contaminated_count",
             "avg_normalized_score",
             "avg_answer_accuracy",
             "avg_rpf",
@@ -1814,6 +1914,8 @@ def run_group(
     chemqa_model_profile: str,
     review_rounds: int | None,
     rebuttal_rounds: int | None,
+    experiment_specs: dict[str, ExperimentSpec] | None = None,
+    skill_health_summary: dict[str, Any] | None = None,
 ) -> list[GroupRecordResult]:
     def ensure_compatible_runner_result(run_result: Any) -> None:
         missing: list[str] = []
@@ -1850,6 +1952,7 @@ def run_group(
         return str(getattr(status, "value", status))
 
     runtime_bundle_root = output_root / "input-bundles"
+    resolved_experiment_specs = experiment_specs or EXPERIMENT_SPECS
     try:
         if group.runner == "chemqa":
             runner = build_runner(
@@ -1871,6 +1974,8 @@ def run_group(
                 timeout_seconds=single_timeout,
                 config_path=config_path,
                 runtime_bundle_root=runtime_bundle_root,
+                configured_skills=tuple(resolved_experiment_specs[group.id].skill_allowlist or ()),
+                skill_health_summary=skill_health_summary,
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
@@ -1996,12 +2101,21 @@ def main() -> int:
         output_root = Path(args.output_dir).expanduser().resolve() / f"benchmark-{now_stamp()}"
     ensure_dir(output_root)
 
+    skill_health_reports = check_all_skill_health(BENCHMARK_SKILLS_ALLOWLIST, workspace_root=runtime_paths.project_root)
+    skill_health_summary = summarize_skill_health(skill_health_reports)
+    save_json(output_root / "skill-health.json", {"summary": skill_health_summary, "skills": skill_health_reports})
+    effective_experiment_specs = build_effective_experiment_specs(
+        EXPERIMENT_SPECS,
+        skill_health_reports=skill_health_reports,
+    )
+
     config_pool = ConfigPool(
         base_config_path=Path(args.openclaw_config).expanduser().resolve(),
         output_root=output_root,
         single_agent_model=args.single_agent_model,
         judge_model=args.judge_model,
         single_agent_id_override=args.single_agent_id_override,
+        experiment_specs=effective_experiment_specs,
     )
     judge = JudgeClient(
         judge_agent=args.judge_agent,
@@ -2027,7 +2141,7 @@ def main() -> int:
                 for group_id in wave_group_ids:
                     group = EXPERIMENT_GROUPS[group_id]
                     config_path = config_pool.config_for_group(group)
-                    spec = EXPERIMENT_SPECS.get(group_id)
+                    spec = effective_experiment_specs.get(group_id)
                     single_agent = (
                         spec.resolve_single_agent_id(args.single_agent_id_override)
                         if spec is not None
@@ -2047,6 +2161,8 @@ def main() -> int:
                         chemqa_model_profile=args.chemqa_model_profile,
                         review_rounds=args.review_rounds,
                         rebuttal_rounds=args.rebuttal_rounds,
+                        experiment_specs=effective_experiment_specs,
+                        skill_health_summary=skill_health_summary,
                     )
                     future_map[future] = group_id
 
@@ -2109,6 +2225,7 @@ def main() -> int:
         "dataset_files": [str(path) for path in dataset_files],
         "groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
         "run_groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
+        "skill_health_summary": skill_health_summary,
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
             "enabled": args.random_count_per_subset is not None,
@@ -2148,14 +2265,19 @@ def main() -> int:
             "aggregate_groups": aggregate_group_ids,
             "run_groups": group_ids,
             "merge_existing_per_record": args.merge_existing_per_record,
+            "skill_health": {
+                "summary": skill_health_summary,
+                "report_path": str(output_root / "skill-health.json"),
+            },
             "groups": {
                 group_id: {
                     "group": asdict(EXPERIMENT_GROUPS[group_id]),
                     "config_path": str(config_pool.config_for_group(EXPERIMENT_GROUPS[group_id])),
+                    "effective_skill_allowlist": list(effective_experiment_specs[group_id].skill_allowlist or ()),
                     "slot_set": CHEMQA_SLOT_SETS.get(group_id),
                     "single_agent": (
-                        EXPERIMENT_SPECS[group_id].resolve_single_agent_id(args.single_agent_id_override)
-                        if group_id in EXPERIMENT_SPECS and EXPERIMENT_GROUPS[group_id].runner == "single_llm"
+                        effective_experiment_specs[group_id].resolve_single_agent_id(args.single_agent_id_override)
+                        if group_id in effective_experiment_specs and EXPERIMENT_GROUPS[group_id].runner == "single_llm"
                         else None
                     ),
                     "single_agent_model": args.single_agent_model,

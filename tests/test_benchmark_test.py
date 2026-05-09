@@ -114,19 +114,51 @@ print(json.dumps({{
         self.assertEqual("benchmarking.contracts", payload["answer_payload_module"])
         self.assertEqual("runtime_paths", payload["runtime_paths_module"])
 
-    def test_benchmark_skills_allowlist_comes_from_routing_matrix(self) -> None:
-        matrix_skills = [
+    def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
+        health_reports = {
+            "rdkit": {"available": True},
+            "paper-access": {"available": False, "unavailable_reasons": [{"kind": "missing_dependency", "name": "bs4"}]},
+        }
+        specs = {
+            "single_llm_skills_on": benchmark_test.ExperimentSpec(
+                id="single_llm_skills_on",
+                label="demo",
+                runner_kind="single_llm",
+                websearch_enabled=True,
+                skills_enabled=True,
+                single_agent_id="benchmark-single-skills-on",
+                skill_allowlist=("rdkit", "paper-access"),
+            )
+        }
+
+        effective = benchmark_test.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
+
+        self.assertEqual(("rdkit",), effective["single_llm_skills_on"].skill_allowlist)
+
+    def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
+        inventory_skills = [
             str(entry["skill"])
-            for entry in benchmark_test.load_chemistry_routing_matrix().get("skills", [])
+            for entry in benchmark_test.load_chemistry_skill_inventory().get("skills", [])
         ]
 
-        self.assertEqual(matrix_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(inventory_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(84, len(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST))
         self.assertIn("chem-calculator", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("pymatgen", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("tooluniverse-chemical-safety", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-retrieval", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-access", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-parse", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-rerank", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("benchmark-cleanroom", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+
+    def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
+        source = Path("benchmarking/runners/single_llm.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("selected_skills", source)
+        self.assertNotIn("config_for_record", source)
+        self.assertNotIn("SkillPlan", source)
 
     def test_parse_args_accepts_single_agent_id_override_and_rejects_removed_flags(self) -> None:
         with mock.patch.object(
@@ -209,6 +241,12 @@ print(json.dumps({{
 
             with mock.patch.object(benchmark_test, "ConfigPool", DummyConfigPool), \
                 mock.patch.object(benchmark_test, "JudgeClient", return_value=object()), \
+                mock.patch.object(benchmark_test, "check_all_skill_health", return_value={}), \
+                mock.patch.object(
+                    benchmark_test,
+                    "summarize_skill_health",
+                    return_value={"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
+                ), \
                 mock.patch.object(benchmark_test, "run_group", side_effect=fake_run_group), \
                 mock.patch.object(sys, "argv", argv):
                 exit_code = benchmark_test.main()
@@ -1075,7 +1113,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_injects_skill_routing_only_when_enabled(self) -> None:
+    def test_build_single_llm_prompt_injects_skill_tree_only_when_enabled(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1099,13 +1137,40 @@ Points: 0.5, Item: Second criterion
             input_bundle=None,
         )
 
-        self.assertIn("Experimental chemistry skill routing rules", skills_on)
-        self.assertIn("`chem-calculator`", skills_on)
-        self.assertIn("`pymatgen`", skills_on)
+        self.assertIn("Skill capability tree", skills_on)
+        self.assertIn("First choose a capability domain", skills_on)
+        self.assertIn("paper-pipeline", skills_on)
+        self.assertIn("calculation-math", skills_on)
+        self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
+        self.assertNotIn("first matching primary route", skills_on)
+        self.assertNotIn("SKILL TRACE: skipped", skills_on)
         self.assertNotIn("Do not use OpenClaw skills", skills_on)
-        self.assertNotIn("Experimental chemistry skill routing rules", skills_off)
-        self.assertNotIn("`chem-calculator`", skills_off)
+        self.assertNotIn("Skill capability tree", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
+
+    def test_build_single_llm_prompt_includes_time_budget_stop_rule(self) -> None:
+        record = benchmark_test.BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH of a buffer from the supplied concentrations.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        prompt = benchmark_test.build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=True,
+            input_bundle=None,
+            time_budget_seconds=900,
+        )
+
+        self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("When roughly 20% or less of the budget remains", prompt)
+        self.assertIn("stop starting new tool or skill exploration", prompt)
+        self.assertIn("FINAL ANSWER", prompt)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []
@@ -1506,7 +1571,19 @@ Points: 0.5, Item: Second criterion
                     "primary_metric_direction": "higher_is_better",
                     "details": {},
                 },
-                runner_meta={},
+                runner_meta={
+                    "skill_use_audit": {
+                        "skills_enabled": True,
+                        "tool_call_count": 2,
+                        "skill_tool_executed": True,
+                        "model_declared_skip": False,
+                        "no_tool_call": False,
+                    },
+                    "session_isolation": {
+                        "session_isolation_ok": True,
+                        "preflight_removed_stale_main_entry": True,
+                    },
+                },
                 raw={},
                 elapsed_seconds=2.0,
                 run_lifecycle_status="completed",
@@ -1544,7 +1621,20 @@ Points: 0.5, Item: Second criterion
                     "primary_metric_direction": "higher_is_better",
                     "details": {},
                 },
-                runner_meta={},
+                runner_meta={
+                    "skill_use_audit": {
+                        "skills_enabled": True,
+                        "tool_call_count": 0,
+                        "skill_tool_executed": False,
+                        "model_declared_skip": True,
+                        "no_tool_call": True,
+                    },
+                    "session_isolation": {
+                        "session_isolation_ok": False,
+                        "preflight_removed_stale_main_entry": False,
+                        "postflight_entry_session_id": "old-session",
+                    },
+                },
                 raw={},
                 elapsed_seconds=4.0,
                 run_lifecycle_status="completed",
@@ -1564,6 +1654,13 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["pass_count"])
         self.assertEqual(3.0, summary["groups"]["g1"]["avg_elapsed_seconds"])
         self.assertEqual(0.5, summary["groups"]["g1"]["avg_normalized_score"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_tool_executed_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_model_declared_skip_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_no_tool_call_count"])
+        self.assertEqual(2, summary["groups"]["g1"]["skill_tool_call_total"])
+        self.assertEqual(1, summary["groups"]["g1"]["session_isolation_ok_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["session_isolation_failed_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["session_contaminated_count"])
 
     def test_aggregate_results_tracks_evaluable_and_degraded_counts(self) -> None:
         sample = [
@@ -2043,6 +2140,9 @@ Points: 0.5, Item: Second criterion
                     "native_evaluable_count": 2,
                     "degraded_execution_count": 0,
                     "non_evaluable_count": 0,
+                    "session_isolation_ok_count": 2,
+                    "session_isolation_failed_count": 0,
+                    "session_contaminated_count": 0,
                     "avg_normalized_score": 0.5,
                     "avg_answer_accuracy": 1.0,
                     "avg_rpf": 0.75,
@@ -2067,6 +2167,9 @@ Points: 0.5, Item: Second criterion
                     "native_evaluable_count": 2,
                     "degraded_execution_count": 0,
                     "non_evaluable_count": 0,
+                    "session_isolation_ok_count": 2,
+                    "session_isolation_failed_count": 0,
+                    "session_contaminated_count": 0,
                     "avg_normalized_score": 0.5,
                     "avg_answer_accuracy": None,
                     "avg_rpf": None,
@@ -2100,6 +2203,9 @@ Points: 0.5, Item: Second criterion
                     "native_evaluable_count",
                     "degraded_execution_count",
                     "non_evaluable_count",
+                    "session_isolation_ok_count",
+                    "session_isolation_failed_count",
+                    "session_contaminated_count",
                     "avg_normalized_score",
                     "avg_answer_accuracy",
                     "avg_rpf",
@@ -2138,6 +2244,9 @@ Points: 0.5, Item: Second criterion
                     "native_evaluable_count",
                     "degraded_execution_count",
                     "non_evaluable_count",
+                    "session_isolation_ok_count",
+                    "session_isolation_failed_count",
+                    "session_contaminated_count",
                     "avg_normalized_score",
                     "avg_answer_accuracy",
                     "avg_rpf",
@@ -2177,7 +2286,7 @@ Points: 0.5, Item: Second criterion
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
 
-    def test_single_llm_runner_invokes_openclaw_with_high_thinking(self) -> None:
+    def test_single_llm_runner_invokes_wrapper_with_high_thinking(self) -> None:
         captured: dict[str, object] = {}
         original_run_subprocess = benchmark_test.run_subprocess
         original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
@@ -2188,12 +2297,156 @@ Points: 0.5, Item: Second criterion
                 return benchmark_test.subprocess.CompletedProcess(
                     command,
                     0,
-                    stdout=json.dumps({"result": {"payloads": [{"text": 'Reasoning\nFINAL ANSWER: 5'}], "meta": {}}}),
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Reasoning\nFINAL ANSWER: 5"}],
+                                "meta": {
+                                    "toolSummary": {"calls": 1, "tools": ["exec"], "failures": 0},
+                                    "session_isolation": {
+                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
+                                        "agent_id": "benchmark-single-skills-on",
+                                        "session_store_path": "/tmp/sessions.json",
+                                        "preflight_removed_stale_main_entry": True,
+                                        "preflight_previous_session_id": "old-session",
+                                        "postflight_entry_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
+                                        "postflight_entry_session_file": "/tmp/benchmark-single_llm_skills_on-demo-abc12345.jsonl",
+                                        "session_isolation_ok": True,
+                                    },
+                                },
+                            }
+                        }
+                    ),
                     stderr="",
                 )
 
             benchmark_test.run_subprocess = fake_run_subprocess
             benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                configured_skills=("chem-calculator", "paper-retrieval"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="chembench",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            self.assertEqual("5", out.short_answer_text)
+            command = captured["command"]
+            assert isinstance(command, list)
+            self.assertNotEqual("openclaw", command[0])
+            self.assertTrue(any(str(part).endswith("single_llm_openclaw_wrapper.py") for part in command))
+            self.assertIn("--thinking", command)
+            self.assertEqual("high", command[command.index("--thinking") + 1])
+            self.assertIn("--agent", command)
+            self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
+            audit = out.runner_meta["skill_use_audit"]
+            self.assertEqual(2, audit["available_skill_count"])
+            self.assertTrue(audit["skill_tool_executed"])
+            self.assertEqual(1, audit["tool_call_count"])
+            self.assertTrue(out.runner_meta["session_isolation"]["session_isolation_ok"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_session_isolation_failure_unscored(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Contaminated response\nFINAL ANSWER: 5"}],
+                                "meta": {
+                                    "session_isolation": {
+                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-new",
+                                        "agent_id": "benchmark-single-skills-on",
+                                        "session_store_path": "/tmp/sessions.json",
+                                        "preflight_removed_stale_main_entry": False,
+                                        "preflight_previous_session_id": "",
+                                        "postflight_entry_session_id": "old-session",
+                                        "postflight_entry_session_file": "/tmp/old-session.jsonl",
+                                        "session_isolation_ok": False,
+                                    }
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                configured_skills=("chem-calculator",),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="chembench",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertFalse(out.should_score())
+            self.assertIsNotNone(out.failure)
+            assert out.failure is not None
+            self.assertEqual("session_isolation_failed", out.failure.code)
+            self.assertIn("old-session", out.failure.message)
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_invalid_stdout_payloads_without_scoring_empty_answer(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [],
+                                "meta": {
+                                    "stdout_diagnostics": {
+                                        "schema_valid": False,
+                                        "reason": "missing_payloads",
+                                        "invalid_stdout_payload": {"query": "tool args"},
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
             runner = benchmark_test.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
@@ -2209,12 +2462,79 @@ Points: 0.5, Item: Second criterion
                 reference_answer="5",
                 payload={},
             )
+
             out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
-            self.assertEqual("5", out.short_answer_text)
-            command = captured["command"]
-            assert isinstance(command, list)
-            self.assertIn("--thinking", command)
-            self.assertEqual("high", command[command.index("--thinking") + 1])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_result_contract_invalid", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_openclaw_timeout_payload_unscored(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            timeout_text = (
+                "Request timed out before a response was generated. "
+                "Please try again, or increase `agents.defaults.timeoutSeconds` in your config."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": timeout_text}],
+                                "meta": {
+                                    "aborted": True,
+                                    "durationMs": 910104,
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {
+                                        "schema_valid": True,
+                                        "payload_count": 1,
+                                        "parse_mode": "embedded_agent_result",
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="chembench",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertTrue(out.runner_meta["agent_timeout_detected"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle

@@ -15,6 +15,7 @@ from benchmarking.runtime_config import (
     RuntimeConfigError,
     build_run_scoped_config_payload,
 )
+from benchmarking.skill_tree import benchmark_skill_allowlist
 
 
 class RuntimeConfigGroup:
@@ -102,6 +103,52 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
         agents = {entry["id"]: entry for entry in rendered["agents"]["list"]}
         self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertEqual([], agents["benchmark-single-skills-off"]["skills"])
+
+    def test_single_llm_skills_on_config_keeps_full_benchmark_skill_allowlist(self) -> None:
+        base = {
+            "agents": {"list": []},
+            "tools": {"web": {"search": {"enabled": False}}},
+            "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
+        }
+        spec = ExperimentSpec(
+            id="single_llm_skills_on",
+            label="Single LLM with skills",
+            runner_kind="single_llm",
+            websearch_enabled=True,
+            skills_enabled=True,
+            single_agent_id="benchmark-single-skills-on",
+            skill_allowlist=benchmark_skill_allowlist(),
+        )
+        provisioned = ProvisionedExperiment(
+            judge=ProvisionedAgent("benchmark-judge", Path("/tmp/judge"), Path("/tmp/agents/judge")),
+            runner_agents=(
+                ProvisionedAgent(
+                    "benchmark-single-skills-on",
+                    Path("/tmp/single"),
+                    Path("/tmp/agents/single"),
+                ),
+            ),
+        )
+
+        payload = render_run_config(
+            base_payload=base,
+            spec=spec,
+            provisioned=provisioned,
+            judge_model="judge-model",
+            runner_model="runner-model",
+        )
+
+        agents = payload["agents"]["list"]
+        runner = next(agent for agent in agents if agent["id"] == "benchmark-single-skills-on")
+        skills = runner["skills"]
+
+        self.assertIn("chem-calculator", skills)
+        self.assertIn("rdkit", skills)
+        self.assertIn("paper-retrieval", skills)
+        self.assertIn("paper-access", skills)
+        self.assertIn("paper-parse", skills)
+        self.assertIn("paper-rerank", skills)
+        self.assertGreaterEqual(len(skills), 80)
 
     def test_render_run_config_replaces_managed_agent_and_strips_thinking(self) -> None:
         base = {
