@@ -76,6 +76,27 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
+    def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
+        health_reports = {
+            "rdkit": {"available": True},
+            "paper-access": {"available": False, "unavailable_reasons": [{"kind": "missing_dependency", "name": "bs4"}]},
+        }
+        specs = {
+            "single_llm_skills_on": benchmark_test.ExperimentSpec(
+                id="single_llm_skills_on",
+                label="demo",
+                runner_kind="single_llm",
+                websearch_enabled=True,
+                skills_enabled=True,
+                single_agent_id="benchmark-single-skills-on",
+                skill_allowlist=("rdkit", "paper-access"),
+            )
+        }
+
+        effective = benchmark_test.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
+
+        self.assertEqual(("rdkit",), effective["single_llm_skills_on"].skill_allowlist)
+
     def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
         inventory_skills = [
             str(entry["skill"])
@@ -182,6 +203,12 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
             with mock.patch.object(benchmark_test, "ConfigPool", DummyConfigPool), \
                 mock.patch.object(benchmark_test, "JudgeClient", return_value=object()), \
+                mock.patch.object(benchmark_test, "check_all_skill_health", return_value={}), \
+                mock.patch.object(
+                    benchmark_test,
+                    "summarize_skill_health",
+                    return_value={"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
+                ), \
                 mock.patch.object(benchmark_test, "run_group", side_effect=fake_run_group), \
                 mock.patch.object(sys, "argv", argv):
                 exit_code = benchmark_test.main()

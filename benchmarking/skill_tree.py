@@ -245,15 +245,24 @@ def lookup_skill_family(family_id: str) -> dict[str, Any]:
     raise KeyError(f"unknown skill family: {family_id}")
 
 
-def render_top_level_skill_tree() -> str:
+def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str:
     lines = [
         "Skill capability tree:",
         "First choose a capability domain, then a skill family, then call a concrete skill only when it helps answer the record.",
-        "All benchmark skills remain available; this tree is a discovery aid, not a router or allowlist filter.",
     ]
+    if available_skills is None:
+        lines.append("All benchmark skills remain available; this tree is a discovery aid, not a router or allowlist filter.")
+    else:
+        lines.append("Only health-checked skills in this run are available; unavailable skills were omitted from the runtime allowlist.")
     for domain in SKILL_TREE:
-        families = ", ".join(f"`{family['id']}`" for family in domain["families"])
-        lines.append(f"- `{domain['id']}`: {domain['label']} Families: {families}.")
-    lines.append("When a family is relevant, inspect or call the concrete skill from the loaded OpenClaw skill list.")
+        families: list[str] = []
+        for family in domain["families"]:
+            family_skills = set(str(skill) for skill in family["skills"])
+            if available_skills is not None and not (family_skills & available_skills):
+                continue
+            families.append(f"`{family['id']}`")
+        if families:
+            lines.append(f"- `{domain['id']}`: {domain['label']} Families: {', '.join(families)}.")
+    lines.append("When a family is relevant, run local skill scripts through `scripts/run_skill.py`, which executes target scripts with workspace `uv run python`.")
     lines.append("Use tool outputs, artifact paths, or cited retrieved evidence in the answer when a skill contributes.")
     return "\n".join(lines)

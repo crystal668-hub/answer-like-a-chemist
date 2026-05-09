@@ -28,6 +28,7 @@ class SingleLLMRunner:
         slugify,
         benchmark_agent_thinking: str,
         configured_skills: tuple[str, ...] | list[str] = (),
+        skill_health_summary: dict[str, Any] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
@@ -43,6 +44,7 @@ class SingleLLMRunner:
         self._build_single_llm_prompt = build_single_llm_prompt
         self._slugify = slugify
         self._benchmark_agent_thinking = benchmark_agent_thinking
+        self.skill_health_summary = dict(skill_health_summary or {})
 
     def run(self, record: Any, group: Any) -> RunnerResult:
         input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
@@ -51,6 +53,7 @@ class SingleLLMRunner:
             websearch_enabled=group.websearch,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             input_bundle=input_bundle,
+            available_skills=set(self.configured_skills),
         )
         session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
         wrapper_path = Path(__file__).resolve().parents[1] / "single_llm_openclaw_wrapper.py"
@@ -90,6 +93,7 @@ class SingleLLMRunner:
                 configured_skills=self.configured_skills,
                 runner_meta=runner_meta,
                 final_response_text="",
+                skill_health_summary=self.skill_health_summary,
             )
             if input_bundle is not None:
                 runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -112,6 +116,7 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text=full_response_text,
+            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()

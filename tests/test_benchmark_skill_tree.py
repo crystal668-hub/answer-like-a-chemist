@@ -61,3 +61,11 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "`rdkit`" not in rendered
     assert "`paper-retrieval`" not in rendered
     assert len(rendered.splitlines()) < 60
+
+
+def test_top_level_skill_tree_reflects_health_filtered_availability() -> None:
+    rendered = render_top_level_skill_tree(available_skills={"rdkit", "paper-access"})
+
+    assert "Only health-checked skills in this run are available" in rendered
+    assert "molecular-structure-identity" in rendered
+    assert "literature-evidence" in rendered

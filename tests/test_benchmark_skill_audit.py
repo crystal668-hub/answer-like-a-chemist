@@ -43,3 +43,16 @@ def test_skill_use_audit_handles_missing_tool_summary() -> None:
     assert audit["tool_call_count"] == 0
     assert audit["tool_names"] == []
     assert audit["no_tool_call"] is True
+
+
+def test_skill_use_audit_includes_health_summary() -> None:
+    audit = build_skill_use_audit(
+        skills_enabled=True,
+        configured_skills=("rdkit",),
+        runner_meta={},
+        final_response_text="FINAL ANSWER: A",
+        skill_health_summary={"available_skill_count": 1, "unavailable_skill_count": 2},
+    )
+
+    assert audit["skill_health_summary"]["available_skill_count"] == 1
+    assert audit["skill_health_summary"]["unavailable_skill_count"] == 2

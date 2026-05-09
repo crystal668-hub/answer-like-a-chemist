@@ -60,13 +60,14 @@ def build_single_llm_prompt(
     websearch_enabled: bool,
     skills_enabled: bool = True,
     input_bundle: RuntimeBundleLike | None = None,
+    available_skills: set[str] | None = None,
 ) -> str:
     instructions = [
         "You are answering a chemistry benchmark question.",
         "Be careful, concise, and do not fabricate missing facts.",
     ]
     if skills_enabled:
-        instructions.append(render_top_level_skill_tree())
+        instructions.append(render_top_level_skill_tree(available_skills=available_skills))
     else:
         instructions.append("Do not use OpenClaw skills or local skill tools for this run.")
 
