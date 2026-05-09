@@ -61,11 +61,21 @@ def build_single_llm_prompt(
     skills_enabled: bool = True,
     input_bundle: RuntimeBundleLike | None = None,
     available_skills: set[str] | None = None,
+    time_budget_seconds: int | None = None,
 ) -> str:
     instructions = [
         "You are answering a chemistry benchmark question.",
         "Be careful, concise, and do not fabricate missing facts.",
     ]
+    if isinstance(time_budget_seconds, int) and time_budget_seconds > 0:
+        instructions.extend(
+            [
+                f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.",
+                "When roughly 20% or less of the budget remains, stop starting new tool or skill exploration.",
+                "At that point, use the evidence already gathered and produce the requested final answer format immediately, even if uncertain.",
+                "If a tool path fails twice or is unavailable, switch to best-effort chemistry reasoning instead of trying more variants of the same path.",
+            ]
+        )
     if skills_enabled:
         instructions.append(render_top_level_skill_tree(available_skills=available_skills))
     else:

@@ -10,6 +10,18 @@ from ..contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
 from ..skill_audit import build_skill_use_audit
 
 
+OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
+OPENCLAW_IDLE_TIMEOUT_TEXT = "The model did not produce a response before the LLM idle timeout"
+
+
+def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_text: str) -> bool:
+    text = str(full_response_text or "")
+    has_timeout_text = OPENCLAW_RESPONSE_TIMEOUT_TEXT in text or OPENCLAW_IDLE_TIMEOUT_TEXT in text
+    if not has_timeout_text:
+        return False
+    return runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
+
+
 class SingleLLMRunner:
     def __init__(
         self,
@@ -54,6 +66,7 @@ class SingleLLMRunner:
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             input_bundle=input_bundle,
             available_skills=set(self.configured_skills),
+            time_budget_seconds=self.timeout_seconds,
         )
         session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
         wrapper_path = Path(__file__).resolve().parents[1] / "single_llm_openclaw_wrapper.py"
@@ -120,6 +133,27 @@ class SingleLLMRunner:
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text):
+            message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
+            runner_meta["error"] = message
+            runner_meta["agent_timeout_detected"] = True
+            runner_meta["agent_timeout_payload_text"] = full_response_text
+            return RunnerResult(
+                status=RunStatus.FAILED,
+                answer=AnswerPayload(),
+                raw=payload,
+                runner_meta=runner_meta,
+                failure=FailureInfo(
+                    code="agent_response_timeout",
+                    message=message,
+                    details={
+                        "aborted": runner_meta.get("aborted"),
+                        "livenessState": runner_meta.get("livenessState"),
+                        "durationMs": runner_meta.get("durationMs"),
+                        "payload_text": full_response_text,
+                    },
+                ),
+            )
         session_isolation = runner_meta.get("session_isolation")
         if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
             actual_session = str(session_isolation.get("postflight_entry_session_id") or "")

@@ -1110,6 +1110,30 @@ Points: 0.5, Item: Second criterion
         self.assertNotIn("Skill capability tree", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
 
+    def test_build_single_llm_prompt_includes_time_budget_stop_rule(self) -> None:
+        record = benchmark_test.BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH of a buffer from the supplied concentrations.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        prompt = benchmark_test.build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=True,
+            input_bundle=None,
+            time_budget_seconds=900,
+        )
+
+        self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("When roughly 20% or less of the budget remains", prompt)
+        self.assertIn("stop starting new tool or skill exploration", prompt)
+        self.assertIn("FINAL ANSWER", prompt)
+
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []
         for idx in range(3):
@@ -2187,6 +2211,70 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_openclaw_timeout_payload_unscored(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            timeout_text = (
+                "Request timed out before a response was generated. "
+                "Please try again, or increase `agents.defaults.timeoutSeconds` in your config."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": timeout_text}],
+                                "meta": {
+                                    "aborted": True,
+                                    "durationMs": 910104,
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {
+                                        "schema_valid": True,
+                                        "payload_count": 1,
+                                        "parse_mode": "embedded_agent_result",
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="chembench",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertTrue(out.runner_meta["agent_timeout_detected"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
