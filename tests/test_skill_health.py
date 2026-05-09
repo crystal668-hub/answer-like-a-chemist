@@ -62,6 +62,35 @@ def test_paper_parse_health_uses_pdf_backend_without_pdfinfo() -> None:
     assert "pdfinfo" not in requirement.executables
 
 
+def test_network_timeout_is_passed_to_probe_command() -> None:
+    commands: list[list[str]] = []
+    timeouts: list[int] = []
+
+    def fake_run(command, *, cwd=None, env=None, text=None, capture_output=None, check=None, timeout=None):
+        commands.append(command)
+        timeouts.append(timeout)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    requirement = HealthRequirement(skill="network-demo", network_urls=("https://example.test/status",))
+    report = check_skill_health(
+        requirement,
+        workspace_root=Path("/repo"),
+        run_subprocess=fake_run,
+        network_timeout_seconds=10,
+    )
+
+    assert report["available"] is True
+    assert commands[0][-2:] == ["https://example.test/status", "10"]
+    assert timeouts == [12]
+    assert report["checks"]["network"]["https://example.test/status"]["timeout_seconds"] == 10
+
+
+def test_chembl_database_uses_longer_network_timeout() -> None:
+    requirement = health_requirements_for_allowlist(["chembl-database"])["chembl-database"]
+
+    assert requirement.network_probe_timeout_seconds == 10
+
+
 def test_missing_data_file_marks_skill_unavailable() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)

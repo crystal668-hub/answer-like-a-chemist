@@ -23,6 +23,7 @@ class HealthRequirement:
     api_keys: tuple[str, ...] = ()
     data_files: tuple[str, ...] = ()
     network_urls: tuple[str, ...] = ()
+    network_probe_timeout_seconds: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -72,6 +73,7 @@ REQUIREMENT_OVERRIDES: dict[str, HealthRequirement] = {
         python_modules=("chembl_webresource_client",),
         data_files=("skills/chembl-database/SKILL.md",),
         network_urls=("https://www.ebi.ac.uk/chembl/api/data/status.json",),
+        network_probe_timeout_seconds=10,
     ),
 }
 
@@ -194,14 +196,16 @@ def check_skill_health(
         if not ok:
             unavailable.append({"kind": "missing_data_file", "name": relative_path, "reason": f"{relative_path} does not exist"})
 
+    probe_timeout_seconds = requirement.network_probe_timeout_seconds or network_timeout_seconds
     for url in requirement.network_urls:
         command = [
             "uv",
             "run",
             "python",
             "-c",
-            "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=3).read(64)",
+            "import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=float(sys.argv[2])).read(64)",
             url,
+            str(probe_timeout_seconds),
         ]
         completed = run_subprocess(
             command,
@@ -210,10 +214,10 @@ def check_skill_health(
             text=True,
             capture_output=True,
             check=False,
-            timeout=network_timeout_seconds + 2,
+            timeout=probe_timeout_seconds + 2,
         )
         ok = completed.returncode == 0
-        checks["network"][url] = {"ok": ok, "returncode": completed.returncode}
+        checks["network"][url] = {"ok": ok, "returncode": completed.returncode, "timeout_seconds": probe_timeout_seconds}
         if not ok:
             unavailable.append({"kind": "provider_failure", "name": url, "reason": (completed.stderr or completed.stdout).strip()[:500]})
 
