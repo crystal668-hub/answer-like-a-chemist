@@ -209,6 +209,145 @@ print(json.dumps({{
             self.assertEqual(3, summary["rewritten_paths"])
             self.assertEqual(1, summary["records_seen"])
 
+    def test_repair_temp_superchem_image_paths_prunes_unused_paths_from_text_locators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            jsonl_path = root / "temp-benchmarks" / "superchem" / "data" / "superchem_pool.jsonl"
+            jsonl_path.parent.mkdir(parents=True)
+
+            question_locator = "/media/uploads/question-demo.png"
+            option_locator = "/media/uploads/option-demo.png"
+            explanation_locator = "/media/uploads/explanation-demo.png"
+            question_path = root / "assets" / benchmark_test._superchem_asset_cache_relative_path(question_locator)
+            option_path = root / "assets" / benchmark_test._superchem_asset_cache_relative_path(option_locator)
+            explanation_path = root / "assets" / benchmark_test._superchem_asset_cache_relative_path(explanation_locator)
+            unrelated_path = root / "assets" / "_shared" / "ff" / "unrelated.png"
+            record = {
+                "id": "superchem-demo-mm",
+                "question": f"Question ![q]({question_locator})",
+                "options": {"A": "plain", "B": f"<MultiModal>![b]({option_locator})</MultiModal>"},
+                "reference_reasoning": f"Reason ![r]({explanation_locator})",
+                "question_image_paths": [question_path.as_posix(), unrelated_path.as_posix()],
+                "option_image_paths": {"_shared": [unrelated_path.as_posix()], "B": [option_path.as_posix()]},
+                "explanation_image_paths": [unrelated_path.as_posix(), explanation_path.as_posix()],
+            }
+            jsonl_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            script_path = MODULE_PATH.parent / "scripts" / "repair_temp_superchem_image_paths.py"
+            dry_run = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--jsonl",
+                    str(jsonl_path),
+                    "--prune-unused",
+                    "--dry-run",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, dry_run.returncode, dry_run.stderr)
+            dry_summary = json.loads(dry_run.stdout)
+            self.assertEqual(1, dry_summary["records_pruned"])
+            self.assertEqual(3, dry_summary["pruned_paths"])
+            self.assertEqual(0, dry_summary["rewritten_paths"])
+            self.assertEqual(record, json.loads(jsonl_path.read_text(encoding="utf-8")))
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--jsonl",
+                    str(jsonl_path),
+                    "--prune-unused",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            repaired = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertEqual([question_path.as_posix()], repaired["question_image_paths"])
+            self.assertEqual({"B": [option_path.as_posix()]}, repaired["option_image_paths"])
+            self.assertEqual([explanation_path.as_posix()], repaired["explanation_image_paths"])
+
+    def test_repair_temp_superchem_image_paths_prunes_explanations_when_reasoning_has_no_locators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            jsonl_path = root / "superchem_pool.jsonl"
+            record = {
+                "id": "superchem-no-explanation-locators-mm",
+                "question": "Question without images",
+                "options": {"A": "plain"},
+                "reference_reasoning": "Reasoning text without image locators.",
+                "question_image_paths": [],
+                "option_image_paths": {},
+                "explanation_image_paths": [
+                    "/tmp/assets/_shared/aa/stale-a.png",
+                    "/tmp/assets/_shared/bb/stale-b.png",
+                ],
+            }
+            jsonl_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            script_path = MODULE_PATH.parent / "scripts" / "repair_temp_superchem_image_paths.py"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--jsonl",
+                    str(jsonl_path),
+                    "--prune-unused",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            repaired = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertEqual([], repaired["explanation_image_paths"])
+            summary = json.loads(completed.stdout)
+            self.assertEqual(2, summary["pruned_paths"])
+
+    def test_repair_temp_superchem_image_paths_prunes_question_paths_when_question_has_no_locators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            jsonl_path = root / "superchem_pool.jsonl"
+            record = {
+                "id": "superchem-no-question-locators-mm",
+                "question": "Question text without image locators.",
+                "options": {"A": "plain"},
+                "reference_reasoning": "Reasoning text.",
+                "question_image_paths": [
+                    "/tmp/assets/_shared/aa/stale-a.png",
+                    "/tmp/assets/_shared/bb/stale-b.png",
+                ],
+                "option_image_paths": {},
+                "explanation_image_paths": [],
+            }
+            jsonl_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            script_path = MODULE_PATH.parent / "scripts" / "repair_temp_superchem_image_paths.py"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--jsonl",
+                    str(jsonl_path),
+                    "--prune-unused",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            repaired = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertEqual([], repaired["question_image_paths"])
+            summary = json.loads(completed.stdout)
+            self.assertEqual(2, summary["pruned_paths"])
+
     def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
         source = Path("benchmarking/runners/single_llm.py").read_text(encoding="utf-8")
 
@@ -1406,6 +1545,130 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(1, len(bundle.image_files))
             self.assertTrue(bundle.image_files[0].is_file())
             self.assertEqual(b"image-bytes", bundle.image_files[0].read_bytes())
+
+    def test_ensure_runtime_bundle_prunes_superchem_question_images_to_visible_locator(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            data_dir = temp_dir / "data"
+            assets_dir = temp_dir / "assets"
+            locator = "/media/uploads/question-visible.png"
+            visible_image = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator)
+            visible_image.parent.mkdir(parents=True)
+            visible_image.write_bytes(b"visible")
+            noisy_paths: list[str] = []
+            for index in range(120):
+                noisy = assets_dir / "_shared" / "noise" / f"unused-{index:03d}.png"
+                noisy.parent.mkdir(parents=True, exist_ok=True)
+                noisy.write_bytes(b"noise")
+                noisy_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
+            visible_relpath = os.path.relpath(visible_image, start=data_dir).replace(os.sep, "/")
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-visible-question-mm",
+                dataset="superchem",
+                source_file=str(data_dir / "superchem.jsonl"),
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt=f"Question ![q]({locator})",
+                reference_answer="A",
+                payload={
+                    "source_uuid": "uuid-visible-question",
+                    "modality": "multimodal",
+                    "question": f"Question ![q]({locator})",
+                    "options": {"A": "answer"},
+                    "question_image_paths": noisy_paths[:60] + [visible_relpath] + noisy_paths[60:],
+                    "option_image_paths": {},
+                },
+            )
+
+            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+
+            assert bundle is not None
+            markdown = bundle.question_markdown.read_text(encoding="utf-8")
+            self.assertEqual(1, len(bundle.image_files))
+            self.assertEqual(b"visible", bundle.image_files[0].read_bytes())
+            self.assertNotIn(locator, markdown)
+            self.assertIn("](images/img01.png)", markdown)
+            self.assertEqual(1, markdown.count("- images/img"))
+
+    def test_ensure_runtime_bundle_ignores_shared_option_bucket_and_rewrites_visible_options(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            data_dir = temp_dir / "data"
+            assets_dir = temp_dir / "assets"
+            locator_b = "/media/uploads/option-b.png"
+            locator_c = "https://superchem.pku.edu.cn/media/uploads/option-c.jpg"
+            option_b = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator_b)
+            option_c = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator_c)
+            option_b.parent.mkdir(parents=True)
+            option_c.parent.mkdir(parents=True)
+            option_b.write_bytes(b"option-b")
+            option_c.write_bytes(b"option-c")
+            shared_paths: list[str] = []
+            for index in range(150):
+                noisy = assets_dir / "_shared" / "shared" / f"unused-{index:03d}.png"
+                noisy.parent.mkdir(parents=True, exist_ok=True)
+                noisy.write_bytes(b"noise")
+                shared_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-visible-options-mm",
+                dataset="superchem",
+                source_file=str(data_dir / "superchem.jsonl"),
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Question",
+                reference_answer="B",
+                payload={
+                    "source_uuid": "uuid-visible-options",
+                    "modality": "multimodal",
+                    "question": "Question",
+                    "options": {
+                        "A": "plain",
+                        "B": f"<MultiModal>![b]({locator_b})</MultiModal>",
+                        "C": f"<MultiModal>![c]({locator_c})</MultiModal>",
+                    },
+                    "question_image_paths": [],
+                    "option_image_paths": {
+                        "_shared": shared_paths,
+                        "B": [os.path.relpath(option_b, start=data_dir).replace(os.sep, "/")],
+                        "C": [os.path.relpath(option_c, start=data_dir).replace(os.sep, "/")],
+                    },
+                },
+            )
+
+            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+
+            assert bundle is not None
+            markdown = bundle.question_markdown.read_text(encoding="utf-8")
+            self.assertEqual(2, len(bundle.image_files))
+            self.assertEqual([b"option-b", b"option-c"], [path.read_bytes() for path in bundle.image_files])
+            self.assertNotIn(locator_b, markdown)
+            self.assertNotIn(locator_c, markdown)
+            self.assertIn("](images/img01.png)", markdown)
+            self.assertIn("](images/img02.jpg)", markdown)
+            self.assertEqual(2, markdown.count("- images/img"))
+            self.assertNotIn("unused-", markdown)
+
+    def test_ensure_runtime_bundle_fails_when_visible_superchem_locator_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            locator = "/media/uploads/missing-visible.png"
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-missing-visible-mm",
+                dataset="superchem",
+                source_file=str(temp_dir / "data" / "superchem.jsonl"),
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt=f"Question ![q]({locator})",
+                reference_answer="A",
+                payload={
+                    "source_uuid": "uuid-missing-visible",
+                    "modality": "multimodal",
+                    "question": f"Question ![q]({locator})",
+                    "options": {"A": "answer"},
+                    "question_image_paths": [],
+                    "option_image_paths": {},
+                },
+            )
+
+            with self.assertRaisesRegex(benchmark_test.BenchmarkError, "missing-visible"):
+                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
     def test_ensure_runtime_bundle_rejects_superchem_absolute_asset_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
