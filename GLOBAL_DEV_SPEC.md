@@ -68,7 +68,7 @@
     - `runtime_config.py`
       - Orchestrates run-scoped config payloads, ChemQA slot id mapping, slot workspace provisioning, and config-path pooling for benchmark runs.
     - `prompts.py`
-      - Builds single-agent and ChemQA benchmark prompts and resolves ChemQA answer-kind hints.
+      - Builds single-agent and ChemQA benchmark prompts and resolves ChemQA answer-kind hints. Prompt text does not include websearch allow/deny guidance because benchmark websearch availability is controlled by runtime config rather than prompt wording.
     - `reporting.py`
       - Defines the per-record benchmark result schema and aggregates per-record results into summary buckets.
     - `skill_tree.py`

@@ -69,10 +69,6 @@ def build_single_llm_prompt(
         instructions.append(render_top_level_skill_tree())
     else:
         instructions.append("Do not use OpenClaw skills or local skill tools for this run.")
-    if websearch_enabled:
-        instructions.append("You may use web search if it is genuinely helpful.")
-    else:
-        instructions.append("Do not use web search or external browsing.")
 
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("This is a chemistry multiple-choice question.")
@@ -108,10 +104,6 @@ def build_chemqa_goal(
         "Solve the following chemistry benchmark question.",
         "Return a final answer that is faithful to the prompt.",
     ]
-    if websearch_enabled:
-        instructions.append("Web search may be used if helpful.")
-    else:
-        instructions.append("Do not use web search or external browsing.")
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("This is a multiple-choice chemistry question.")
         instructions.append("End with a line `FINAL ANSWER: <option letters>`.")
