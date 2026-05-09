@@ -653,7 +653,7 @@ class ProtocolReconstructionTest(unittest.TestCase):
 
 
 class MaterializeRunplanTest(unittest.TestCase):
-    def test_compile_runplan_marks_workflow_package_as_inactive_scaffold(self) -> None:
+    def test_compile_runplan_omits_retired_native_package_metadata(self) -> None:
         command = [
             TEST_PYTHON,
             str(SCRIPTS_DIR / "compile_runplan.py"),
@@ -675,10 +675,8 @@ class MaterializeRunplanTest(unittest.TestCase):
         self.assertNotIn("workflow_package", runtime_context)
         chemqa_review = runtime_context["chemqa_review"]
         self.assertEqual("debate_state_driver", chemqa_review["control_plane"])
-        scaffold = chemqa_review["workflow_package_scaffold"]
-        self.assertFalse(scaffold["active"])
-        self.assertEqual("scaffold", scaffold["status"])
-        self.assertEqual("ChemQAWorkflow", scaffold["class"])
+        self.assertNotIn("workflow_package", chemqa_review)
+        self.assertNotIn("workflow_package" + "_scaffold", chemqa_review)
 
     def test_build_command_map_uses_chemqa_driver(self) -> None:
         run_plan = {

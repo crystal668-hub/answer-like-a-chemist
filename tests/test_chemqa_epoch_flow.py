@@ -292,6 +292,16 @@ def assert_invalid_review_guard_and_recover(tmpdir: str) -> None:
     assert status["epoch"] == 2, status
 
 
+def test_epoch_restarts_and_limits() -> None:
+    with tempfile.TemporaryDirectory(prefix="chemqa-epoch-tests-") as tmpdir:
+        assert_epoch_restarts_and_limits(tmpdir)
+
+
+def test_invalid_review_guard_and_recover() -> None:
+    with tempfile.TemporaryDirectory(prefix="chemqa-epoch-tests-") as tmpdir:
+        assert_invalid_review_guard_and_recover(tmpdir)
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="chemqa-epoch-tests-") as tmpdir:
         assert_epoch_restarts_and_limits(tmpdir)

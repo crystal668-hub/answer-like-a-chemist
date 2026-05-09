@@ -29,7 +29,6 @@
   - `DONE`: Terminate benchmark-owned leftover processes from manifests/leases while preserving session files, session stores, run-scoped artifacts, manifests, and cleanup reports via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
   - `DONE`: Manage local Docker-backed GROBID via `workspace/scripts/docker_services.sh` and native macOS MinerU API via `workspace/scripts/mineru_service.sh`.
   - `DONE`: Repair temporary SuperChem benchmark JSONL image path state with `workspace/scripts/repair_temp_superchem_image_paths.py`, including stale absolute path rewriting and optional pruning of unused image paths based on per-record `/media/uploads/...` locators.
-  - `PARTIAL`: Native workflow-package support exists for `chemqa-review@1`, but the package implementation is explicitly inactive scaffold metadata and is not the live runtime path.
   - `NOT_IMPLEMENTED`: No actual web UI/server is implemented in the repo despite `web-ui` optional dependencies in `workspace/pyproject.toml`.
 
 ## 2. System Architecture
@@ -106,7 +105,7 @@
     - Owns preset compilation/materialization, slot provisioning, launch helpers, runtime checks, model profiles, and live debate state CLI.
   - `chemqa-review/`
     - Installable ChemQA review protocol bundle layered on top of DebateClaw V1.
-    - Owns ChemQA launch pipeline, driver loop, artifact reconstruction, liveness/recovery tooling, an inactive native workflow-package scaffold, and prompt/runtime dependency wiring for sibling chemistry provider skills.
+    - Owns ChemQA launch pipeline, driver loop, artifact reconstruction, liveness/recovery tooling, and prompt/runtime dependency wiring for sibling chemistry provider skills.
   - `rdkit/`, `pubchem/`, `opsin/`, `chem-calculator/`
     - First-batch chemistry provider bundles used for deterministic structure, nomenclature, compound lookup, and numeric subproblems.
   - `chemistry-routing-matrix.json`
@@ -392,22 +391,6 @@
   - Implementation location: `workspace/pyproject.toml`, `workspace/uv.lock`
   - Status: `DONE_EXPERIMENTAL`
 
-- Name: Native ChemQA workflow package
-  - Description: Declares an inactive scaffold class with hooks for initialize/next-action/submit/advance/status/summary/finalize. It is retained only as future workflow-package metadata; live ChemQA runs do not load it as the control plane.
-  - Input / Output:
-    - Input: run config/state/role/payload.
-    - Output: updated state or action/status payload.
-  - Implementation location: `workspace/skills/chemqa-review/runtime/workflow.py`, `workspace/skills/chemqa-review/workflows/chemqa-review@1.json`
-  - Status: `PARTIAL_INACTIVE_SCAFFOLD`
-
-- Name: Workflow package loader
-  - Description: Loads a workflow package from module/path and validates required attributes/methods.
-  - Input / Output:
-    - Input: workflow package spec payload.
-    - Output: instantiated workflow object.
-  - Implementation location: `workspace/skills/debateclaw-v1/scripts/workflow_loader.py`
-  - Status: `PARTIAL`
-
 - Name: Paper retrieval
   - Description: Queries OpenAlex, Semantic Scholar, and Crossref; deduplicates candidates and scores them heuristically.
   - Input / Output:
@@ -530,8 +513,8 @@
   - Cleanup manifests are registered and benchmark-cleanroom process finalization runs in `finally`/signal/atexit paths; session stores, transcripts, and run artifacts remain on disk for audit.
 
 - Real ChemQA control path
-  - The operational state machine is `workspace/skills/debateclaw-v1/scripts/debate_state.py`, not `workspace/skills/chemqa-review/runtime/workflow.py`.
-  - Compiled ChemQA run plans declare `runtime_context.chemqa_review.control_plane = debate_state_driver`; the `ChemQAWorkflow` package is nested under `workflow_package_scaffold` with `active: false` and is not advertised as an active runtime package.
+  - The operational state machine is `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
+  - Compiled ChemQA run plans declare `runtime_context.chemqa_review.control_plane = debate_state_driver` and do not include native workflow package metadata.
   - `chemqa_review_openclaw_driver.py` loops by repeatedly calling `debate_state.py` subcommands in subprocesses.
   - The driver updates ClawTeam task state, saves sessions, opens/removes cleanup leases, emits role-specific artifacts, and now treats one OpenClaw turn as a turn boundary rather than a phase-failure boundary.
   - Candidate / formal-review / rebuttal production is phase-scoped: the driver can reuse the same `session_id` across multiple turns, observe the required artifact after each turn, feed back missing/invalid/stale state, and only mark lane failure after phase budget exhaustion or a hard wrapper error.
@@ -544,7 +527,7 @@
   - `benchmarking/prompts.py` injects the compact Hierarchical Skill Tree into single-agent benchmark prompts, so single-agent skills-on runs receive domain/family discovery guidance rather than record-level route selection.
   - Single-agent benchmark turns use a fixed OpenClaw agent per experiment group and rely on `benchmarking/single_llm_openclaw_wrapper.py` to delete stale `agent:<id>:main` entries before each run-scoped session turn; old transcript files are not deleted.
   - `pyproject.toml` exposes optional experimental chemistry extras for PyPI-resolvable dependency families. `chemqa[chem-experimental]` aggregates those families but is intentionally not included in `chemqa[full]`, and OpenFF/tooluniverse/HPC executable stacks remain conda, preinstalled, API, or external-service dependencies described by their skill docs rather than default pip dependencies.
-  - The shared ChemQA prompt module is named for the fixed-lane protocol rather than native workflow-package execution, so prompt assembly does not imply that `ChemQAWorkflow` is active.
+  - The shared ChemQA prompt module is named for the fixed-lane protocol rather than native workflow-package execution.
   - ChemQA candidate submissions are validated in provider-trace audit mode by default. The policy audits provider traces the model actually submits; skipped provider traces are invalid and do not satisfy tool-backed evidence.
   - Materialized role commands can pass `--provider-trace-mode off|audit|enforce`, and `CHEMQA_PROVIDER_TRACE_MODE` is a fallback when the flag is absent. `enforce` turns incomplete or skipped model-submitted provider traces into candidate artifact validation errors.
   - Reviewer prompt contracts now treat a missing provider artifact or structured `tool_trace` as a finding when the candidate explicitly relies on tool-backed calculation, molecular structure, compound identity, literature evidence, database lookup, spectra, materials, simulation, or workflow evidence.
@@ -577,7 +560,7 @@
 - Shortcuts, hacks, implicit logic
   - Benchmark scripts duplicate a large amount of logic that also exists in `workspace/benchmarking/*`; the package is not the sole orchestration layer.
   - `benchmark_test.py` contains direct JSON parsing, subprocess wrappers, cleanup wiring, and runner glue instead of delegating all logic to package modules, though ChemQA run-status normalization/result-axis derivation, benchmark prompt construction, runtime config orchestration, and evaluator implementations now live in `workspace/benchmarking/status.py`, `workspace/benchmarking/prompts.py`, `workspace/benchmarking/runtime_config.py`, and `workspace/benchmarking/evaluators.py`.
-  - Native workflow package support exists as inactive scaffold metadata, but current live ChemQA execution bypasses it in favor of CLI/state-script orchestration.
+  - The obsolete native workflow-package scaffold has been retired; current live ChemQA execution uses CLI/state-script orchestration.
   - Run-scoped OpenClaw configs are produced by mutating a copy of the user’s local `~/.openclaw/openclaw.json`.
   - Recovery and artifact collection rely on specific file naming conventions such as `proposer-1.md`, `chemqa_review_protocol.yaml`, `qa_result.json`.
   - Cleanup correctness depends on manifests being written before launch and on command/session naming matching run ids.
@@ -585,25 +568,14 @@
 ## 5. Gap Analysis
 - Missing features
   - `NOT_IMPLEMENTED`: No actual FastAPI/Gradio/uvicorn application code despite optional `web-ui` dependencies in `workspace/pyproject.toml`.
-  - `NOT_IMPLEMENTED`: No active code path that uses `workflow_loader.py` to load `chemqa-review` native workflow packages.
 
 - Incomplete implementations
-  - `PARTIAL_INACTIVE_SCAFFOLD`: `workspace/skills/chemqa-review/runtime/workflow.py`
-    - `advance()` returns the state unchanged.
-    - `submit_artifact()` just appends generic artifacts.
-    - No real review/rebuttal/acceptance logic.
-  - `PARTIAL`: `workspace/skills/chemqa-review/runtime/state_models.py`
-    - Provides only initial state defaults.
-    - Does not implement transitions or validation.
-  - `PARTIAL_INACTIVE_SCAFFOLD`: Workflow JSON under `workspace/skills/chemqa-review/workflows/chemqa-review@1.json`
-    - Declares the inactive scaffold package and parameters, while the operational runtime explicitly depends on `debate_state.py` and driver scripts.
-  - `PARTIAL`: `workspace/skills/debateclaw-v1/scripts/workflow_loader.py`
-    - Implemented loader/validator, but repository search shows no active caller.
+  - No ChemQA native workflow package remains in the source tree; the previous inactive scaffold and unused loader were removed rather than implemented.
 - Architectural inconsistencies
   - Intended architecture suggests package-based workflows and reusable modules.
   - Actual behavior is still script-heavy and subprocess-heavy:
     - `benchmark_test.py` is a monolithic entrypoint with embedded orchestration logic.
-    - ChemQA runs are controlled through external state scripts instead of the inactive native workflow-package scaffold.
+    - ChemQA runs are controlled through external state scripts.
   - `workspace/benchmarking/` exists as a reusable layer, but benchmark entry scripts still duplicate significant behavior.
   - `workspace/pyproject.toml` advertises `web-ui` extras, but there is no corresponding app module.
   - Top-level repo contains a mix of source, runtime state, generated artifacts, logs, and secret-bearing config in one tree; module boundaries are not clean at the repository level.
@@ -618,11 +590,10 @@
   - Default OpenClaw home/config roots are hardcoded in `workspace/runtime_paths.py`.
   - Default model ids, agent ids, workspace roots, slot sets, and timeouts are hardcoded in `workspace/benchmark_test.py`.
   - GROBID and MinerU default URLs are hardcoded in docs/scripts.
-  - ChemQA role topology is fixed to one candidate owner plus four reviewer lanes in `workspace/skills/chemqa-review/runtime/state_models.py` and associated scripts.
+  - ChemQA role topology is fixed to one candidate owner plus four reviewer lanes across the DebateClaw state script and ChemQA artifact/driver scripts.
 
 - Missing abstractions
   - Benchmark CLI scripts combine CLI parsing, orchestration, evaluation, config generation, and fallback handling in single files.
-  - Native workflow-package abstraction exists but is not the live control plane.
   - Paper tools are standalone scripts with no shared higher-level orchestrator.
   - OpenClaw/ClawTeam integration is done through subprocess calls everywhere; there is no local adapter interface.
 
@@ -632,8 +603,6 @@
   - Optional dependencies listed in `pyproject.toml` may imply capabilities that do not actually exist in code.
 
 ## 7. Suggested Next Steps
-- Replace or retire the inactive native workflow package scaffold:
-  - Either make `workspace/skills/chemqa-review/runtime/workflow.py` the real execution engine behind parity tests or remove the scaffold once no planned workflow-package migration remains.
 - Collapse duplicated benchmark orchestration logic:
   - Move more logic from `workspace/benchmark_test.py` into `workspace/benchmarking/`.
 - Separate source from runtime state:

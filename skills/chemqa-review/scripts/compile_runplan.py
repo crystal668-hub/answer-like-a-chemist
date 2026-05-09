@@ -180,14 +180,6 @@ def main() -> int:
             "evidence_mode": resolved.get("evidence_mode"),
             "chemqa_review": {
                 "control_plane": "debate_state_driver",
-                "workflow_package_scaffold": {
-                    "active": False,
-                    "status": "scaffold",
-                    "kind": "python-path",
-                    "path": str((root / "runtime" / "workflow.py").resolve()),
-                    "class": "ChemQAWorkflow",
-                    "reason": "Live ChemQA execution uses debate_state.py plus chemqa_review_openclaw_driver.py.",
-                },
                 "slot_set": args.slot_set,
                 "slot_ids": slot_ids,
                 "role_slots": role_slots,

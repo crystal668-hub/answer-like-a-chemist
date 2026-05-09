@@ -3,15 +3,6 @@
   "version": 1,
   "engine_workflow_ref": "chemqa-review@1",
   "engine_workflow_name": "chemqa-review",
-  "workflow_package": {
-    "kind": "python-path",
-    "path": "runtime/workflow.py",
-    "class": "ChemQAWorkflow",
-    "status": "scaffold",
-    "active": false,
-    "live_control_plane": "debate_state_driver",
-    "note": "Live ChemQA execution uses debate_state.py plus chemqa_review_openclaw_driver.py; this package is retained only as an inactive native-workflow scaffold."
-  },
   "roles": [
     "debate-coordinator",
     "proposer-1",
