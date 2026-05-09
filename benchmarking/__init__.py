@@ -7,7 +7,7 @@ from .contracts import (
 )
 from .convergence import ConvergencePolicy
 from .datasets import BenchmarkRecord, GradingSpec
-from .evaluation import EVALUATORS, EvaluationRegistryError, evaluate_record, register_evaluator
+from .evaluation import EVALUATORS, EvaluationRegistryError, evaluate_record, register_default_evaluators, register_evaluator
 from .evaluators import EvaluationResult
 from .experiments import ExperimentSpec
 
@@ -25,5 +25,6 @@ __all__ = [
     "RunStatus",
     "RunnerResult",
     "evaluate_record",
+    "register_default_evaluators",
     "register_evaluator",
 ]

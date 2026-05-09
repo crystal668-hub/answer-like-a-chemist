@@ -17,6 +17,17 @@ def register_evaluator(kind: str, evaluator: Evaluator) -> None:
     EVALUATORS[kind] = evaluator
 
 
+def register_default_evaluators() -> None:
+    from . import evaluators
+
+    register_evaluator("chembench_open_ended", evaluators.evaluate_chembench_open_ended)
+    register_evaluator("frontierscience_olympiad", evaluators.evaluate_frontierscience_olympiad)
+    register_evaluator("frontierscience_research", evaluators.evaluate_frontierscience_research)
+    register_evaluator("superchem_multiple_choice_rpf", evaluators.evaluate_superchem_multiple_choice_rpf)
+    register_evaluator("hle", evaluators.evaluate_hle)
+    register_evaluator("generic_semantic", evaluators.evaluate_generic_semantic)
+
+
 def evaluate_record(
     record: BenchmarkRecord,
     *,

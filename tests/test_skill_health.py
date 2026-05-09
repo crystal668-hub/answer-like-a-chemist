@@ -33,7 +33,8 @@ def test_missing_python_module_marks_skill_unavailable() -> None:
     assert report["unavailable_reasons"][0]["kind"] == "missing_dependency"
 
 
-def test_missing_api_key_marks_skill_unavailable() -> None:
+def test_missing_api_key_marks_skill_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime_paths, "openclaw_env", tmp_path / "missing.env")
     requirement = HealthRequirement(skill="materials-project", api_keys=("MP_API_KEY",))
     report = check_skill_health(requirement, workspace_root=Path("/repo"), env={})
 

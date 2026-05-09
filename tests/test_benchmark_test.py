@@ -2363,8 +2363,9 @@ Points: 0.5, Item: Second criterion
             ),
         ]
         summary = benchmark_test.aggregate_results(sample)
-        self.assertEqual("benchmark_test", benchmark_test.GroupRecordResult.__module__)
+        self.assertEqual("benchmarking.reporting", benchmark_test.GroupRecordResult.__module__)
         self.assertEqual("benchmarking.reporting", benchmark_test.aggregate_results.__module__)
+        self.assertIs(benchmark_test.GroupRecordResult, benchmark_test._benchmark_cli.GroupRecordResult)
         self.assertEqual(["group_order", "groups", "group_subset"], list(summary.keys()))
         self.assertEqual(["g1"], summary["group_order"])
         self.assertIn("g1", summary["groups"])
