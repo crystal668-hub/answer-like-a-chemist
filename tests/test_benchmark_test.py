@@ -398,6 +398,20 @@ print(json.dumps({{
         self.assertEqual(1, args.max_unchanged_status_polls)
         self.assertEqual(1, args.max_recovery_attempts)
 
+    def test_parse_args_accepts_subsets_filter(self) -> None:
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "benchmark_test.py",
+                "--subsets",
+                "frontierscience_Research,superchem_multimodal",
+            ],
+        ):
+            args = benchmark_test.parse_args()
+
+        self.assertEqual("frontierscience_Research,superchem_multimodal", args.subsets)
+
     def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -472,6 +486,86 @@ print(json.dumps({{
             self.assertEqual(0, exit_code)
             self.assertEqual("custom-single-agent", captured.get("single_agent"))
             self.assertEqual("900", captured.get("single_policy_timeout"))
+
+    def test_main_print_selected_records_filters_by_subsets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fs_path = root / "frontierscience" / "data" / "frontierscience.jsonl"
+            superchem_path = root / "superchem" / "data" / "superchem.jsonl"
+            fs_path.parent.mkdir(parents=True, exist_ok=True)
+            superchem_path.parent.mkdir(parents=True, exist_ok=True)
+            fs_path.write_text(
+                "\n".join(
+                    json.dumps(payload, ensure_ascii=False)
+                    for payload in [
+                        {
+                            "id": "fs-olympiad",
+                            "problem": "Olympiad problem?",
+                            "answer": "A",
+                            "eval_kind": "frontierscience_olympiad",
+                            "track": "olympiad",
+                        },
+                        {
+                            "id": "fs-research",
+                            "problem": "Research problem?",
+                            "answer": "B",
+                            "eval_kind": "frontierscience_research",
+                            "track": "research",
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            superchem_path.write_text(
+                json.dumps(
+                    {
+                        "id": "superchem-mm",
+                        "question": "SuperChem problem?",
+                        "answer": "C",
+                        "eval_kind": "superchem_multiple_choice_rpf",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            argv = [
+                "benchmark_test.py",
+                "--benchmark-root",
+                str(root),
+                "--subsets",
+                "frontierscience_Research,superchem_multimodal",
+                "--print-selected-records",
+            ]
+            stream = io.StringIO()
+            with mock.patch.object(sys, "argv", argv), redirect_stdout(stream):
+                exit_code = benchmark_test.main()
+
+            self.assertEqual(0, exit_code)
+            selected = json.loads(stream.getvalue())
+            self.assertEqual(["fs-research", "superchem-mm"], [item["record_id"] for item in selected])
+            self.assertEqual(
+                ["frontierscience_Research", "superchem_multimodal"],
+                [item["subset"] for item in selected],
+            )
+
+    def test_filter_records_by_subsets_rejects_unknown_subset(self) -> None:
+        records = [
+            benchmark_test.BenchmarkRecord(
+                record_id="chem-1",
+                dataset="chembench",
+                source_file="/tmp/chembench.jsonl",
+                eval_kind="chembench_open_ended",
+                prompt="Q",
+                reference_answer="A",
+                payload={},
+            )
+        ]
+
+        with self.assertRaisesRegex(benchmark_test.BenchmarkError, "Unknown subset"):
+            benchmark_test.filter_records_by_subsets(records, "hle_chemistry")
 
     def test_current_python_prefers_virtualenv_python(self) -> None:
         original_virtual_env = os.environ.get("VIRTUAL_ENV")

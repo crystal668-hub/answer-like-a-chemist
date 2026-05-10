@@ -154,7 +154,7 @@
 - Name: Three-group skills benchmark batch runner
   - Description: Runs single-agent baselines with and without the benchmark skills allowlist, plus ChemQA with the same skills allowlist. All three groups enable websearch/duckduckgo, wave-batch groups in requested order, and save per-record and aggregate outputs.
   - Input / Output:
-    - Input: benchmark root or dataset files, group list, timeouts, config path, model/profile overrides.
+    - Input: benchmark root or dataset files, optional dataset/subset filters, group list, timeouts, config path, model/profile overrides.
     - Output: `results.json`, `results.partial.json`, `runtime-manifest.json`, `runtime-config/*.json`, `per-record/*/*.json`, CSV summaries.
     - Per-record JSON entries are on schema version `2` and include `skills_enabled` plus explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
     - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, degraded execution counts, and HLE calibration RMSE for confidence diagnostics.
@@ -491,7 +491,7 @@
 
 ## 4. Actual Behavior
 - Primary execution flow: three-group skills benchmark
-  - `workspace/benchmarking/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
+  - `workspace/benchmarking/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
   - On import, both the facade and package CLI ensure the workspace source root is on `sys.path` and import benchmark internals via top-level `benchmarking.*`/`runtime_paths`, so loading the legacy entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
   - It normalizes records through `benchmarking.datasets.load_records`.
   - It runs benchmark skill health checks through `benchmarking.skill_health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.

@@ -395,6 +395,13 @@ def parse_args() -> argparse.Namespace:
         help="仅运行指定数据集，逗号分隔；默认扫描 benchmarks/*/data/*.jsonl",
     )
     parser.add_argument(
+        "--subsets",
+        help=(
+            "仅运行指定子集，逗号分隔；例如 "
+            "frontierscience_Research,superchem_multimodal"
+        ),
+    )
+    parser.add_argument(
         "--random-count-per-subset",
         type=int,
         help=(
@@ -1604,6 +1611,20 @@ def print_selected_records(records: list[BenchmarkRecord]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
+def filter_records_by_subsets(records: list[BenchmarkRecord], raw_subsets: str | None) -> list[BenchmarkRecord]:
+    wanted = {item.strip() for item in str(raw_subsets or "").split(",") if item.strip()}
+    if not wanted:
+        return list(records)
+
+    available = {classify_subset(record) for record in records}
+    unknown = sorted(wanted - available)
+    if unknown:
+        known = ", ".join(sorted(available)) or "<none>"
+        raise BenchmarkError(f"Unknown subset(s): {', '.join(unknown)}. Available subsets: {known}")
+
+    return [record for record in records if classify_subset(record) in wanted]
+
+
 
 def build_group_waves(group_ids: list[str], *, max_concurrent_groups: int) -> list[list[str]]:
     if max_concurrent_groups <= 0:
@@ -1889,7 +1910,7 @@ def main() -> int:
     if not dataset_files:
         raise BenchmarkError("No benchmark files discovered.")
 
-    all_records = load_records(dataset_files)
+    all_records = filter_records_by_subsets(load_records(dataset_files), args.subsets)
     if args.random_count_per_subset is not None:
         selected_pool = sample_records_per_subset(
             all_records,
