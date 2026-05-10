@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -13,14 +15,156 @@ from ..skill_audit import build_skill_use_audit
 
 OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
 OPENCLAW_IDLE_TIMEOUT_TEXT = "The model did not produce a response before the LLM idle timeout"
+OPENCLAW_SHORT_LLM_TIMEOUT_TEXT = "LLM request timed out."
+OPENCLAW_SHORT_REQUEST_TIMEOUT_TEXT = "Request timed out."
+OPENCLAW_TIMEOUT_SENTINELS = (
+    OPENCLAW_SHORT_LLM_TIMEOUT_TEXT,
+    OPENCLAW_SHORT_REQUEST_TIMEOUT_TEXT,
+    OPENCLAW_RESPONSE_TIMEOUT_TEXT,
+    OPENCLAW_IDLE_TIMEOUT_TEXT,
+)
+FINAL_ANSWER_RE = re.compile(r"(?im)^\s*FINAL\s+ANSWER\s*:")
+HLE_ANSWER_RE = re.compile(r"(?im)^\s*Answer\s*:\s*\S")
+FINAL_MARKER_REQUIRED_EVAL_KINDS = {
+    "superchem_multiple_choice_rpf",
+    "chembench_open_ended",
+    "frontierscience_olympiad",
+}
+
+
+@dataclass(frozen=True)
+class CandidateAnswerContract:
+    valid: bool
+    code: str = ""
+    message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_text: str) -> bool:
     text = str(full_response_text or "")
-    has_timeout_text = OPENCLAW_RESPONSE_TIMEOUT_TEXT in text or OPENCLAW_IDLE_TIMEOUT_TEXT in text
+    stripped = text.strip()
+    has_timeout_text = any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS)
     if not has_timeout_text:
         return False
+    if stripped in OPENCLAW_TIMEOUT_SENTINELS:
+        return True
     return runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
+
+
+def _candidate_contract_meta(
+    *,
+    valid: bool,
+    record: Any,
+    short_answer_text: str,
+    full_response_text: str,
+    code: str = "",
+    message: str = "",
+    missing_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
+        "valid": valid,
+        "eval_kind": str(getattr(record, "eval_kind", "") or ""),
+        "dataset": str(getattr(record, "dataset", "") or ""),
+        "short_answer_text_present": bool(str(short_answer_text or "").strip()),
+        "full_response_text_present": bool(str(full_response_text or "").strip()),
+        "has_final_answer_marker": bool(FINAL_ANSWER_RE.search(str(full_response_text or ""))),
+        "has_hle_answer_field": bool(HLE_ANSWER_RE.search(str(full_response_text or ""))),
+    }
+    if code:
+        meta["code"] = code
+    if message:
+        meta["message"] = message
+    if missing_fields:
+        meta["missing_fields"] = list(missing_fields)
+    raw_text = str(full_response_text or "")
+    if raw_text:
+        meta["raw_text"] = raw_text[:4000]
+        meta["raw_text_truncated"] = len(raw_text) > 4000
+    return meta
+
+
+def validate_candidate_answer_contract(
+    *,
+    record: Any,
+    short_answer_text: str,
+    full_response_text: str,
+    runner_meta: dict[str, Any],
+) -> CandidateAnswerContract:
+    full_text = str(full_response_text or "").strip()
+    short_text = str(short_answer_text or "").strip()
+    eval_kind = str(getattr(record, "eval_kind", "") or "").strip()
+    if not full_text:
+        message = "Single-LLM candidate answer contract invalid: full_response_text is empty."
+        return CandidateAnswerContract(
+            valid=False,
+            code="candidate_answer_contract_invalid",
+            message=message,
+            details=_candidate_contract_meta(
+                valid=False,
+                record=record,
+                short_answer_text=short_text,
+                full_response_text=full_text,
+                code="candidate_answer_contract_invalid",
+                message=message,
+                missing_fields=["full_response_text"],
+            ),
+        )
+    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_text):
+        message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
+        return CandidateAnswerContract(
+            valid=False,
+            code="agent_response_timeout",
+            message=message,
+            details=_candidate_contract_meta(
+                valid=False,
+                record=record,
+                short_answer_text=short_text,
+                full_response_text=full_text,
+                code="agent_response_timeout",
+                message=message,
+            ),
+        )
+    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not FINAL_ANSWER_RE.search(full_text):
+        message = "Single-LLM candidate answer contract invalid: required `FINAL ANSWER:` marker is missing."
+        return CandidateAnswerContract(
+            valid=False,
+            code="candidate_answer_contract_invalid",
+            message=message,
+            details=_candidate_contract_meta(
+                valid=False,
+                record=record,
+                short_answer_text=short_text,
+                full_response_text=full_text,
+                code="candidate_answer_contract_invalid",
+                message=message,
+                missing_fields=["short_answer_text", "FINAL ANSWER:"],
+            ),
+        )
+    if eval_kind == "hle" and not HLE_ANSWER_RE.search(full_text):
+        message = "Single-LLM candidate answer contract invalid: HLE response must include an `Answer:` field."
+        return CandidateAnswerContract(
+            valid=False,
+            code="candidate_answer_contract_invalid",
+            message=message,
+            details=_candidate_contract_meta(
+                valid=False,
+                record=record,
+                short_answer_text=short_text,
+                full_response_text=full_text,
+                code="candidate_answer_contract_invalid",
+                message=message,
+                missing_fields=["Answer:"],
+            ),
+        )
+    return CandidateAnswerContract(
+        valid=True,
+        details=_candidate_contract_meta(
+            valid=True,
+            record=record,
+            short_answer_text=short_text,
+            full_response_text=full_text,
+        ),
+    )
 
 
 class SingleLLMRunner:
@@ -143,27 +287,6 @@ class SingleLLMRunner:
         transcript_answer_recovered = (
             isinstance(convergence_meta, dict) and convergence_meta.get("transcript_answer_recovered") is True
         )
-        if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text) and not transcript_answer_recovered:
-            message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
-            runner_meta["error"] = message
-            runner_meta["agent_timeout_detected"] = True
-            runner_meta["agent_timeout_payload_text"] = full_response_text
-            return RunnerResult(
-                status=RunStatus.FAILED,
-                answer=AnswerPayload(),
-                raw=payload,
-                runner_meta=runner_meta,
-                failure=FailureInfo(
-                    code="agent_response_timeout",
-                    message=message,
-                    details={
-                        "aborted": runner_meta.get("aborted"),
-                        "livenessState": runner_meta.get("livenessState"),
-                        "durationMs": runner_meta.get("durationMs"),
-                        "payload_text": full_response_text,
-                    },
-                ),
-            )
         session_isolation = runner_meta.get("session_isolation")
         if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
             actual_session = str(session_isolation.get("postflight_entry_session_id") or "")
@@ -185,6 +308,36 @@ class SingleLLMRunner:
                     code="session_isolation_failed",
                     message=message,
                     details=dict(session_isolation),
+                ),
+            )
+        contract = validate_candidate_answer_contract(
+            record=record,
+            short_answer_text=short_answer_text,
+            full_response_text=full_response_text,
+            runner_meta=runner_meta,
+        )
+        runner_meta["candidate_answer_contract"] = dict(contract.details)
+        if not contract.valid and not transcript_answer_recovered:
+            assert contract.code
+            message = contract.message
+            runner_meta["error"] = message
+            if contract.code == "agent_response_timeout":
+                runner_meta["agent_timeout_detected"] = True
+                runner_meta["agent_timeout_payload_text"] = full_response_text
+            return RunnerResult(
+                status=RunStatus.FAILED,
+                answer=AnswerPayload(),
+                raw=payload,
+                runner_meta=runner_meta,
+                failure=FailureInfo(
+                    code=contract.code,
+                    message=message,
+                    details={
+                        **dict(contract.details),
+                        "aborted": runner_meta.get("aborted"),
+                        "livenessState": runner_meta.get("livenessState"),
+                        "durationMs": runner_meta.get("durationMs"),
+                    },
                 ),
             )
         if transcript_answer_recovered:

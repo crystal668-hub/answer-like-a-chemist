@@ -121,6 +121,7 @@ def run_group(
     group_results: list[GroupRecordResult] = []
     for record in records:
         started = time.time()
+        run_result: Any | None = None
         try:
             run_result = runner.run(record, group)
             ensure_compatible_runner_result(run_result, runner_kind=group.runner)
@@ -179,16 +180,39 @@ def run_group(
                 entry = GroupRecordResult(**{**asdict(entry), **axes, "error": error_message})
         except Exception as exc:
             elapsed = time.time() - started
-            error_message = f"Record `{record.record_id}` failed in group `{group.id}`: {exc}"
-            entry = build_error_group_record_result_fn(
-                group=group,
-                record=record,
-                error_message=error_message,
-                elapsed_seconds=elapsed,
-                runner_meta={
-                    "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-                },
-            )
+            if run_result is not None:
+                error_message = (
+                    f"Record `{record.record_id}` judge/evaluator failed in group `{group.id}` after runner output: {exc}"
+                )
+                runner_meta = dict(getattr(run_result, "runner_meta", {}) or {})
+                runner_meta["evaluation_error"] = {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "stage": "judge_or_evaluator",
+                }
+                runner_meta["traceback"] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                answer = getattr(run_result, "answer", None)
+                entry = build_error_group_record_result_fn(
+                    group=group,
+                    record=record,
+                    error_message=error_message,
+                    elapsed_seconds=elapsed,
+                    short_answer_text=str(getattr(answer, "short_answer_text", "") or ""),
+                    full_response_text=str(getattr(answer, "full_response_text", "") or ""),
+                    runner_meta=runner_meta,
+                    raw=getattr(run_result, "raw", {}) if isinstance(getattr(run_result, "raw", None), dict) else {},
+                )
+            else:
+                error_message = f"Record `{record.record_id}` runner failed in group `{group.id}`: {exc}"
+                entry = build_error_group_record_result_fn(
+                    group=group,
+                    record=record,
+                    error_message=error_message,
+                    elapsed_seconds=elapsed,
+                    runner_meta={
+                        "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                    },
+                )
         group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
     return group_results

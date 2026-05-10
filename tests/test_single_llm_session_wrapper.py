@@ -213,6 +213,8 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                         "agent:benchmark-single:main": {
                             "sessionId": "session-a",
                             "sessionFile": str(store_path.parent / "session-a.jsonl"),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
                         }
                     }
                 ),

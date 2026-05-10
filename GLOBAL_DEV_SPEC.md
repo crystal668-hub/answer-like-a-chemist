@@ -10,7 +10,7 @@
   - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
   - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
   - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
-  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, applies runner-level convergence policy metadata and transcript recovery for complete benchmark answers, treats unrecovered OpenClaw response-timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/convergence.py`, and `workspace/benchmarking/result_contract.py`. Tool/turn counts remain diagnostics only and are not enforced as hard exploration limits.
+  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, applies runner-level convergence policy metadata and transcript recovery for complete benchmark answers, validates an internal candidate-answer contract before evaluation, treats unrecovered OpenClaw timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/openclaw_session_isolation.py`, `workspace/benchmarking/convergence.py`, and `workspace/benchmarking/result_contract.py`. Tool/turn counts remain diagnostics only and are not enforced as hard exploration limits.
   - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, applying runner-level convergence policy to unchanged-status recovery attempts, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
   - `DONE`: Manage DebateClaw V1 runtime, slot provisioning, prompt/materialization, and launch commands via `workspace/skills/debateclaw-v1/scripts/*.py`.
   - `DONE`: Maintain live debate protocol state in SQLite and expose CLI commands for init/status/next-action/submit/advance via `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
@@ -68,6 +68,8 @@
       - Defines benchmark runner convergence policy, transcript summary helpers, and complete-answer recovery from session transcripts. Tool/turn counts are diagnostics only and are not enforced as hard limits.
     - `result_contract.py`
       - Validates and normalizes OpenClaw agent stdout so only schema-valid `payloads[].text` entries become benchmark answers; invalid stdout is retained only as diagnostics.
+    - `openclaw_session_isolation.py`
+      - Provides shared OpenClaw agent session-store helpers for run-scoped benchmark isolation, including stale fixed-agent `main` session reset and postflight session/file/model verification for both single-agent runners and judge calls.
     - `config_renderer.py`
       - Produces run-scoped OpenClaw configs, toggles web search, injects agent entries, and applies runner-only benchmark skill allowlists.
     - `provisioning.py`
@@ -75,7 +77,7 @@
     - `runtime_config.py`
       - Orchestrates run-scoped config payloads, ChemQA slot id mapping, slot workspace provisioning, and config-path pooling for benchmark runs.
     - `cli.py`
-      - Owns the three-group benchmark CLI, wave scheduling, aggregate result writing, runtime manifest writing, and legacy-compatible wrapper functions formerly exposed by `benchmark_test.py`.
+      - Owns the three-group benchmark CLI, wave scheduling, aggregate result writing, runtime manifest writing, judge OpenClaw invocation with session isolation, and legacy-compatible wrapper functions formerly exposed by `benchmark_test.py`.
     - `orchestration.py`
       - Owns per-group runner initialization, per-record runner/evaluator orchestration, result-axis derivation, and per-record persistence.
     - `runtime_bundles.py`
@@ -97,7 +99,7 @@
     - `status.py`
       - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
     - `single_llm_openclaw_wrapper.py`
-      - Wraps `openclaw agent` for single-LLM benchmark turns, resets stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, emits session isolation plus stdout diagnostics metadata, and can recover a latest complete benchmark answer from the run-scoped transcript after timeout-like OpenClaw output.
+      - Wraps `openclaw agent` for single-LLM benchmark turns, uses shared session-isolation helpers to reset stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, emits session isolation plus stdout diagnostics metadata, and can recover a latest complete benchmark answer from the run-scoped transcript after timeout-like OpenClaw output.
     - `runners/`
       - `single_llm.py`: baseline single-agent runner.
       - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
@@ -193,7 +195,7 @@
   - Status: `DONE`
 
 - Name: Evaluator registry and dispatch
-  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Scoreable benchmark answers are judged from the complete candidate `answer_text`/full response, while `short_answer_text` remains a legacy/display field and is not used to decide `passed` or score. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
+  - Description: Maps `eval_kind` to evaluator function with `generic_semantic` fallback. Scoreable benchmark answers are judged from the complete candidate `answer_text`/full response, while `short_answer_text` remains a legacy/display field and is not used to decide `passed` or score. The OpenClaw judge agent uses the same shared run-scoped session isolation preflight/postflight checks as the single-agent runner, and a failed judge session postflight raises a benchmark execution error before judge text is parsed. Judge JSON extraction tolerates invalid non-JSON backslash escapes commonly produced inside LaTeX snippets, such as `\(` and `\)`, so a parseable judge verdict is not upgraded to an execution error only because of LaTeX escaping.
   - Input / Output:
     - Input: `BenchmarkRecord`, short/full answer text, judge object.
     - Output: evaluator payload/dataclass.
@@ -257,12 +259,12 @@
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
-  - Description: Builds a time-budget-aware prompt from the runner convergence policy, includes run-local visual bundle instructions when a record has localized visual inputs, shells out through the single-LLM OpenClaw wrapper, validates wrapper stdout against the strict agent result contract before answer extraction, normalizes answer tracks only from schema-valid `payloads[].text`, records transcript tool/turn diagnostics without enforcing them as limits, recovers a complete transcript answer from timeout-like OpenClaw output as scoreable `RunStatus.RECOVERED`, and marks a record failed/unscored if stdout is invalid, wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`, or a schema-valid OpenClaw timeout sentinel payload reports an aborted/blocked response with no recoverable complete answer.
+  - Description: Builds a time-budget-aware prompt from the runner convergence policy, includes run-local visual bundle instructions when a record has localized visual inputs, shells out through the single-LLM OpenClaw wrapper, validates wrapper stdout against the strict agent result contract before answer extraction, normalizes answer tracks only from schema-valid `payloads[].text`, records transcript tool/turn diagnostics without enforcing them as limits, recovers a complete transcript answer from timeout-like OpenClaw output as scoreable `RunStatus.RECOVERED`, and marks a record failed/unscored if stdout is invalid, wrapper postflight metadata shows the fixed agent's `main` session entry did not point to the requested run-scoped `sessionId`, or the normalized candidate answer fails the internal answer contract. The answer contract rejects empty full responses, OpenClaw timeout sentinels such as `LLM request timed out.`, missing `FINAL ANSWER:` markers for SuperChem/ChemBench/FrontierScience Olympiad, and HLE responses without an `Answer:` field.
   - Input / Output:
     - Input: benchmark record, group config, runtime bundle root.
-    - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, `runner_meta.convergence_policy`, `runner_meta.convergence`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`; recovered transcript answers return `RunStatus.RECOVERED` with `RecoveryInfo.source = single-llm-session-transcript`; unrecovered OpenClaw response-timeout sentinel payloads with aborted/blocked metadata return `RunStatus.FAILED`, `FailureInfo.code = agent_response_timeout`, empty answer tracks, and raw payload text retained in diagnostics instead of evaluation input.
+    - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, `runner_meta.convergence_policy`, `runner_meta.convergence`, `runner_meta.candidate_answer_contract`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`; recovered transcript answers return `RunStatus.RECOVERED` with `RecoveryInfo.source = single-llm-session-transcript`; unrecovered OpenClaw timeout sentinel payloads return `RunStatus.FAILED`, `FailureInfo.code = agent_response_timeout`, empty answer tracks, and raw payload text retained only in diagnostics instead of evaluation input. Other missing candidate-answer fields return `FailureInfo.code = candidate_answer_contract_invalid`.
     - Prompt behavior: `build_single_llm_prompt` receives the per-record convergence timeout and tells the model to stop starting new tool/skill exploration once roughly 20% or less of the budget remains, then produce the required final answer format from evidence already gathered. The prompt is advisory; enforcement/recovery lives in runner/wrapper metadata and transcript handling.
-  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/convergence.py`, `workspace/benchmarking/result_contract.py`
+  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/openclaw_session_isolation.py`, `workspace/benchmarking/convergence.py`, `workspace/benchmarking/result_contract.py`
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
@@ -504,6 +506,7 @@
     - The runner shells out through `benchmarking/single_llm_openclaw_wrapper.py`, which invokes `openclaw agent --local ... --json`, validates stdout with `benchmarking.result_contract`, and normalizes invalid stdout into `result.meta.stdout_diagnostics`.
     - It does not use a native Python OpenClaw API.
     - Invalid stdout, such as tool argument JSON without schema-valid answer payloads, is never passed to answer extraction or the evaluator. The record becomes failed/unscored with `agent_result_contract_invalid`.
+    - Schema-valid stdout still must pass the runner's internal candidate-answer contract before evaluation. Timeout sentinels such as `LLM request timed out.` return `agent_response_timeout`; missing required answer markers/fields return `candidate_answer_contract_invalid`; both paths keep `answer` empty and retain raw payload text only in `runner_meta.candidate_answer_contract`.
     - Runner-level convergence policy is written into top-level results/manifests and per-record `runner_meta`; the wrapper records transcript assistant-turn/tool-call diagnostics and can recover the latest complete benchmark answer from the session transcript after timeout-like OpenClaw output. Tool/turn counts are never hard failure limits.
     - `single_llm_skills_on` includes the compact health-filtered Hierarchical Skill Tree in the prompt; `single_llm_skills_off` omits it and explicitly forbids OpenClaw/local skill tools.
     - When an input bundle exists, the prompt names the bundle directory, tells the agent to read `question.md`, and explicitly instructs it to inspect referenced local images before answering.
@@ -521,6 +524,7 @@
     - Default scoring reads only canonical `final_answer_artifact.json`. If a completed/accepted output lacks that artifact, the runner may migrate completed legacy `qa_result`/protocol/final-submission data into a canonical final artifact before scoring; otherwise the run is non-scoreable with `missing_canonical_terminal_artifact`.
     - Proposer proposal files, `final_answer_preview`, and `failure_artifact.answer_projection` are diagnostic-only in default runs and do not create scoreable ChemQA recovered results.
   - All per-record outputs are persisted immediately under `per-record/<group>/<slug>.json`.
+  - LLM-judge evaluation calls use a fresh `benchmark-judge-<id>` OpenClaw session id, clear stale `agent:benchmark-judge:main` pointers before the call, verify postflight session/file/model state before parsing judge stdout, and preserve runner raw/meta diagnostics when judge/evaluator execution fails.
   - Cleanup manifests are registered and benchmark-cleanroom process finalization runs in `finally`/signal/atexit paths; session stores, transcripts, and run artifacts remain on disk for audit.
 
 - Real ChemQA control path

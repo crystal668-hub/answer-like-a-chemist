@@ -42,6 +42,12 @@ try:
         source_pair_key as record_source_pair_key,
     )
     from benchmarking.evaluation import EvaluationRegistryError, evaluate_record, register_default_evaluators
+    from benchmarking.openclaw_session_isolation import (
+        SessionIsolationError,
+        inspect_postflight_session,
+        merge_preflight_postflight_audit,
+        reset_agent_main_session_if_stale,
+    )
     from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from benchmarking.evaluators import (
         EvaluationError,
@@ -122,6 +128,12 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         source_pair_key as record_source_pair_key,
     )
     from workspace.benchmarking.evaluation import EvaluationRegistryError, evaluate_record, register_default_evaluators
+    from workspace.benchmarking.openclaw_session_isolation import (
+        SessionIsolationError,
+        inspect_postflight_session,
+        merge_preflight_postflight_audit,
+        reset_agent_main_session_if_stale,
+    )
     from workspace.benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from workspace.benchmarking.evaluators import (
         EvaluationError,
@@ -1137,9 +1149,30 @@ class JudgeClient:
         ]
         env = os.environ.copy()
         env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
-        with self._lock:
-            result = run_subprocess(command, env=env, timeout=self.timeout_seconds + 30)
-            payload = parse_json_stdout(result, command)
+        try:
+            with self._lock:
+                preflight_audit = reset_agent_main_session_if_stale(
+                    self.judge_agent,
+                    session_id,
+                    config_path=self.config_path,
+                )
+                result = run_subprocess(command, env=env, timeout=self.timeout_seconds + 30)
+                postflight_audit = inspect_postflight_session(
+                    self.judge_agent,
+                    session_id,
+                    config_path=self.config_path,
+                )
+        except SessionIsolationError as exc:
+            raise BenchmarkError(f"Judge OpenClaw session isolation failed: {exc}") from exc
+        audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
+        if audit.get("session_isolation_ok") is not True:
+            requested_session = str(audit.get("requested_session_id") or session_id)
+            actual_session = str(audit.get("postflight_entry_session_id") or "")
+            raise BenchmarkError(
+                "Judge OpenClaw session isolation failed: "
+                f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
+            )
+        payload = parse_json_stdout(result, command)
         result_payload = unwrap_agent_payload(payload)
         reply = summarize_payloads(list((result_payload.get("payloads") or [])))
         parsed = safe_json_extract(reply)

@@ -2703,10 +2703,48 @@ Points: 0.5, Item: Second criterion
     def test_judge_client_invokes_openclaw_with_high_thinking(self) -> None:
         captured: dict[str, object] = {}
         original_run_subprocess = benchmark_test.run_subprocess
-        try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            agent_dir = root / "agents" / "benchmark-judge" / "agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            config_path = root / "openclaw.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "benchmark-judge",
+                                    "agentDir": str(agent_dir),
+                                    "model": "openai/gpt-5.4",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store_path = root / "agents" / "benchmark-judge" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text("{}", encoding="utf-8")
+
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 captured["command"] = list(command)
                 captured["env"] = dict(env or {})
+                session_id = command[command.index("--session-id") + 1]
+                store_path.write_text(
+                    json.dumps(
+                        {
+                            "agent:benchmark-judge:main": {
+                                "sessionId": session_id,
+                                "sessionFile": str(store_path.parent / f"{session_id}.jsonl"),
+                                "modelProvider": "openai",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
                 return benchmark_test.subprocess.CompletedProcess(
                     command,
                     0,
@@ -2714,20 +2752,221 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            client = benchmark_test.JudgeClient(
-                judge_agent="benchmark-judge",
-                timeout_seconds=30,
-                config_path=Path("/tmp/judge.json"),
+            try:
+                benchmark_test.run_subprocess = fake_run_subprocess
+                client = benchmark_test.JudgeClient(
+                    judge_agent="benchmark-judge",
+                    timeout_seconds=30,
+                    config_path=config_path,
+                )
+                payload = client.evaluate_json("score this")
+                self.assertEqual([], payload["items"])
+                command = captured["command"]
+                assert isinstance(command, list)
+                self.assertIn("--thinking", command)
+                self.assertEqual("high", command[command.index("--thinking") + 1])
+            finally:
+                benchmark_test.run_subprocess = original_run_subprocess
+
+    def test_judge_client_clears_stale_main_session_before_openclaw_call(self) -> None:
+        captured: dict[str, object] = {}
+        original_run_subprocess = benchmark_test.run_subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            agent_dir = root / "agents" / "benchmark-judge" / "agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            config_path = root / "openclaw.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "benchmark-judge",
+                                    "agentDir": str(agent_dir),
+                                    "model": "openai/gpt-5.4",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
             )
-            payload = client.evaluate_json("score this")
-            self.assertEqual([], payload["items"])
-            command = captured["command"]
-            assert isinstance(command, list)
-            self.assertIn("--thinking", command)
-            self.assertEqual("high", command[command.index("--thinking") + 1])
-        finally:
-            benchmark_test.run_subprocess = original_run_subprocess
+            store_path = root / "agents" / "benchmark-judge" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-judge:main": {
+                            "sessionId": "old-judge-session",
+                            "sessionFile": str(store_path.parent / "old-judge-session.jsonl"),
+                            "modelProvider": "openai",
+                            "model": "gpt-5.4",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                captured["store_seen_by_openclaw"] = json.loads(store_path.read_text(encoding="utf-8"))
+                session_id = command[command.index("--session-id") + 1]
+                store_path.write_text(
+                    json.dumps(
+                        {
+                            "agent:benchmark-judge:main": {
+                                "sessionId": session_id,
+                                "sessionFile": str(store_path.parent / f"{session_id}.jsonl"),
+                                "modelProvider": "openai",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps({"result": {"payloads": [{"text": '{"items": [], "summary": "ok"}'}], "meta": {}}}),
+                    stderr="",
+                )
+
+            try:
+                benchmark_test.run_subprocess = fake_run_subprocess
+                client = benchmark_test.JudgeClient(
+                    judge_agent="benchmark-judge",
+                    timeout_seconds=30,
+                    config_path=config_path,
+                )
+                payload = client.evaluate_json("score this")
+                self.assertEqual("ok", payload["summary"])
+                store_seen = captured["store_seen_by_openclaw"]
+                assert isinstance(store_seen, dict)
+                self.assertNotIn("agent:benchmark-judge:main", store_seen)
+            finally:
+                benchmark_test.run_subprocess = original_run_subprocess
+
+    def test_judge_client_rejects_postflight_session_mismatch_before_parsing_reply(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            agent_dir = root / "agents" / "benchmark-judge" / "agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            config_path = root / "openclaw.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "benchmark-judge",
+                                    "agentDir": str(agent_dir),
+                                    "model": "openai/gpt-5.4",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store_path = root / "agents" / "benchmark-judge" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text("{}", encoding="utf-8")
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                store_path.write_text(
+                    json.dumps(
+                        {
+                            "agent:benchmark-judge:main": {
+                                "sessionId": "old-judge-session",
+                                "sessionFile": str(store_path.parent / "old-judge-session.jsonl"),
+                                "modelProvider": "openai",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps({"result": {"payloads": [{"text": '{"untrusted": true}'}], "meta": {}}}),
+                    stderr="",
+                )
+
+            try:
+                benchmark_test.run_subprocess = fake_run_subprocess
+                client = benchmark_test.JudgeClient(
+                    judge_agent="benchmark-judge",
+                    timeout_seconds=30,
+                    config_path=config_path,
+                )
+                with self.assertRaises(benchmark_test.BenchmarkError) as ctx:
+                    client.evaluate_json("score this")
+                message = str(ctx.exception)
+                self.assertIn("benchmark-judge-", message)
+                self.assertIn("old-judge-session", message)
+            finally:
+                benchmark_test.run_subprocess = original_run_subprocess
+
+    def test_judge_client_checks_postflight_before_parsing_bad_judge_stdout(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            agent_dir = root / "agents" / "benchmark-judge" / "agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            config_path = root / "openclaw.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "benchmark-judge",
+                                    "agentDir": str(agent_dir),
+                                    "model": "openai/gpt-5.4",
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store_path = root / "agents" / "benchmark-judge" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text("{}", encoding="utf-8")
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                store_path.write_text(
+                    json.dumps(
+                        {
+                            "agent:benchmark-judge:main": {
+                                "sessionId": "old-judge-session",
+                                "sessionFile": str(store_path.parent / "old-judge-session.jsonl"),
+                                "modelProvider": "openai",
+                                "model": "gpt-5.4",
+                            }
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return benchmark_test.subprocess.CompletedProcess(command, 0, stdout="not-json", stderr="")
+
+            try:
+                benchmark_test.run_subprocess = fake_run_subprocess
+                client = benchmark_test.JudgeClient(
+                    judge_agent="benchmark-judge",
+                    timeout_seconds=30,
+                    config_path=config_path,
+                )
+                with self.assertRaises(benchmark_test.BenchmarkError) as ctx:
+                    client.evaluate_json("score this")
+                message = str(ctx.exception)
+                self.assertIn("session isolation failed", message)
+                self.assertIn("old-judge-session", message)
+                self.assertNotIn("JSON decode failed", message)
+            finally:
+                benchmark_test.run_subprocess = original_run_subprocess
 
     def test_single_llm_runner_invokes_wrapper_with_high_thinking(self) -> None:
         captured: dict[str, object] = {}
@@ -2978,6 +3217,164 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertTrue(out.runner_meta["agent_timeout_detected"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_short_llm_request_timeout_sentinel(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "LLM request timed out."}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Choose.",
+                reference_answer="A",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("LLM request timed out.", out.runner_meta["candidate_answer_contract"]["raw_text"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_superchem_response_without_final_answer_marker(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "The spectrum appears most consistent with option B."}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertIn("short_answer_text", out.failure.details["missing_fields"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_hle_response_without_answer_field(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Explanation: estimated from the figure\nConfidence: 60%"}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="hle",
+                source_file="/tmp/hle.jsonl",
+                eval_kind="hle",
+                prompt="Question?",
+                reference_answer="273",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
+            self.assertFalse(out.should_score())
+            self.assertIn("Answer:", out.failure.message)
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
