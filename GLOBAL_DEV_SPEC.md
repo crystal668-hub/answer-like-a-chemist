@@ -19,7 +19,7 @@
   - `DONE`: Collect ChemQA protocol outputs through Artifact Flow into canonical terminal artifacts, `artifact_manifest.json`, and legacy-compatible `qa_result.json` via `workspace/skills/chemqa-review/scripts/chemqa_artifact_flow.py` and `collect_artifacts.py`; finalization applies structured `answer_revision` rebuttals and repairs numeric short-answer projections from anchored final values in the full answer when the raw direct answer is a setup/process sentence.
   - `DONE`: Provide deterministic first-batch chemistry provider skills for local structure reasoning, name resolution, public compound lookup, and numeric chemistry calculations via `workspace/skills/rdkit`, `workspace/skills/opsin`, `workspace/skills/pubchem`, and `workspace/skills/chem-calculator`.
   - `DONE`: Provide an experimental medium-or-higher-value chemistry skill inventory via `workspace/skills/chemistry-routing-matrix.json`, covering 84 local skills from structure/materials, atomistic simulation, quantum chemistry, bioactivity/safety, molecular/materials ML, databases, spectra/formats, paper retrieval/access/parse/rerank, and workflow automation. Despite the historical filename, runtime benchmark prompts now treat it as inventory data, not as a deterministic router.
-  - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, paper PDF backend imports through the `paper-parse` optional extra, executables, API keys loaded from process env or the OpenClaw runtime `.env`, data files, and network providers with per-skill probe timeouts for slower providers such as ChEMBL; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`.
+  - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, paper PDF backend imports through the `paper-parse` optional extra, executables, API keys loaded from process env or the OpenClaw runtime `.env`, data files, and network providers with per-skill probe timeouts for slower providers such as ChEMBL; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`. Benchmark startup also runs a generic `web_search` preflight for websearch-enabled groups and fails those groups early when DuckDuckGo/OpenClaw search is unavailable.
   - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run python`, with `paper-parse` scripts executed via `uv run --extra paper-parse python`, and return structured unavailable payloads such as `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
   - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, and post-run reporting tracks actual tool calls separately from answer scoring.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
@@ -94,6 +94,10 @@
       - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata, final answer text, and benchmark skill-health summary.
     - `skill_health.py`
       - Defines benchmark skill health requirements and startup checks for Python imports, optional-extra PDF backends, executables, API keys from process env/OpenClaw `.env`, data files, and network providers with per-skill probe timeouts.
+    - `openclaw_env.py`
+      - Builds OpenClaw subprocess environments, auto-detecting macOS system HTTP/HTTPS proxies through `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` when a proxy is present, preserving explicit user proxy environment values, and redacting proxy credentials in reports.
+    - `web_search_preflight.py`
+      - Runs a one-turn `openclaw agent --local` health check through the single-LLM wrapper, forces one `web_search` call, and validates the resulting transcript toolResult so payloads like `{"status":"error","error":"fetch failed"}` fail even when `isError=false`.
     - `skill_runtime.py`
       - Provides the workspace `uv run python` skill runner, paper-parse optional-extra command selection, and structured unavailable/failure payload normalization.
     - `status.py`
@@ -248,6 +252,14 @@
     - Input: base config payload/path, experiment group/spec, runtime roots, model overrides, slot template.
     - Output: modified config payloads and config JSON files under `runtime-config/`.
   - Implementation location: `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, `workspace/benchmarking/provisioning.py`
+  - Status: `DONE`
+
+- Name: Benchmark OpenClaw proxy environment and web search preflight
+  - Description: Constructs a shared environment for benchmark-owned OpenClaw subprocesses, auto-injecting macOS system proxy settings into `HTTP_PROXY`/`HTTPS_PROXY` and enabling Node's `NODE_USE_ENV_PROXY=1` when no explicit proxy variables are already set. Before dispatching websearch-enabled groups, the benchmark runs a real `web_search` probe through `benchmarking/single_llm_openclaw_wrapper.py`, saves `web-search-preflight.json`, includes the summary in `runtime-manifest.json` and `results.json`, and materializes group-level execution failures instead of letting records spend turns on repeated failed search calls.
+  - Input / Output:
+    - Input: run-scoped OpenClaw config path, benchmark agent id, host/system proxy environment.
+    - Output: OpenClaw subprocess env plus structured preflight report with provider/result/error/proxy metadata.
+  - Implementation location: `workspace/benchmarking/openclaw_env.py`, `workspace/benchmarking/web_search_preflight.py`, `workspace/benchmarking/cli.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/runners/chemqa.py`
   - Status: `DONE`
 
 - Name: Slot workspace provisioning
@@ -498,6 +510,8 @@
   - It normalizes records through `benchmarking.datasets.load_records`.
   - It runs benchmark skill health checks through `benchmarking.skill_health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.
   - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.cli` keeps compatibility wrappers around that package module for legacy callers.
+  - For OpenClaw subprocesses, `benchmarking.openclaw_env.build_openclaw_subprocess_env` preserves explicit proxy variables and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder.
+  - It runs `benchmarking.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
   - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skill_tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`). Startup health filtering writes only available skills to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
   - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.

@@ -35,6 +35,7 @@ from benchmarking.openclaw_session_isolation import (
     sanitize_agent_id,
     session_store_path_for_agent,
 )
+from benchmarking.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.result_contract import contract_to_payload, parse_agent_stdout
 
 
@@ -173,8 +174,7 @@ def run_openclaw(args: argparse.Namespace, *, env: dict[str, str]) -> subprocess
 def main() -> int:
     args = parse_args()
     config_path = Path(args.config_file).expanduser().resolve()
-    env = os.environ.copy()
-    env["OPENCLAW_CONFIG_PATH"] = str(config_path)
+    env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=config_path)
     try:
         preflight_audit = reset_agent_main_session_if_stale(args.agent, args.session_id, config_path=config_path)
         result = run_openclaw(args, env=env)

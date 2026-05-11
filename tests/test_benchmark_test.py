@@ -479,6 +479,16 @@ print(json.dumps({{
                     "summarize_skill_health",
                     return_value={"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
                 ), \
+                mock.patch.object(
+                    benchmark_test,
+                    "run_benchmark_web_search_preflight",
+                    return_value={
+                        "enabled": True,
+                        "provider": "duckduckgo",
+                        "available": True,
+                        "reports": {"single_llm_skills_off": {"available": True}},
+                    },
+                ), \
                 mock.patch.object(benchmark_test, "run_group", side_effect=fake_run_group), \
                 mock.patch.object(sys, "argv", argv):
                 exit_code = benchmark_test.main()

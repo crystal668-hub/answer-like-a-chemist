@@ -8,6 +8,7 @@ from typing import Any
 
 from ..convergence import ConvergencePolicy
 from ..contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
+from ..openclaw_env import build_openclaw_subprocess_env
 
 
 class ConvergenceLimitExceeded(RuntimeError):
@@ -798,9 +799,8 @@ class ChemQARunner:
         if self.rebuttal_rounds is not None:
             command.extend(["--rebuttal-rounds", str(self.rebuttal_rounds)])
 
-        env = os.environ.copy()
+        env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=self.config_path)
         env["HOME"] = str(launch_home)
-        env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
         env["OPENCLAW_ENV_FILE"] = str(self._default_openclaw_env_file)
         env["OPENCLAW_DEBATE_TRUSTED_PLUGINS"] = "duckduckgo" if group.websearch else "__none__"
         env["CHEMQA_ANSWER_KIND"] = answer_kind

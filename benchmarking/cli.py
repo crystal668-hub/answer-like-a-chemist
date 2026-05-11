@@ -48,6 +48,8 @@ try:
         merge_preflight_postflight_audit,
         reset_agent_main_session_if_stale,
     )
+    from benchmarking.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
+    from benchmarking.web_search_preflight import run_web_search_preflight
     from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from benchmarking.evaluators import (
         EvaluationError,
@@ -134,6 +136,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
         merge_preflight_postflight_audit,
         reset_agent_main_session_if_stale,
     )
+    from workspace.benchmarking.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
+    from workspace.benchmarking.web_search_preflight import run_web_search_preflight
     from workspace.benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
     from workspace.benchmarking.evaluators import (
         EvaluationError,
@@ -1147,8 +1151,7 @@ class JudgeClient:
             str(self.timeout_seconds),
             "--json",
         ]
-        env = os.environ.copy()
-        env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
+        env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=self.config_path)
         try:
             with self._lock:
                 preflight_audit = reset_agent_main_session_if_stale(
@@ -1916,6 +1919,39 @@ def run_group(
         raise BenchmarkError(str(exc)) from exc
 
 
+def run_benchmark_web_search_preflight(
+    *,
+    group_ids: list[str],
+    config_pool: ConfigPool,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    reports: dict[str, Any] = {}
+    for group_id in group_ids:
+        group = EXPERIMENT_GROUPS[group_id]
+        if not group.websearch:
+            continue
+        spec = EXPERIMENT_SPECS.get(group_id)
+        agent_id = (
+            spec.resolve_single_agent_id(args.single_agent_id_override)
+            if spec is not None and group.runner == "single_llm"
+            else JUDGE_AGENT_ID
+        )
+        config_path = config_pool.config_for_group(group)
+        reports[group_id] = run_web_search_preflight(
+            agent_id=agent_id or JUDGE_AGENT_ID,
+            config_path=config_path,
+            current_python_path=current_python(),
+            run_subprocess=run_subprocess,
+        )
+    return {
+        "enabled": True,
+        "provider": "duckduckgo",
+        "reports": reports,
+        "available": all(bool(report.get("available")) for report in reports.values()) if reports else True,
+        "proxy_env": proxy_environment_report(build_openclaw_subprocess_env(base_env=os.environ.copy())),
+    }
+
+
 
 def main() -> int:
     args = parse_args()
@@ -1982,6 +2018,12 @@ def main() -> int:
         single_agent_id_override=args.single_agent_id_override,
         experiment_specs=effective_experiment_specs,
     )
+    web_search_preflight = run_benchmark_web_search_preflight(
+        group_ids=group_ids,
+        config_pool=config_pool,
+        args=args,
+    )
+    save_json(output_root / "web-search-preflight.json", web_search_preflight)
     judge = JudgeClient(
         judge_agent=args.judge_agent,
         timeout_seconds=args.judge_timeout,
@@ -2005,6 +2047,19 @@ def main() -> int:
                 future_map = {}
                 for group_id in wave_group_ids:
                     group = EXPERIMENT_GROUPS[group_id]
+                    preflight_report = dict((web_search_preflight.get("reports") or {}).get(group_id) or {})
+                    if group.websearch and preflight_report.get("available") is not True:
+                        error_message = (
+                            "web_search preflight failed for group "
+                            f"`{group_id}`: {preflight_report.get('error') or 'web_search unavailable'}"
+                        )
+                        group_results[group_id] = materialize_group_failure_results(
+                            group=group,
+                            records=records,
+                            output_root=output_root,
+                            error_message=error_message,
+                        )
+                        continue
                     config_path = config_pool.config_for_group(group)
                     spec = effective_experiment_specs.get(group_id)
                     single_agent = (
@@ -2093,6 +2148,7 @@ def main() -> int:
         "groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
         "run_groups": [asdict(EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "skill_health_summary": skill_health_summary,
+        "web_search_preflight": web_search_preflight,
         "convergence_policy": convergence_policy_meta,
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
@@ -2136,6 +2192,10 @@ def main() -> int:
             "skill_health": {
                 "summary": skill_health_summary,
                 "report_path": str(output_root / "skill-health.json"),
+            },
+            "web_search_preflight": {
+                **web_search_preflight,
+                "report_path": str(output_root / "web-search-preflight.json"),
             },
             "convergence_policy": convergence_policy_meta,
             "groups": {
