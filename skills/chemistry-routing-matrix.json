@@ -4,6 +4,25 @@
   "description": "Experimental chemistry skill matrix for medium-or-higher value chemistry skills selected from Downloads plus existing paper-provider routes. Keep prompt rendering compact; use full SKILL.md only after a route is selected.",
   "skills": [
     {
+      "skill": "act-like-a-chemist",
+      "tier": "protocol",
+      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, mandatory verification triggers, organic mechanism checks, numerical discipline, and source-sensitive answer tracing.",
+      "primary_triggers": [
+        "chemistry benchmark",
+        "chemistry question",
+        "mechanism reasoning",
+        "organic mechanism",
+        "source-sensitive chemistry",
+        "calculation rounding",
+        "structure verification",
+        "rubric checkpoint"
+      ],
+      "avoid_when": [
+        "non-chemistry tasks",
+        "skills-off benchmark runs"
+      ]
+    },
+    {
       "skill": "open-forcefield-toolkit",
       "tier": "core",
       "route_summary": "SMIRNOFF, AM1-BCC, partial charges, small-molecule force-field parameterization, and force-field interchange.",

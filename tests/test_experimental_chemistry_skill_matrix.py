@@ -98,11 +98,18 @@ def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
     inventory = load_chemistry_skill_inventory()
     skill_names = set(benchmark_skill_allowlist())
 
-    assert len(inventory["skills"]) == 84
+    assert len(inventory["skills"]) == 85
     assert len(skill_names) == len(inventory["skills"])
+    assert "act-like-a-chemist" in skill_names
     assert EXPECTED_EXPERIMENTAL_SKILLS <= skill_names
     assert {"rdkit", "opsin", "pubchem", "chem-calculator"} <= skill_names
     assert inventory["mode"] == "experimental_mid_plus"
+
+
+def test_act_like_a_chemist_skill_bundle_is_installed() -> None:
+    skill_root = SKILLS_ROOT / "act-like-a-chemist"
+
+    assert (skill_root / "SKILL.md").is_file()
 
 
 def test_selected_experimental_skills_are_installed_as_skill_bundles() -> None:
@@ -130,6 +137,8 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
     tree = render_top_level_skill_tree()
 
     for domain_or_family in (
+        "benchmark-solving-protocol",
+        "chemistry-reasoning-sop",
         "calculation-math",
         "molecular-structure-identity",
         "literature-evidence",
@@ -141,6 +150,8 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
         assert domain_or_family in tree
 
     assert "Quick Start Guide" not in tree
+    assert "fact ledger" not in tree
+    assert "Organic mechanism SOP" not in tree
     assert "Core Workflow: OpenMM Simulation" not in tree
     assert "Installation and Setup" not in tree
     assert "first matching primary route" not in tree
@@ -163,9 +174,32 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     prompt = build_single_llm_prompt(record, websearch_enabled=False)
 
     assert "Skill capability tree:" in prompt
+    assert "Read `act-like-a-chemist` first" in prompt
     assert "materials-crystals" in prompt
     assert "paper-pipeline" in prompt
+    assert "Organic mechanism SOP" not in prompt
     assert "Experimental chemistry skill routing rules" not in prompt
+
+
+def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
+    from benchmarking.datasets import BenchmarkRecord
+    from benchmarking.prompts import build_single_llm_prompt
+
+    record = BenchmarkRecord(
+        record_id="skills-off",
+        dataset="chembench",
+        source_file="/tmp/chembench.jsonl",
+        eval_kind="chembench_open_ended",
+        prompt="Calculate the pH.",
+        reference_answer="7",
+    )
+
+    prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=False)
+
+    assert "Do not use OpenClaw skills" in prompt
+    assert "act-like-a-chemist" not in prompt
+    assert "Skill capability tree:" not in prompt
+    assert "Organic mechanism SOP" not in prompt
 
 
 def test_experimental_skill_dependencies_are_optional_and_scoped() -> None:

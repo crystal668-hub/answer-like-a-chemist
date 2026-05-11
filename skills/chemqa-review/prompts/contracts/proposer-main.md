@@ -32,6 +32,7 @@ Mandatory execution rules:
 Skill discovery rules:
 
 - Benchmark chemistry skills are broadly available; use them directly when they help answer a calculation, structure, identity, database, literature, spectra, materials, simulation, ML, or workflow subproblem.
+- For chemistry benchmark questions, read `act-like-a-chemist` first, then use provider skills only when they help a concrete subproblem.
 - First orient by capability domain and family, then read only the concrete skill's `SKILL.md` and the minimum request schema needed for the current tool call.
 - For literature-backed or externally factual claims, use the paper-skill toolchain.
 - When a provider skill contributes to the answer, `submission_trace` or `claim_anchors` must cite the generated provider result JSON artifact path or include a structured `tool_trace` entry with the skill name, request summary, output path, and conclusion.
@@ -112,6 +113,7 @@ Rebuttal hard constraints:
 
 Required sibling skills:
 
+- `act-like-a-chemist`
 - `paper-retrieval`
 - `paper-access`
 - `paper-rerank`

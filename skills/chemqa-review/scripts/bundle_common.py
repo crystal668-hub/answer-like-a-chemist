@@ -14,6 +14,7 @@ from typing import Any
 
 REQUIRED_SKILLS = (
     "debateclaw-v1",
+    "act-like-a-chemist",
     "paper-retrieval",
     "paper-access",
     "paper-parse",

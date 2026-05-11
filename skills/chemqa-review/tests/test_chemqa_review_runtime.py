@@ -1248,7 +1248,9 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertEqual(len(listed_required_skills), len(set(listed_required_skills)))
 
         self.assertIn("chem-calculator", proposer)
+        self.assertIn("act-like-a-chemist", proposer)
         self.assertIn("Skill discovery rules", proposer)
+        self.assertIn("read `act-like-a-chemist` first", proposer)
         self.assertIn("capability domain and family", proposer)
         self.assertIn("Do not treat an unexecuted skill as a valid provider trace", proposer)
         self.assertNotIn("Skill routing rules", proposer)
@@ -1273,6 +1275,7 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertIn("tool_trace", counter)
 
         self.assertIn("rdkit", required_skills)
+        self.assertIn("act-like-a-chemist", required_skills)
         self.assertIn("pubchem", required_skills)
         self.assertIn("opsin", required_skills)
         self.assertIn("chem-calculator", required_skills)

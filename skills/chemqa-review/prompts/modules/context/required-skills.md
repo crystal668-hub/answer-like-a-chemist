@@ -1,6 +1,7 @@
 Required sibling skills:
 
 - `debateclaw-v1`
+- `act-like-a-chemist`
 - `paper-retrieval`
 - `paper-access`
 - `paper-parse`
@@ -90,6 +91,7 @@ Resolve these bundles from the same parent `skills/` directory as this bundle. D
 
 Skill discovery policy:
 - Benchmark chemistry skills are available from the sibling `skills/` directory.
+- For chemistry benchmark questions, read `act-like-a-chemist` first, then use provider skills only when they help a concrete subproblem.
 - Use provider skills directly when they help answer a calculation, structure, identity, database, literature, spectra, materials, simulation, ML, or workflow subproblem.
 - First orient by capability domain and family; read full `SKILL.md` files only for skills you are about to use.
 - Do not treat an unexecuted skill as a valid provider trace.
