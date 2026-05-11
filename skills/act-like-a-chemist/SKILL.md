@@ -1,11 +1,11 @@
 ---
 name: act-like-a-chemist
-description: Use when answering chemistry benchmark questions or source-sensitive chemistry tasks where structure, mechanism, calculation, literature, protocol, or evidence details can change the answer.
+description: Use when answering chemistry questions or source-sensitive chemistry tasks where structure, mechanism, calculation, literature, protocol, or evidence details can change the answer.
 ---
 
 # Act Like A Chemist
 
-Use this skill first for skills-on chemistry benchmark questions. Solve as a careful chemist: track evidence, verify uncertain chemical claims, conserve atoms and charge, keep units explicit, and show enough of the reasoning path for the final answer to be auditable.
+Use this skill first for chemistry questions. Solve as a careful chemist: track evidence, verify uncertain chemical claims, conserve atoms and charge, keep units explicit, and show enough of the reasoning path for the final answer to be auditable.
 
 ## Non-Negotiables
 
