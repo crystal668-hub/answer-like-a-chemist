@@ -12,6 +12,7 @@ from .openclaw_env import build_openclaw_subprocess_env, proxy_environment_repor
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 PREFLIGHT_QUERY = "OpenAlex scholarly works API"
+DEFAULT_PREFLIGHT_ATTEMPTS = 3
 
 
 def _wrapper_path() -> Path:
@@ -60,6 +61,10 @@ def _clean_external_text(text: str) -> str:
     cleaned = re.sub(r"<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>", "", cleaned)
     lines = [line.strip() for line in cleaned.splitlines()]
     return " ".join(line for line in lines if line and line not in {"Source: Web Search", "---"}).strip()
+
+
+def _attempt_snapshot(report: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in report.items() if key != "attempts"}
 
 
 def evaluate_web_search_transcript(transcript_path: Path) -> dict[str, Any]:
@@ -130,84 +135,111 @@ def run_web_search_preflight(
     timeout_seconds: int = 120,
     base_env: Mapping[str, str] | None = None,
     system_proxy_text: str | None = None,
+    max_attempts: int = DEFAULT_PREFLIGHT_ATTEMPTS,
 ) -> dict[str, Any]:
-    session_id = f"web-search-preflight-{uuid.uuid4().hex[:10]}"
+    max_attempts = max(1, int(max_attempts))
     env = build_openclaw_subprocess_env(
         base_env=base_env,
         config_path=config_path,
         system_proxy_text=system_proxy_text,
     )
-    command = [
-        current_python_path,
-        str(_wrapper_path()),
-        "--agent",
-        agent_id,
-        "--config-file",
-        str(config_path),
-        "--session-id",
-        session_id,
-        "--message",
-        (
-            "Health check only. Use the web_search tool exactly once for query: "
-            f"{PREFLIGHT_QUERY}. Then answer in one short paragraph stating whether web_search "
-            "returned results or an error, and include one result title if available. Do not use shell commands."
-        ),
-        "--thinking",
-        "minimal",
-        "--timeout",
-        str(timeout_seconds),
-        "--finalization-grace-seconds",
-        "10",
-        "--json",
-    ]
-    try:
+    attempts: list[dict[str, Any]] = []
+
+    for attempt in range(1, max_attempts + 1):
+        session_id = f"web-search-preflight-{uuid.uuid4().hex[:10]}"
+        command = [
+            current_python_path,
+            str(_wrapper_path()),
+            "--agent",
+            agent_id,
+            "--config-file",
+            str(config_path),
+            "--session-id",
+            session_id,
+            "--message",
+            (
+                "Health check only. Use the web_search tool exactly once for query: "
+                f"{PREFLIGHT_QUERY}. Then answer in one short paragraph stating whether web_search "
+                "returned results or an error, and include one result title if available. Do not use shell commands."
+            ),
+            "--thinking",
+            "minimal",
+            "--timeout",
+            str(timeout_seconds),
+            "--finalization-grace-seconds",
+            "10",
+            "--json",
+        ]
         try:
-            completed = run_subprocess(
-                command,
-                env=env,
-                timeout=timeout_seconds + 30,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        except TypeError:
-            completed = run_subprocess(command, env=env, timeout=timeout_seconds + 30)
-    except Exception as exc:
-        return {
-            "available": False,
+            try:
+                completed = run_subprocess(
+                    command,
+                    env=env,
+                    timeout=timeout_seconds + 30,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+            except TypeError:
+                completed = run_subprocess(command, env=env, timeout=timeout_seconds + 30)
+        except Exception as exc:
+            report = {
+                "available": False,
+                "agent_id": agent_id,
+                "config_path": str(config_path),
+                "session_id": session_id,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "error": str(exc),
+                "proxy_env": proxy_environment_report(env),
+            }
+            attempts.append(_attempt_snapshot(report))
+            continue
+
+        report: dict[str, Any] = {
             "agent_id": agent_id,
             "config_path": str(config_path),
             "session_id": session_id,
-            "error": str(exc),
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "returncode": completed.returncode,
             "proxy_env": proxy_environment_report(env),
         }
+        if completed.returncode != 0:
+            report.update(
+                {
+                    "available": False,
+                    "error": (completed.stderr or completed.stdout or "web_search preflight command failed").strip()[:2000],
+                }
+            )
+            attempts.append(_attempt_snapshot(report))
+            continue
 
-    report: dict[str, Any] = {
+        payload = _parse_jsonish(completed.stdout or completed.stderr)
+        result_payload = _unwrap_agent_payload(payload)
+        meta = result_payload.get("meta") if isinstance(result_payload, dict) else {}
+        convergence = meta.get("convergence") if isinstance(meta, dict) else {}
+        transcript_path = str(convergence.get("transcript_path") or "").strip() if isinstance(convergence, dict) else ""
+        if transcript_path:
+            report.update(evaluate_web_search_transcript(Path(transcript_path)))
+        else:
+            report.update({"available": False, "error": "web_search preflight transcript path missing"})
+        tool_summary = meta.get("toolSummary") if isinstance(meta, dict) else None
+        if isinstance(tool_summary, dict):
+            report["tool_summary"] = tool_summary
+        attempts.append(_attempt_snapshot(report))
+        if report.get("available") is True:
+            report["attempts"] = attempts
+            return report
+
+    final_report = dict(attempts[-1]) if attempts else {
+        "available": False,
         "agent_id": agent_id,
         "config_path": str(config_path),
-        "session_id": session_id,
-        "returncode": completed.returncode,
+        "attempt": 0,
+        "max_attempts": max_attempts,
+        "error": "web_search preflight did not run",
         "proxy_env": proxy_environment_report(env),
     }
-    if completed.returncode != 0:
-        report.update(
-            {
-                "available": False,
-                "error": (completed.stderr or completed.stdout or "web_search preflight command failed").strip()[:2000],
-            }
-        )
-        return report
-
-    payload = _parse_jsonish(completed.stdout or completed.stderr)
-    result_payload = _unwrap_agent_payload(payload)
-    meta = result_payload.get("meta") if isinstance(result_payload, dict) else {}
-    convergence = meta.get("convergence") if isinstance(meta, dict) else {}
-    transcript_path = str(convergence.get("transcript_path") or "").strip() if isinstance(convergence, dict) else ""
-    if transcript_path:
-        report.update(evaluate_web_search_transcript(Path(transcript_path)))
-    else:
-        report.update({"available": False, "error": "web_search preflight transcript path missing"})
-    tool_summary = meta.get("toolSummary") if isinstance(meta, dict) else None
-    if isinstance(tool_summary, dict):
-        report["tool_summary"] = tool_summary
-    return report
+    final_report["attempts"] = attempts
+    return final_report

@@ -145,3 +145,75 @@ HTTPSPort : 7892
     assert seen["text"] is True
     assert report["available"] is True
     assert report["result_count"] == 1
+
+
+def test_run_web_search_preflight_retries_transient_fetch_failure(tmp_path: Path) -> None:
+    failed_transcript = tmp_path / "failed.jsonl"
+    successful_transcript = tmp_path / "successful.jsonl"
+    write_transcript(
+        failed_transcript,
+        {
+            "status": "error",
+            "tool": "web_search",
+            "error": "fetch failed",
+        },
+    )
+    write_transcript(
+        successful_transcript,
+        {
+            "provider": "duckduckgo",
+            "count": 1,
+            "results": [{"title": "API Overview - OpenAlex Developers"}],
+        },
+    )
+    transcripts = [failed_transcript, successful_transcript]
+    commands: list[list[str]] = []
+
+    def fake_run(command, *, env=None, cwd=None, timeout=None, text=None, capture_output=None, check=None):
+        commands.append(list(command))
+        transcript = transcripts[len(commands) - 1]
+        failures = 1 if transcript == failed_transcript else 0
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "result": {
+                        "payloads": [{"text": "web_search health check"}],
+                        "meta": {
+                            "convergence": {
+                                "transcript_path": str(transcript),
+                            },
+                            "toolSummary": {
+                                "calls": 1,
+                                "tools": ["web_search"],
+                                "failures": failures,
+                            },
+                        },
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    report = run_web_search_preflight(
+        agent_id="benchmark-single-skills-on",
+        config_path=tmp_path / "openclaw.json",
+        current_python_path="/venv/bin/python",
+        run_subprocess=fake_run,
+        timeout_seconds=30,
+        base_env={},
+        system_proxy_text="",
+    )
+
+    assert report["available"] is True
+    assert report["result_count"] == 1
+    assert len(commands) == 2
+    assert report["attempt"] == 2
+    assert report["max_attempts"] == 3
+    assert len(report["attempts"]) == 2
+    assert report["attempts"][0]["available"] is False
+    assert report["attempts"][0]["error"] == "fetch failed"
+    assert report["attempts"][1]["available"] is True
+    assert commands[0] != commands[1]
+    json.dumps(report)
