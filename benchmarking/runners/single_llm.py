@@ -17,6 +17,8 @@ OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was genera
 OPENCLAW_IDLE_TIMEOUT_TEXT = "The model did not produce a response before the LLM idle timeout"
 OPENCLAW_SHORT_LLM_TIMEOUT_TEXT = "LLM request timed out."
 OPENCLAW_SHORT_REQUEST_TIMEOUT_TEXT = "Request timed out."
+OPENCLAW_STREAM_READ_ERROR_TEXT = "stream_read_error"
+OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT = "Agent couldn't generate a response"
 OPENCLAW_TIMEOUT_SENTINELS = (
     OPENCLAW_SHORT_LLM_TIMEOUT_TEXT,
     OPENCLAW_SHORT_REQUEST_TIMEOUT_TEXT,
@@ -40,6 +42,13 @@ class CandidateAnswerContract:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class AgentErrorClassification:
+    kind: str
+    message: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_text: str) -> bool:
     text = str(full_response_text or "")
     stripped = text.strip()
@@ -49,6 +58,67 @@ def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_tex
     if stripped in OPENCLAW_TIMEOUT_SENTINELS:
         return True
     return runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
+
+
+def classify_agent_error_payload(
+    *,
+    payloads: list[dict[str, Any]],
+    runner_meta: dict[str, Any],
+    full_response_text: str,
+) -> AgentErrorClassification | None:
+    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text):
+        return None
+    payload_texts = [str(item.get("text") or "").strip() for item in payloads if isinstance(item, dict)]
+    error_payload = any(item.get("isError") is True for item in payloads if isinstance(item, dict))
+    completion = runner_meta.get("completion") if isinstance(runner_meta.get("completion"), dict) else {}
+    stop_reason = str(runner_meta.get("stopReason") or "").strip().lower()
+    finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
+    liveness_state = str(runner_meta.get("livenessState") or "").strip()
+    has_complete_answer = bool(FINAL_ANSWER_RE.search(full_response_text) or HLE_ANSWER_RE.search(full_response_text))
+
+    if (
+        any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
+        or stop_reason == "error"
+        or finish_reason == "error"
+    ):
+        message = "Single-LLM OpenClaw agent stream failed before producing a benchmark answer."
+        return AgentErrorClassification(
+            kind="agent_stream_read_error",
+            message=message,
+            details={
+                "kind": "agent_stream_read_error",
+                "message": message,
+                "payload_texts": payload_texts[:5],
+                "payload_is_error": error_payload,
+                "stopReason": runner_meta.get("stopReason"),
+                "finishReason": completion.get("finishReason"),
+                "livenessState": runner_meta.get("livenessState"),
+                "replayInvalid": runner_meta.get("replayInvalid"),
+            },
+        )
+
+    if (
+        any(OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT in text for text in payload_texts)
+        or runner_meta.get("replayInvalid") is True
+        or (liveness_state in {"abandoned", "blocked"} and (error_payload or not has_complete_answer))
+    ):
+        message = "Single-LLM OpenClaw agent response was unavailable before producing a benchmark answer."
+        return AgentErrorClassification(
+            kind="agent_response_unavailable",
+            message=message,
+            details={
+                "kind": "agent_response_unavailable",
+                "message": message,
+                "payload_texts": payload_texts[:5],
+                "payload_is_error": error_payload,
+                "stopReason": runner_meta.get("stopReason"),
+                "finishReason": completion.get("finishReason"),
+                "livenessState": runner_meta.get("livenessState"),
+                "replayInvalid": runner_meta.get("replayInvalid"),
+            },
+        )
+
+    return None
 
 
 def _candidate_contract_meta(
@@ -287,6 +357,12 @@ class SingleLLMRunner:
         transcript_answer_recovered = (
             isinstance(convergence_meta, dict) and convergence_meta.get("transcript_answer_recovered") is True
         )
+        finalization_rescue_recovered = (
+            isinstance(convergence_meta, dict) and convergence_meta.get("finalization_rescue_succeeded") is True
+        )
+        recovery_source = ""
+        if isinstance(convergence_meta, dict):
+            recovery_source = str(convergence_meta.get("recovery_source") or "")
         session_isolation = runner_meta.get("session_isolation")
         if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
             actual_session = str(session_isolation.get("postflight_entry_session_id") or "")
@@ -308,6 +384,25 @@ class SingleLLMRunner:
                     code="session_isolation_failed",
                     message=message,
                     details=dict(session_isolation),
+                ),
+            )
+        agent_error = classify_agent_error_payload(
+            payloads=payloads,
+            runner_meta=runner_meta,
+            full_response_text=full_response_text,
+        )
+        if agent_error is not None and not transcript_answer_recovered and not finalization_rescue_recovered:
+            runner_meta["agent_error"] = dict(agent_error.details)
+            runner_meta["error"] = agent_error.message
+            return RunnerResult(
+                status=RunStatus.FAILED,
+                answer=AnswerPayload(),
+                raw=payload,
+                runner_meta=runner_meta,
+                failure=FailureInfo(
+                    code=agent_error.kind,
+                    message=agent_error.message,
+                    details=dict(agent_error.details),
                 ),
             )
         contract = validate_candidate_answer_contract(
@@ -340,10 +435,11 @@ class SingleLLMRunner:
                     },
                 ),
             )
-        if transcript_answer_recovered:
+        if transcript_answer_recovered or finalization_rescue_recovered:
             assert isinstance(convergence_meta, dict)
+            source = recovery_source or "single-llm-session-transcript"
             runner_meta["degraded_execution"] = True
-            runner_meta["recovery_mode"] = "single-llm-session-transcript"
+            runner_meta["recovery_mode"] = source
             runner_meta["answer_reliability"] = "high_confidence_recovered"
             return RunnerResult(
                 status=RunStatus.RECOVERED,
@@ -354,11 +450,11 @@ class SingleLLMRunner:
                 raw=payload,
                 runner_meta=runner_meta,
                 recovery=RecoveryInfo(
-                    source="single-llm-session-transcript",
+                    source=source,
                     scored=True,
                     evaluable=True,
                     reliability="high_confidence_recovered",
-                    recovery_mode="single-llm-session-transcript",
+                    recovery_mode=source,
                     details=dict(convergence_meta),
                 ),
             )

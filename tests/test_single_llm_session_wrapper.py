@@ -467,6 +467,330 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(1, convergence["tool_call_count"])
         self.assertEqual(2, convergence["assistant_turn_count"])
 
+    def test_wrapper_recovers_stream_error_from_transcript(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Visible reasoning.\nFINAL ANSWER: B",
+                                }
+                            ],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "stream_read_error", "isError": True}],
+                            "meta": {
+                                "stopReason": "error",
+                                "completion": {"finishReason": "error"},
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual("Visible reasoning.\nFINAL ANSWER: B", result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["agent_error_payload_detected"])
+        self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
+        self.assertTrue(convergence["transcript_answer_recovered"])
+        self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
+
+    def test_wrapper_finalization_rescue_replaces_error_payload_when_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Reasoning without final marker."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+            )
+            first = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "stream_read_error", "isError": True}],
+                            "meta": {
+                                "stopReason": "error",
+                                "completion": {"finishReason": "error"},
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+            rescue = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps({"result": {"payloads": [{"text": "Concise reason.\nFINAL ANSWER: B"}], "meta": {}}}),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(2, run_mock.call_count)
+        rescue_kwargs = run_mock.call_args_list[1].kwargs
+        self.assertEqual(10, rescue_kwargs["timeout_override"])
+        self.assertIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual("Concise reason.\nFINAL ANSWER: B", result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["agent_error_payload_detected"])
+        self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
+        self.assertTrue(convergence["finalization_rescue_attempted"])
+        self.assertTrue(convergence["finalization_rescue_succeeded"])
+        self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
+
+    def test_wrapper_finalization_rescue_keeps_error_payload_when_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Reasoning without final marker."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+            )
+            first = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "stream_read_error", "isError": True}],
+                            "meta": {
+                                "stopReason": "error",
+                                "completion": {"finishReason": "error"},
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+            rescue = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps({"result": {"payloads": [{"text": "Still no final marker"}], "meta": {}}}),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(2, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual("stream_read_error", result["payloads"][0]["text"])
+        self.assertTrue(result["payloads"][0]["isError"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["finalization_rescue_attempted"])
+        self.assertFalse(convergence["finalization_rescue_succeeded"])
+        self.assertTrue(convergence["agent_error_payload_detected"])
+        self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
+
+    def test_wrapper_does_not_finalization_rescue_timeout_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Partial work without final answer."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "Request timed out before a response was generated."}],
+                            "meta": {"aborted": True, "livenessState": "blocked"},
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual("Request timed out before a response was generated.", result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertFalse(convergence["agent_error_payload_detected"])
+        self.assertEqual("", convergence["agent_error_kind"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
+
 
 if __name__ == "__main__":
     unittest.main()

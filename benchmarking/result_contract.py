@@ -8,7 +8,7 @@ from typing import Any
 @dataclass(frozen=True)
 class AgentResultContract:
     valid: bool
-    payloads: list[dict[str, str]]
+    payloads: list[dict[str, Any]]
     meta: dict[str, Any]
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
@@ -26,14 +26,21 @@ def normalize_agent_result_payload(payload: Any) -> AgentResultContract:
     if not isinstance(raw_payloads, list):
         return _invalid("payloads_not_list", payload, meta=meta)
 
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     for item in raw_payloads:
         if not isinstance(item, dict):
             return _invalid("invalid_payload_item", payload, meta=meta)
         text = str(item.get("text") or "").strip()
         if not text:
             return _invalid("invalid_payload_item", payload, meta=meta)
-        normalized.append({"text": text})
+        normalized_item: dict[str, Any] = {"text": text}
+        for marker in ("isError", "isReasoning", "replayInvalid"):
+            if isinstance(item.get(marker), bool):
+                normalized_item[marker] = item[marker]
+        for marker in ("errorCode", "errorMessage"):
+            if isinstance(item.get(marker), str):
+                normalized_item[marker] = str(item[marker])
+        normalized.append(normalized_item)
 
     return AgentResultContract(
         valid=True,

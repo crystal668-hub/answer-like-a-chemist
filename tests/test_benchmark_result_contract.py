@@ -25,6 +25,20 @@ def test_accepts_unwrapped_result_payloads() -> None:
     assert result.payloads == [{"text": "FINAL ANSWER: A"}]
 
 
+def test_preserves_payload_error_fields() -> None:
+    payload = {
+        "result": {
+            "payloads": [{"text": "stream_read_error", "isError": True}],
+            "meta": {"stopReason": "error"},
+        }
+    }
+
+    result = normalize_agent_result_payload(payload)
+
+    assert result.valid is True
+    assert result.payloads == [{"text": "stream_read_error", "isError": True}]
+
+
 def test_rejects_tool_argument_object_as_answer_payload() -> None:
     payload = {"query": "benzene NMR", "count": 5, "region": "us-en", "meta": {"session_isolation": {"session_isolation_ok": True}}}
 

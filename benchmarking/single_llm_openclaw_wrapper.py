@@ -39,6 +39,20 @@ from benchmarking.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.result_contract import contract_to_payload, parse_agent_stdout
 
 
+OPENCLAW_STREAM_READ_ERROR_TEXT = "stream_read_error"
+OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT = "Agent couldn't generate a response"
+OPENCLAW_TIMEOUT_SENTINELS = (
+    "Request timed out before a response was generated",
+    "The model did not produce a response before the LLM idle timeout",
+    "LLM request timed out.",
+    "Request timed out.",
+)
+FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
+Do not call tools or inspect files. Use only the reasoning already present in this session.
+Provide a concise visible justification, then end with exactly one final answer line in the required format from the benchmark prompt.
+For multiple-choice questions, use: FINAL ANSWER: <option letters>"""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run single-LLM OpenClaw turns with benchmark session isolation.")
     parser.add_argument("--agent", required=True, help="OpenClaw agent id.")
@@ -84,18 +98,9 @@ def _target_result_payload(payload: Any) -> dict[str, Any] | None:
 
 
 def _is_timeout_like_payload(target: dict[str, Any]) -> bool:
-    payloads = target.get("payloads")
-    payload_texts: list[str] = []
-    if isinstance(payloads, list):
-        for item in payloads:
-            if isinstance(item, dict):
-                payload_texts.append(str(item.get("text") or ""))
-    timeout_needles = (
-        "Request timed out before a response was generated",
-        "The model did not produce a response before the LLM idle timeout",
-    )
+    payload_texts = _payload_texts(target)
     for text in payload_texts:
-        if any(needle in text for needle in timeout_needles):
+        if any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS):
             return True
     if any(is_complete_benchmark_answer(text) for text in payload_texts):
         return False
@@ -103,7 +108,146 @@ def _is_timeout_like_payload(target: dict[str, Any]) -> bool:
     return bool(meta.get("aborted") is True or str(meta.get("livenessState") or "") == "blocked")
 
 
-def merge_convergence_metadata(payload: Any, *, args: argparse.Namespace, audit: dict[str, Any]) -> Any:
+def _has_timeout_sentinel_payload(target: dict[str, Any]) -> bool:
+    return any(any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS) for text in _payload_texts(target))
+
+
+def _payload_texts(target: dict[str, Any]) -> list[str]:
+    payloads = target.get("payloads")
+    texts: list[str] = []
+    if isinstance(payloads, list):
+        for item in payloads:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+                if text:
+                    texts.append(text)
+    return texts
+
+
+def _has_error_payload_marker(target: dict[str, Any]) -> bool:
+    payloads = target.get("payloads")
+    if not isinstance(payloads, list):
+        return False
+    return any(isinstance(item, dict) and item.get("isError") is True for item in payloads)
+
+
+def _classify_agent_error_payload(target: dict[str, Any]) -> str:
+    payload_texts = _payload_texts(target)
+    if _has_timeout_sentinel_payload(target):
+        return ""
+    meta = target.get("meta") if isinstance(target.get("meta"), dict) else {}
+    completion = meta.get("completion") if isinstance(meta.get("completion"), dict) else {}
+    stop_reason = str(meta.get("stopReason") or "").strip().lower()
+    finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
+    liveness_state = str(meta.get("livenessState") or "").strip()
+    has_complete_answer = any(is_complete_benchmark_answer(text) for text in payload_texts)
+
+    if (
+        any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
+        or stop_reason == "error"
+        or finish_reason == "error"
+    ):
+        return "agent_stream_read_error"
+    if (
+        any(OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT in text for text in payload_texts)
+        or meta.get("replayInvalid") is True
+        or (liveness_state in {"abandoned", "blocked"} and (_has_error_payload_marker(target) or not has_complete_answer))
+    ):
+        return "agent_response_unavailable"
+    return ""
+
+
+def _session_isolation_ok(audit: dict[str, Any]) -> bool:
+    return audit.get("session_isolation_ok") is True
+
+
+def _merge_convergence(target: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    meta = target.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        return {}
+    existing = meta.get("convergence")
+    convergence = dict(existing) if isinstance(existing, dict) else {}
+    convergence.update(updates)
+    meta["convergence"] = convergence
+    return convergence
+
+
+def _rescue_output_text(payload: Any) -> str:
+    target = _target_result_payload(payload)
+    if target is None:
+        return ""
+    return "\n\n".join(_payload_texts(target)).strip()
+
+
+def _try_finalization_rescue(
+    target: dict[str, Any],
+    *,
+    args: argparse.Namespace,
+    env: dict[str, str],
+) -> bool:
+    grace_seconds = max(1, int(getattr(args, "finalization_grace_seconds", 90) or 90))
+    try:
+        result = run_openclaw(
+            args,
+            env=env,
+            message_override=FINALIZATION_RESCUE_PROMPT,
+            timeout_override=grace_seconds,
+        )
+    except Exception as exc:
+        _merge_convergence(
+            target,
+            {
+                "finalization_rescue_attempted": True,
+                "finalization_rescue_succeeded": False,
+                "finalization_rescue_error": str(exc)[:1000],
+            },
+        )
+        return False
+
+    if result.returncode != 0:
+        _merge_convergence(
+            target,
+            {
+                "finalization_rescue_attempted": True,
+                "finalization_rescue_succeeded": False,
+                "finalization_rescue_returncode": result.returncode,
+                "finalization_rescue_stderr_excerpt": str(result.stderr or "")[:1000],
+            },
+        )
+        return False
+
+    rescue_payload = parse_openclaw_json_output((result.stdout or "").strip() or (result.stderr or "").strip())
+    rescue_text = _rescue_output_text(rescue_payload)
+    if not is_complete_benchmark_answer(rescue_text):
+        _merge_convergence(
+            target,
+            {
+                "finalization_rescue_attempted": True,
+                "finalization_rescue_succeeded": False,
+                "finalization_rescue_payload_excerpt": rescue_text[:1000],
+            },
+        )
+        return False
+
+    target["payloads"] = [{"text": rescue_text}]
+    _merge_convergence(
+        target,
+        {
+            "finalization_rescue_attempted": True,
+            "finalization_rescue_succeeded": True,
+            "recovery_source": "single-llm-finalization-rescue",
+        },
+    )
+    return True
+
+
+def merge_convergence_metadata(
+    payload: Any,
+    *,
+    args: argparse.Namespace,
+    audit: dict[str, Any],
+    env: dict[str, str] | None = None,
+) -> Any:
     target = _target_result_payload(payload)
     if target is None:
         return payload
@@ -114,10 +258,18 @@ def merge_convergence_metadata(payload: Any, *, args: argparse.Namespace, audit:
     convergence_meta: dict[str, Any] = {
         "policy": policy.to_meta(),
         "transcript_answer_recovered": False,
+        "agent_error_payload_detected": False,
+        "agent_error_kind": "",
+        "finalization_rescue_attempted": False,
+        "finalization_rescue_succeeded": False,
     }
     transcript_path = transcript_path_from_audit(audit)
     if transcript_path is not None:
         convergence_meta.update(summarize_transcript_convergence(transcript_path))
+    agent_error_kind = _classify_agent_error_payload(target)
+    if agent_error_kind:
+        convergence_meta["agent_error_payload_detected"] = True
+        convergence_meta["agent_error_kind"] = agent_error_kind
 
     meta = target.setdefault("meta", {})
     if isinstance(meta, dict):
@@ -126,7 +278,9 @@ def merge_convergence_metadata(payload: Any, *, args: argparse.Namespace, audit:
         merged.update(convergence_meta)
         meta["convergence"] = merged
 
-    if transcript_path is not None and _is_timeout_like_payload(target):
+    error_like = bool(agent_error_kind)
+    timeout_like = _is_timeout_like_payload(target)
+    if transcript_path is not None and (timeout_like or error_like):
         recovered = extract_latest_complete_answer_from_transcript(transcript_path)
         if recovered:
             target["payloads"] = [{"text": recovered}]
@@ -136,6 +290,15 @@ def merge_convergence_metadata(payload: Any, *, args: argparse.Namespace, audit:
                 if isinstance(convergence, dict):
                     convergence["transcript_answer_recovered"] = True
                     convergence["recovery_source"] = "single-llm-session-transcript"
+            return payload
+    if (
+        error_like
+        and env is not None
+        and transcript_path is not None
+        and _session_isolation_ok(audit)
+        and not any(is_complete_benchmark_answer(text) for text in _payload_texts(target))
+    ):
+        _try_finalization_rescue(target, args=args, env=env)
     return payload
 
 
@@ -150,7 +313,14 @@ def resolve_openclaw_executable() -> str:
     raise SessionIsolationError("Missing openclaw executable in PATH.")
 
 
-def run_openclaw(args: argparse.Namespace, *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def run_openclaw(
+    args: argparse.Namespace,
+    *,
+    env: dict[str, str],
+    message_override: str | None = None,
+    timeout_override: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    timeout = args.timeout if timeout_override is None else timeout_override
     command = [
         resolve_openclaw_executable(),
         "agent",
@@ -160,12 +330,12 @@ def run_openclaw(args: argparse.Namespace, *, env: dict[str, str]) -> subprocess
         "--session-id",
         args.session_id,
         "--message",
-        args.message,
+        args.message if message_override is None else message_override,
     ]
     if args.thinking:
         command.extend(["--thinking", args.thinking])
-    if args.timeout is not None:
-        command.extend(["--timeout", str(max(1, int(args.timeout)))])
+    if timeout is not None:
+        command.extend(["--timeout", str(max(1, int(timeout)))])
     if args.json:
         command.append("--json")
     return subprocess.run(command, env=env, capture_output=True, text=True, check=False)
@@ -187,7 +357,7 @@ def main() -> int:
         if args.json:
             output = result.stdout.strip() or result.stderr.strip()
             payload = parse_openclaw_json_output(output)
-            payload = merge_convergence_metadata(payload, args=args, audit=audit)
+            payload = merge_convergence_metadata(payload, args=args, audit=audit, env=env)
             payload = merge_isolation_audit(payload, audit)
             print(json.dumps(payload, ensure_ascii=False))
         else:

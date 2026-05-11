@@ -3285,6 +3285,183 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
 
+    def test_single_llm_runner_classifies_stream_read_error_before_answer_contract(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "stream_read_error", "isError": True}],
+                                "meta": {
+                                    "stopReason": "error",
+                                    "completion": {"finishReason": "error"},
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_stream_read_error", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("agent_stream_read_error", out.runner_meta["agent_error"]["kind"])
+            self.assertNotIn("candidate_answer_contract", out.runner_meta)
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_classifies_openclaw_no_response_fallback(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            fallback_text = (
+                "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — "
+                "please verify before retrying."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": fallback_text, "isError": True}],
+                                "meta": {
+                                    "replayInvalid": True,
+                                    "livenessState": "abandoned",
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_unavailable", out.failure.code)
+            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
+            self.assertFalse(out.should_score())
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_finalization_rescue_as_recovered(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Visible reason.\nFINAL ANSWER: B"}],
+                                "meta": {
+                                    "stopReason": "error",
+                                    "completion": {"finishReason": "error"},
+                                    "convergence": {
+                                        "agent_error_payload_detected": True,
+                                        "agent_error_kind": "agent_stream_read_error",
+                                        "finalization_rescue_attempted": True,
+                                        "finalization_rescue_succeeded": True,
+                                        "recovery_source": "single-llm-finalization-rescue",
+                                    },
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="superchem_multiple_choice_rpf",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertEqual("Visible reason.\nFINAL ANSWER: B", out.answer.full_response_text)
+            assert out.recovery is not None
+            self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
+            self.assertEqual("single-llm-finalization-rescue", out.runner_meta["recovery_mode"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
     def test_single_llm_runner_rejects_superchem_response_without_final_answer_marker(self) -> None:
         original_run_subprocess = benchmark_test.run_subprocess
         original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
