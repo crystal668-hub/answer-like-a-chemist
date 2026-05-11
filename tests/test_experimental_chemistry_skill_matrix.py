@@ -179,6 +179,9 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "paper-pipeline" in prompt
     assert "Organic mechanism SOP" not in prompt
     assert "Experimental chemistry skill routing rules" not in prompt
+    assert "--workspace-root /Users/xutao/.openclaw/workspace" in prompt
+    assert "--execution-cwd \"$PWD\"" in prompt
+    assert "python3 <skill-root>" not in prompt
 
 
 def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:

@@ -5,7 +5,10 @@
 All scripts support:
 
 ```bash
-python3 <skill-root>/scripts/<capability>.py \
+python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
+  --workspace-root /Users/xutao/.openclaw/workspace \
+  --execution-cwd "$PWD" \
+  --script skills/pubchem/scripts/<capability>.py -- \
   --request-json /path/to/request.json \
   --output-dir /tmp/<skill-out> \
   --json

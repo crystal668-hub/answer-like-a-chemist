@@ -49,7 +49,7 @@ OPENCLAW_TIMEOUT_SENTINELS = (
 )
 FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
 Do not call tools or inspect files. Use only the reasoning already present in this session.
-Provide a concise visible justification, then end with exactly one final answer line in the required format from the benchmark prompt.
+Provide a brief but complete visible derivation and checks, then end with exactly one final answer line in the required format from the benchmark prompt.
 For multiple-choice questions, use: FINAL ANSWER: <option letters>"""
 
 

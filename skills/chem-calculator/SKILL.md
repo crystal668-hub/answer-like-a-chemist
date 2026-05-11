@@ -22,7 +22,10 @@ Do not use this skill for structure lookup, nomenclature resolution, or literatu
 ## Execution
 
 ```bash
-python3 <skill-root>/scripts/<capability>.py \
+python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
+  --workspace-root /Users/xutao/.openclaw/workspace \
+  --execution-cwd "$PWD" \
+  --script skills/chem-calculator/scripts/<capability>.py -- \
   --request-json /path/to/request.json \
   --output-dir /tmp/<skill-out> \
   --json

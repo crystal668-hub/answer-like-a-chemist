@@ -611,7 +611,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             rescue = subprocess.CompletedProcess(
                 ["openclaw"],
                 0,
-                stdout=json.dumps({"result": {"payloads": [{"text": "Concise reason.\nFINAL ANSWER: B"}], "meta": {}}}),
+                stdout=json.dumps({"result": {"payloads": [{"text": "Visible check.\nFINAL ANSWER: B"}], "meta": {}}}),
                 stderr="",
             )
 
@@ -624,10 +624,12 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(2, run_mock.call_count)
         rescue_kwargs = run_mock.call_args_list[1].kwargs
         self.assertEqual(10, rescue_kwargs["timeout_override"])
+        self.assertIn("complete visible derivation and checks", rescue_kwargs["message_override"])
         self.assertIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
+        self.assertNotIn("concise visible justification", rescue_kwargs["message_override"])
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual("Concise reason.\nFINAL ANSWER: B", result["payloads"][0]["text"])
+        self.assertEqual("Visible check.\nFINAL ANSWER: B", result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
         self.assertTrue(convergence["agent_error_payload_detected"])
         self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])

@@ -60,6 +60,9 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "chemistry-reasoning-sop" in rendered
     assert "paper-pipeline" in rendered
     assert "literature-evidence" in rendered
+    assert "--workspace-root /Users/xutao/.openclaw/workspace" in rendered
+    assert "--execution-cwd \"$PWD\"" in rendered
+    assert "--script skills/<skill>/scripts/<script>.py --" in rendered
     assert "fact ledger" not in rendered
     assert "Organic mechanism SOP" not in rendered
     assert "Experimental chemistry skill routing rules" not in rendered
@@ -67,6 +70,8 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "selected skill route" not in rendered.lower()
     assert "SKILL TRACE: skipped" not in rendered
     assert "If you skip" not in rendered
+    assert "find run_skill" not in rendered.lower()
+    assert "python3 <skill-root>" not in rendered
     assert "`chem-calculator`" not in rendered
     assert "`rdkit`" not in rendered
     assert "`paper-retrieval`" not in rendered

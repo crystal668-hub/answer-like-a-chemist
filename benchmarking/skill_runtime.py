@@ -19,6 +19,7 @@ MODULE_NOT_FOUND_RE = re.compile(r"No module named ['\"]([^'\"]+)['\"]")
 @dataclass(frozen=True)
 class WorkspaceUvSkillRunner:
     workspace_root: Path
+    execution_cwd: Path | None = None
     uv_executable: str | None = None
     run_subprocess: RunSubprocess = subprocess.run
     timeout_seconds: int = 60
@@ -30,7 +31,7 @@ class WorkspaceUvSkillRunner:
         return executable
 
     def build_command(self, script_path: Path, args: list[str]) -> list[str]:
-        command = [self.resolved_uv(), "run"]
+        command = [self.resolved_uv(), "run", "--project", str(self.workspace_root)]
         if _script_uses_optional_extra(self.workspace_root, script_path) == "paper-parse":
             command.extend(["--extra", "paper-parse"])
         command.extend(["python", str(script_path), *args])
@@ -38,6 +39,7 @@ class WorkspaceUvSkillRunner:
 
     def run_script(self, script_path: Path, args: list[str], *, env: dict[str, str] | None = None) -> dict[str, Any]:
         command = self.build_command(script_path, args)
+        execution_cwd = self.execution_cwd or self.workspace_root
         merged_env = os.environ.copy()
         merged_env["PYTHONNOUSERSITE"] = "1"
         merged_env["OPENCLAW_SKILL_RUNNER"] = "workspace_uv"
@@ -46,7 +48,7 @@ class WorkspaceUvSkillRunner:
         try:
             completed = self.run_subprocess(
                 command,
-                cwd=str(self.workspace_root),
+                cwd=str(execution_cwd),
                 env=merged_env,
                 text=True,
                 capture_output=True,

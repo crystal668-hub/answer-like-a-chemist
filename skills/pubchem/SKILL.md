@@ -25,7 +25,10 @@ structure, hand it to the `rdkit` skill for canonicalization or validation.
 ## Execution
 
 ```bash
-python3 <skill-root>/scripts/name_to_cid.py \
+python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
+  --workspace-root /Users/xutao/.openclaw/workspace \
+  --execution-cwd "$PWD" \
+  --script skills/pubchem/scripts/name_to_cid.py -- \
   --request-json /path/to/request.json \
   --output-dir /tmp/pubchem-out \
   --json

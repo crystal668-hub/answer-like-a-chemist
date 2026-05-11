@@ -1497,8 +1497,10 @@ Points: 0.5, Item: Second criterion
         )
 
         self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("When roughly 20% or less of the budget remains", prompt)
+        self.assertIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertNotIn("20% or less", prompt)
         self.assertIn("stop starting new tool or skill exploration", prompt)
+        self.assertIn("Do not skip task-relevant derivation steps", prompt)
         self.assertIn("FINAL ANSWER", prompt)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:

@@ -119,6 +119,45 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("Do not use web search", web_off)
         self.assertNotIn("external browsing", web_off)
 
+    def test_single_llm_prompt_uses_30_percent_stop_rule_and_visible_checks(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True, time_budget_seconds=900)
+
+        self.assertIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertNotIn("20% or less", prompt)
+        self.assertNotIn("Be careful, concise", prompt)
+        self.assertIn("Do not skip task-relevant derivation steps", prompt)
+        self.assertIn("include enough visible checks for grading", prompt)
+
+    def test_superchem_prompt_requires_visible_option_checks_without_skill_call_cap(self) -> None:
+        record = BenchmarkRecord(
+            record_id="superchem-1",
+            dataset="superchem",
+            source_file="/tmp/superchem.jsonl",
+            eval_kind="superchem_multiple_choice_rpf",
+            prompt="Choose the product.\nA. X\nB. Y",
+            reference_answer="B",
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+
+        self.assertIn("option checks", prompt)
+        self.assertIn("FINAL ANSWER: <option letters>", prompt)
+        self.assertIn("If the gathered evidence is sufficient to distinguish the options, answer immediately", prompt)
+        self.assertIn("Provider skills may be used when they directly distinguish candidate options", prompt)
+        self.assertNotIn("Show concise reasoning", prompt)
+        self.assertNotIn("at most one", prompt.lower())
+        self.assertNotIn("max one", prompt.lower())
+
     def test_chemqa_goal_omits_websearch_guidance(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",

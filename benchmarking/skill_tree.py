@@ -275,6 +275,10 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
             families.append(f"`{family['id']}`")
         if families:
             lines.append(f"- `{domain['id']}`: {domain['label']} Families: {', '.join(families)}.")
-    lines.append("When a family is relevant, run local skill scripts through `scripts/run_skill.py`, which executes target scripts with workspace `uv run python`.")
+    lines.append(
+        "When a family is relevant, run local skill scripts only through the canonical wrapper: "
+        "`python /Users/xutao/.openclaw/workspace/scripts/run_skill.py --workspace-root /Users/xutao/.openclaw/workspace --execution-cwd \"$PWD\" --script skills/<skill>/scripts/<script>.py -- ...`."
+    )
+    lines.append("Do not search for alternate runners or call skill scripts directly with `python` or `python3`.")
     lines.append("Use tool outputs, artifact paths, or cited retrieved evidence in the answer when a skill contributes.")
     return "\n".join(lines)

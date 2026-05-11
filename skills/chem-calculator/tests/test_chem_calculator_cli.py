@@ -97,6 +97,36 @@ class MolarMassTests(unittest.TestCase):
         self.assertEqual(payload["status"], "success")
         self.assertAlmostEqual(payload["primary_result"]["molar_mass_g_per_mol"], 249.685, places=3)
 
+    def test_alkali_halide_formulas(self) -> None:
+        expected = {"NaCl": 58.439769, "KCl": 74.5483}
+        with tempfile.TemporaryDirectory(prefix="chem-calculator-test-") as temp_dir_name:
+            root = Path(temp_dir_name)
+            for formula, molar_mass in expected.items():
+                request_path = root / f"{formula}.json"
+                request_path.write_text(
+                    json.dumps({"operation": "molar_mass", "formula": formula}),
+                    encoding="utf-8",
+                )
+                output_dir = root / formula
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPTS_DIR / "molar_mass.py"),
+                        "--request-json",
+                        str(request_path),
+                        "--output-dir",
+                        str(output_dir),
+                        "--json",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["status"], "success")
+                self.assertEqual(payload["primary_result"]["formula"], formula)
+                self.assertAlmostEqual(payload["primary_result"]["molar_mass_g_per_mol"], molar_mass, places=3)
+
 
 class StoichiometryTests(unittest.TestCase):
     def test_limiting_reagent(self) -> None:

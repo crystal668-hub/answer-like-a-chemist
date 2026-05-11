@@ -13,7 +13,7 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 - Separate facts as `given`, `derived`, `tool-verified`, `source-supported`, or `assumption`.
 - If a claim is uncertain and material to the answer, verify it before relying on it.
 - If the same tool path is unavailable or fails twice, stop retrying that path, state the limitation, and continue with bounded reasoning.
-- Keep final output concise, but include the decisive intermediate steps, checks, and evidence anchors.
+- Do not skip task-relevant derivation steps, option checks, source checks, or uncertainty notes needed to make the final answer auditable.
 
 ## Standard Answering Flow
 
@@ -71,11 +71,20 @@ For organic mechanism, synthesis, product, or intermediate questions:
 
 ## Final Answer Discipline
 
-- Include a concise visible trace: decisive structures, mechanism checkpoints, calculations, source facts, and uncertainty notes.
+- Include a visible trace: decisive structures, mechanism checkpoints, calculations, source facts, and uncertainty notes.
 - For multiple-choice tasks, evaluate each option or group of related options against the trace before selecting.
 - For open-ended tasks, finish with the exact final-answer format requested by the prompt.
 - Keep tool exploration proportionate to the time budget; stop starting new tool paths when time is nearly exhausted.
 
-## Empirical Lessons Placeholder
+## Benchmark Visible Trace Contract
 
-No empirical benchmark lessons are included in the first version. Add future lessons only after repeated evidence shows a stable failure pattern, and keep them separate from the fixed SOP above.
+- Multiple-choice: show option checks or grouped option eliminations, name the decisive structure/mechanism/evidence distinction, then finish with `FINAL ANSWER: <letters>`.
+- Numeric: show the governing formula, unit conversions, substituted values, important intermediate numbers, rounding choice, and final answer line.
+- Research/source tasks: show a compact fact ledger, source or tool evidence for material claims, the mechanism/calculation chain, any remaining uncertainty, and final synthesis.
+- If evidence is already sufficient to answer, stop exploring tools and produce the final answer. More search is not a substitute for a clear visible trace.
+- If paper or web paths return 403, 429, empty results, or unavailable payloads twice in total, stop broadening that path and answer from available evidence with the limitation marked.
+
+## Empirical Lessons
+
+- Benchmark agents must not search for alternate skill runners or call skill scripts directly with `python` or `python3`; use the benchmark prompt's canonical `scripts/run_skill.py` wrapper when a provider skill is needed.
+- For multimodal multiple-choice chemistry, inspect the local question bundle and referenced images first. If those inputs distinguish the options, close with option checks and `FINAL ANSWER:` instead of reading unrelated skills.

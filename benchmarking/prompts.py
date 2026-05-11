@@ -65,15 +65,17 @@ def build_single_llm_prompt(
 ) -> str:
     instructions = [
         "You are answering a chemistry benchmark question.",
-        "Be careful, concise, and do not fabricate missing facts.",
+        "Do not fabricate missing facts.",
+        "Do not skip task-relevant derivation steps; include enough visible checks for grading.",
     ]
     if isinstance(time_budget_seconds, int) and time_budget_seconds > 0:
         instructions.extend(
             [
                 f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.",
-                "When roughly 20% or less of the budget remains, stop starting new tool or skill exploration.",
+                "When roughly 30% or less of the budget remains, stop starting new tool or skill exploration.",
                 "At that point, use the evidence already gathered and produce the requested final answer format immediately, even if uncertain.",
                 "If a tool path fails twice or is unavailable, switch to best-effort chemistry reasoning instead of trying more variants of the same path.",
+                "If paper or web paths return 403, 429, or empty results twice in total, stop broadening that path and answer from available evidence.",
             ]
         )
     if skills_enabled:
@@ -83,7 +85,10 @@ def build_single_llm_prompt(
 
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("This is a chemistry multiple-choice question.")
-        instructions.append("Show concise reasoning, then end with exactly one line formatted as: FINAL ANSWER: <option letters>.")
+        instructions.append("Show visible option checks that distinguish the candidates, then end with exactly one line formatted as: FINAL ANSWER: <option letters>.")
+        instructions.append("If the gathered evidence is sufficient to distinguish the options, answer immediately instead of exploring more tools.")
+        instructions.append("Provider skills may be used when they directly distinguish candidate options, verify a key structure or mechanism, or resolve material uncertainty.")
+        instructions.append("Do not use provider skills to explore the skill tree, search for runners, or perform generic web/paper searches unrelated to the candidate options.")
         instructions.append("If multiple options are correct, separate the letters with `|`.")
         if input_bundle is not None:
             instructions.append(f"Local file bundle: {input_bundle.bundle_dir}")
@@ -91,12 +96,12 @@ def build_single_llm_prompt(
             if input_bundle.image_files:
                 instructions.append("Inspect the local image files referenced in the bundle before answering.")
     elif record.eval_kind == "chembench_open_ended":
-        instructions.append("Show brief reasoning if needed, then end with exactly one line formatted as: FINAL ANSWER: <answer>.")
+        instructions.append("Show task-relevant formulas, substitutions, units, and checks, then end with exactly one line formatted as: FINAL ANSWER: <answer>.")
     elif record.eval_kind == "frontierscience_olympiad":
         instructions.append("End with exactly one line formatted as: FINAL ANSWER: <answer>.")
     elif record.eval_kind == "hle":
         instructions.append("Use the official HLE response format exactly:")
-        instructions.append("Explanation: <your concise explanation>")
+        instructions.append("Explanation: <your visible derivation and checks>")
         instructions.append("Answer: <your chosen answer>")
         instructions.append("Confidence: <your confidence score between 0% and 100%>")
         if input_bundle is not None:
@@ -131,7 +136,7 @@ def build_chemqa_goal(
         instructions.append("If appropriate, end with a line `FINAL ANSWER: <answer>`.")
     elif record.eval_kind == "hle":
         instructions.append("Use the official HLE response format exactly:")
-        instructions.append("Explanation: <your concise explanation>")
+        instructions.append("Explanation: <your visible derivation and checks>")
         instructions.append("Answer: <your chosen answer>")
         instructions.append("Confidence: <your confidence score between 0% and 100%>")
         if input_bundle is not None:
