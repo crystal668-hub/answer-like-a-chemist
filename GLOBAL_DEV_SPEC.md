@@ -50,7 +50,7 @@
     - Operational state and logs; not code modules.
   - `openclaw.json`
     - Base OpenClaw config used and rewritten into run-scoped configs by benchmark launchers.
-    - Defines a global `openai/gpt-5.4` provider shim that uses the `openai` provider name while routing requests to the SU8 OpenAI-compatible endpoint via `${SU8_BASE_URL}` and `${SU8_API_KEY}`. This preserves OpenClaw provider-name guard behavior for GPT-5 runs without changing the default primary model, which remains `su8/gpt-5.4`.
+    - Defines a global `openai/MiniMax-M2.7-highspeed` provider shim that uses the `openai` provider name while routing requests to the Minimax OpenAI-compatible endpoint via `${MINIMAX_BASE_URL}` and `${MINIMAX_API_KEY}`. The default primary model remains `su8/gpt-5.4`.
 
 - Source modules
   - `workspace/benchmarking/`
