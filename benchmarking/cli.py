@@ -30,6 +30,7 @@ try:
     from benchmarking import cleanroom as _cleanroom
     from benchmarking import orchestration as _orchestration
     from benchmarking import runtime_bundles as _runtime_bundles
+    from benchmarking.automated_evaluation_launcher import launch_automated_evaluation
     from benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
     from benchmarking.convergence import ConvergencePolicy
     from benchmarking.datasets import (
@@ -118,6 +119,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fa
     from workspace.benchmarking import cleanroom as _cleanroom
     from workspace.benchmarking import orchestration as _orchestration
     from workspace.benchmarking import runtime_bundles as _runtime_bundles
+    from workspace.benchmarking.automated_evaluation_launcher import launch_automated_evaluation
     from workspace.benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
     from workspace.benchmarking.convergence import ConvergencePolicy
     from workspace.benchmarking.datasets import (
@@ -1813,6 +1815,21 @@ def save_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def automated_evaluation_launch_failed(output_root: Path, exc: Exception) -> dict[str, Any]:
+    analysis_dir = output_root / "analysis"
+    status_path = analysis_dir / "status.json"
+    return {
+        "status": "launch_failed",
+        "error": f"{type(exc).__name__}: {exc}",
+        "analysis_dir": str(analysis_dir),
+        "status_path": str(status_path),
+        "input_bundle_path": str(analysis_dir / "input-bundle.json"),
+        "events_path": str(analysis_dir / "codex-events.jsonl"),
+        "report_path": str(analysis_dir / "report.json"),
+        "markdown_report_path": str(analysis_dir / "report.md"),
+    }
+
+
 
 def build_execution_error_evaluation(record: BenchmarkRecord, *, error_message: str) -> EvaluationResult:
     return _shared_build_execution_error_evaluation(record, error_message=error_message)
@@ -2177,50 +2194,55 @@ def main() -> int:
     }
     save_json(output_root / "results.json", payload)
     export_csv_reports(output_root, summary, aggregate_group_ids)
-    save_json(
-        output_root / "runtime-manifest.json",
-        {
-            "execution_plan": {
-                "mode": "wave-batched",
-                "max_concurrent_groups": args.max_concurrent_groups,
-                "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
-                "waves": group_waves,
-            },
-            "aggregate_groups": aggregate_group_ids,
-            "run_groups": group_ids,
-            "merge_existing_per_record": args.merge_existing_per_record,
-            "skill_health": {
-                "summary": skill_health_summary,
-                "report_path": str(output_root / "skill-health.json"),
-            },
-            "web_search_preflight": {
-                **web_search_preflight,
-                "report_path": str(output_root / "web-search-preflight.json"),
-            },
-            "convergence_policy": convergence_policy_meta,
-            "groups": {
-                group_id: {
-                    "group": asdict(EXPERIMENT_GROUPS[group_id]),
-                    "config_path": str(config_pool.config_for_group(EXPERIMENT_GROUPS[group_id])),
-                    "effective_skill_allowlist": list(effective_experiment_specs[group_id].skill_allowlist or ()),
-                    "slot_set": CHEMQA_SLOT_SETS.get(group_id),
-                    "single_agent": (
-                        effective_experiment_specs[group_id].resolve_single_agent_id(args.single_agent_id_override)
-                        if group_id in effective_experiment_specs and EXPERIMENT_GROUPS[group_id].runner == "single_llm"
-                        else None
-                    ),
-                    "single_agent_model": args.single_agent_model,
-                    "chemqa_model_profile": args.chemqa_model_profile if EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
-                }
-                for group_id in group_ids
-            },
-            "judge": {
-                "agent": args.judge_agent,
-                "model": args.judge_model,
-                "config_path": str(config_pool.judge_config_path()),
-            },
+    runtime_manifest = {
+        "execution_plan": {
+            "mode": "wave-batched",
+            "max_concurrent_groups": args.max_concurrent_groups,
+            "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
+            "waves": group_waves,
         },
-    )
+        "aggregate_groups": aggregate_group_ids,
+        "run_groups": group_ids,
+        "merge_existing_per_record": args.merge_existing_per_record,
+        "skill_health": {
+            "summary": skill_health_summary,
+            "report_path": str(output_root / "skill-health.json"),
+        },
+        "web_search_preflight": {
+            **web_search_preflight,
+            "report_path": str(output_root / "web-search-preflight.json"),
+        },
+        "convergence_policy": convergence_policy_meta,
+        "groups": {
+            group_id: {
+                "group": asdict(EXPERIMENT_GROUPS[group_id]),
+                "config_path": str(config_pool.config_for_group(EXPERIMENT_GROUPS[group_id])),
+                "effective_skill_allowlist": list(effective_experiment_specs[group_id].skill_allowlist or ()),
+                "slot_set": CHEMQA_SLOT_SETS.get(group_id),
+                "single_agent": (
+                    effective_experiment_specs[group_id].resolve_single_agent_id(args.single_agent_id_override)
+                    if group_id in effective_experiment_specs and EXPERIMENT_GROUPS[group_id].runner == "single_llm"
+                    else None
+                ),
+                "single_agent_model": args.single_agent_model,
+                "chemqa_model_profile": args.chemqa_model_profile if EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
+            }
+            for group_id in group_ids
+        },
+        "judge": {
+            "agent": args.judge_agent,
+            "model": args.judge_model,
+            "config_path": str(config_pool.judge_config_path()),
+        },
+    }
+    save_json(output_root / "runtime-manifest.json", runtime_manifest)
+    try:
+        automated_evaluation_status = launch_automated_evaluation(output_root)
+    except Exception as exc:
+        automated_evaluation_status = automated_evaluation_launch_failed(output_root, exc)
+        save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
+    runtime_manifest["automated_evaluation"] = automated_evaluation_status
+    save_json(output_root / "runtime-manifest.json", runtime_manifest)
     print(json.dumps({"output_dir": str(output_root), "summary": summary}, indent=2, ensure_ascii=False))
     return 0
 

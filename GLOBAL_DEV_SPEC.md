@@ -22,6 +22,7 @@
   - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, paper PDF backend imports through the `paper-parse` optional extra, executables, API keys loaded from process env or the OpenClaw runtime `.env`, data files, and network providers with per-skill probe timeouts for slower providers such as ChEMBL; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`. Benchmark startup also runs a generic `web_search` preflight for websearch-enabled groups and fails those groups early when DuckDuckGo/OpenClaw search is unavailable.
   - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run --project <canonical workspace> python` while preserving the agent workspace as the execution cwd for relative input/output paths, with `paper-parse` scripts executed via `uv run --project <canonical workspace> --extra paper-parse python`, and return structured unavailable payloads such as `invalid_workspace_root`, `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
   - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, ask skills-on agents to read `act-like-a-chemist` before selecting provider skills, and post-run reporting tracks actual tool calls separately from answer scoring.
+  - `DONE`: Launch a default non-blocking automated benchmark evaluation and experience-extraction pass after every completed benchmark aggregation via `workspace/benchmarking/automated_evaluation_launcher.py` and `workspace/benchmarking/automated_evaluation.py`. The analysis builds a run-local evidence bundle from `results.json`, per-record JSON, single-LLM transcripts, and ChemQA archived artifacts, then invokes a read-only `codex exec` session to write `analysis/report.json` and `analysis/report.md`; launch or analysis failure is diagnostic only and does not change the benchmark exit code.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
@@ -88,6 +89,10 @@
       - Builds single-agent and ChemQA benchmark prompts, adds run-local visual bundle instructions when present, resolves ChemQA answer-kind hints, and keeps websearch availability controlled by runtime config rather than prompt wording.
     - `reporting.py`
       - Defines the per-record benchmark result schema and aggregates per-record results into summary buckets.
+    - `automated_evaluation.py`
+      - Builds the post-run automated evaluation input bundle, summarizes visible single-LLM transcript evidence without retaining hidden thinking content, summarizes ChemQA archived artifacts, invokes read-only `codex exec`, validates the report shape, writes fallback reports on analysis failure, and renders Markdown.
+    - `automated_evaluation_launcher.py`
+      - Detached launcher used by the benchmark CLI after final result artifacts are written; records launch status under `analysis/status.json` without affecting benchmark success/failure.
     - `skill_tree.py`
       - Loads the historical chemistry skill inventory, defines the full benchmark skill allowlist, and renders a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill, optionally filtered to health-available skills.
     - `skill_audit.py`
@@ -165,10 +170,21 @@
   - Input / Output:
     - Input: benchmark root or dataset files, optional dataset/subset filters, group list, timeouts, config path, model/profile overrides.
     - Output: `results.json`, `results.partial.json`, `runtime-manifest.json`, `runtime-config/*.json`, `per-record/*/*.json`, CSV summaries.
+    - After writing final result artifacts, the runner also starts a detached automated evaluation process by default and records its launch state under `runtime-manifest.json.automated_evaluation`; the analysis process writes under `analysis/`.
     - Per-record JSON entries are on schema version `2` and include `skills_enabled` plus explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
     - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, degraded execution counts, and HLE calibration RMSE for confidence diagnostics.
   - Implementation location: `workspace/benchmarking/cli.py`, `workspace/benchmarking/*`; `workspace/benchmark_test.py` is the legacy facade.
   - Status: `DONE`
+
+### Automated Benchmark Evaluation
+- Each full benchmark completion writes the usual final artifacts first, then starts `benchmarking.automated_evaluation` in a detached process through `benchmarking.automated_evaluation_launcher.launch_automated_evaluation`.
+- The benchmark CLI does not expose user-facing switches for this feature. It is a default post-run diagnostic path and is not a scoring gate.
+- Launch status is written to `output_root/analysis/status.json` and copied into `runtime-manifest.json` under `automated_evaluation`.
+- Analysis inputs are written to `output_root/analysis/input-bundle.json`. The bundle groups results by `record_id`, includes final answers, evaluator/judge details, reference answers, status axes, skill-use audit metadata, visible transcript summaries for single-agent runs, and ChemQA artifact summaries for ChemQA runs.
+- Single-agent transcript summarization intentionally extracts only visible text, tool calls, and tool results; hidden `thinking` content and signatures are not carried into the analysis bundle.
+- ChemQA summarization reads archived `qa_result.json`, `artifact_manifest.json`, `candidate_view.json`, final/failure artifacts, and proposer/reviewer trajectory files when present.
+- The analysis process calls `codex exec --sandbox read-only --ask-for-approval never --json` from the canonical workspace root and writes `analysis/codex-events.jsonl`, `analysis/report.json`, and `analysis/report.md`.
+- If Codex launch, execution, report parsing, or report validation fails, the analysis status becomes `failed` and a fallback report is still written from the local evidence bundle. Benchmark pass/fail, scoring, and process exit code are unchanged.
 
 ### Benchmark Result Status Axes
 - `results.json` now carries top-level `schema_version = 2` and a `status_axes_description` block that documents the evaluability axes used by per-record entries.
@@ -515,6 +531,7 @@
   - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.cli` keeps compatibility wrappers around that package module for legacy callers.
   - For OpenClaw subprocesses, `benchmarking.openclaw_env.build_openclaw_subprocess_env` preserves explicit proxy variables and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder.
   - It runs `benchmarking.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
+  - After writing `results.json`, CSV summaries, and the final `runtime-manifest.json`, it starts the detached automated evaluation process and then rewrites `runtime-manifest.json` with the `automated_evaluation` launch status. If launcher setup raises, the CLI writes a `launch_failed` status under `analysis/status.json` and still returns according to the benchmark run outcome.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
   - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skill_tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`). Startup health filtering writes only available skills to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
   - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.

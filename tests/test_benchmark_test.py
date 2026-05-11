@@ -491,6 +491,11 @@ print(json.dumps({{
                     },
                 ), \
                 mock.patch.object(benchmark_test, "run_group", side_effect=fake_run_group), \
+                mock.patch.object(
+                    benchmark_test,
+                    "launch_automated_evaluation",
+                    return_value={"status": "launched", "output_root": str(output_root)},
+                ), \
                 mock.patch.object(sys, "argv", argv):
                 exit_code = benchmark_test.main()
 
