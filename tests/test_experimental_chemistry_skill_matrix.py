@@ -183,6 +183,8 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "--workspace-root /Users/xutao/.openclaw/workspace" in prompt
     assert "--execution-cwd \"$PWD\"" in prompt
     assert "tool name must be exactly `exec`" in prompt
+    assert 'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in prompt
+    assert '--execution-cwd \\"$PWD\\"' in prompt
     assert '{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in prompt
     assert "`python3` tool call" in prompt
     assert "python3 <skill-root>" not in prompt

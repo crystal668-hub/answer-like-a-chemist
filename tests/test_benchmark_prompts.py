@@ -124,6 +124,8 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("paper-pipeline", skills_on)
         self.assertIn("calculation-math", skills_on)
         self.assertIn("tool name must be exactly `exec`", skills_on)
+        self.assertIn('exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py', skills_on)
+        self.assertIn('--execution-cwd \\"$PWD\\"', skills_on)
         self.assertIn('{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py', skills_on)
         self.assertIn("`python3` tool call", skills_on)
         self.assertNotIn("Experimental chemistry skill routing rules", skills_on)

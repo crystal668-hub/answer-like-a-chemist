@@ -263,6 +263,7 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
         '--execution-cwd "$PWD" '
         "--script skills/<skill>/scripts/<script>.py -- ..."
     )
+    run_skill_exec_example = f"exec {json.dumps({'command': run_skill_command})}"
     lines = [
         "Skill capability tree:",
         "Read `act-like-a-chemist` first for the chemistry solving SOP and Benchmark Coverage Checklist, then choose provider skills only when they help answer the record.",
@@ -285,8 +286,8 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
         "When a family is relevant, run local skill scripts only through the canonical wrapper: "
         f"`{run_skill_command}`."
     )
-    lines.append("To run that wrapper, call the OpenClaw tool whose tool name must be exactly `exec`; its JSON arguments object must contain `command`.")
-    lines.append(f'Positive example: checklist gap -> call `exec` with {{"command": "{run_skill_command}"}}; then use stdout/artifacts in the answer.')
+    lines.append("When you want to execute a local script, use this exact form: `" + run_skill_exec_example + "`.")
+    lines.append("The tool name must be exactly `exec`; the JSON object after it must contain `command`.")
     lines.append(
         "Negative examples: `python3` tool call is invalid because `python3` is a shell program, not a tool name; "
         "`script`, `cmd`, or `command` tool call uses nonexistent tool names; `exec` with `{}` is invalid because `command` is missing."
