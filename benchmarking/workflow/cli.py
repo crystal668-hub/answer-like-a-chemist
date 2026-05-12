@@ -371,6 +371,17 @@ def parse_args() -> argparse.Namespace:
         help="judge runtime model，默认锁定为 su8/gpt-5.4",
     )
     parser.add_argument("--single-timeout", type=int, default=900, help="单一 LLM 每题超时秒数")
+    parser.add_argument(
+        "--single-timeout-retries",
+        type=int,
+        default=3,
+        help="单一 LLM timeout-family 失败后的 fresh-session 最大重试次数，默认 3",
+    )
+    parser.add_argument(
+        "--single-timeout-retry-backoff-seconds",
+        default="5,15,45",
+        help="单一 LLM timeout 重试前等待秒数，逗号分隔，默认 5,15,45",
+    )
     parser.add_argument("--chemqa-timeout", type=int, default=1800, help="ChemQA fixed-lane review 每题超时秒数")
     parser.add_argument("--judge-timeout", type=int, default=300, help="Judge 每次评测超时秒数")
     parser.add_argument(
@@ -1107,6 +1118,9 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
         convergence_policy: ConvergencePolicy | None = None,
+        timeout_retries: int = 3,
+        timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
+        sleep_fn=time.sleep,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -1116,6 +1130,9 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
             configured_skills=configured_skills,
             skill_health_summary=skill_health_summary,
             convergence_policy=convergence_policy,
+            timeout_retries=timeout_retries,
+            timeout_retry_backoff_seconds=timeout_retry_backoff_seconds,
+            sleep_fn=sleep_fn,
             run_subprocess=run_subprocess,
             parse_json_stdout=parse_json_stdout,
             unwrap_agent_payload=unwrap_agent_payload,
@@ -1559,6 +1576,28 @@ def print_selected_records(records: list[BenchmarkRecord]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
+def parse_retry_backoff_seconds(raw: str, *, max_retries: int) -> tuple[float, ...]:
+    if max_retries <= 0:
+        return ()
+    values: list[float] = []
+    for item in str(raw or "").split(","):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        try:
+            value = float(stripped)
+        except ValueError as exc:
+            raise BenchmarkError(f"Invalid --single-timeout-retry-backoff-seconds value: {stripped}") from exc
+        if value < 0:
+            raise BenchmarkError("--single-timeout-retry-backoff-seconds values must be non-negative")
+        values.append(value)
+    if not values:
+        raise BenchmarkError("--single-timeout-retry-backoff-seconds must include at least one value")
+    while len(values) < max_retries:
+        values.append(values[-1])
+    return tuple(values[:max_retries])
+
+
 def filter_records_by_subsets(records: list[BenchmarkRecord], raw_subsets: str | None) -> list[BenchmarkRecord]:
     wanted = {item.strip() for item in str(raw_subsets or "").split(",") if item.strip()}
     if not wanted:
@@ -1815,6 +1854,8 @@ def run_group(
     chemqa_convergence_policy: ConvergencePolicy | None = None,
     experiment_specs: dict[str, ExperimentSpec] | None = None,
     skill_health_summary: dict[str, Any] | None = None,
+    single_timeout_retries: int = 3,
+    single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
 ) -> list[GroupRecordResult]:
     try:
         return _orchestration.run_group(
@@ -1835,6 +1876,8 @@ def run_group(
             chemqa_slot_sets=CHEMQA_SLOT_SETS,
             experiment_specs=experiment_specs or EXPERIMENT_SPECS,
             skill_health_summary=skill_health_summary,
+            single_timeout_retries=single_timeout_retries,
+            single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
             build_runner_fn=build_runner,
             evaluate_answer_fn=evaluate_answer,
             build_error_group_record_result_fn=build_error_group_record_result,
@@ -1882,6 +1925,11 @@ def run_benchmark_web_search_preflight(
 
 def main() -> int:
     args = parse_args()
+    single_timeout_retries = max(0, int(getattr(args, "single_timeout_retries", 3)))
+    single_timeout_retry_backoff_seconds = parse_retry_backoff_seconds(
+        str(getattr(args, "single_timeout_retry_backoff_seconds", "5,15,45")),
+        max_retries=single_timeout_retries,
+    )
     single_convergence_policy = ConvergencePolicy(
         timeout_seconds=args.single_timeout,
         finalization_grace_seconds=args.finalization_grace_seconds,
@@ -2010,6 +2058,8 @@ def main() -> int:
                         rebuttal_rounds=args.rebuttal_rounds,
                         single_convergence_policy=single_convergence_policy,
                         chemqa_convergence_policy=chemqa_convergence_policy,
+                        single_timeout_retries=single_timeout_retries,
+                        single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                     )
@@ -2077,6 +2127,10 @@ def main() -> int:
         "skill_health_summary": skill_health_summary,
         "web_search_preflight": web_search_preflight,
         "convergence_policy": convergence_policy_meta,
+        "single_timeout_retry": {
+            "max_retries": single_timeout_retries,
+            "backoff_seconds": list(single_timeout_retry_backoff_seconds),
+        },
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
             "enabled": args.random_count_per_subset is not None,
@@ -2123,6 +2177,10 @@ def main() -> int:
             "report_path": str(output_root / "web-search-preflight.json"),
         },
         "convergence_policy": convergence_policy_meta,
+        "single_timeout_retry": {
+            "max_retries": single_timeout_retries,
+            "backoff_seconds": list(single_timeout_retry_backoff_seconds),
+        },
         "groups": {
             group_id: {
                 "group": asdict(EXPERIMENT_GROUPS[group_id]),

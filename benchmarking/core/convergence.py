@@ -13,6 +13,69 @@ FINAL_ANSWER_LINE_RE = re.compile(
 )
 HLE_ANSWER_RE = re.compile(r"(?ims)^\s*Explanation\s*:.+^\s*Answer\s*:.+^\s*Confidence\s*:\s*\S+")
 MARKDOWN_BOLD_MARKER = "**"
+TIMEOUT_FAMILY_HTTP_STATUS_RE = re.compile(
+    r"(?:\bhttp(?:\s+status)?\s*(?:408|499|500|502|503|504)\b)"
+    r"|(?:\bstatus\s*(?:408|499|500|502|503|504)\b)"
+    r"|(?:\b(?:408|499|500|502|503|504)\b.*\b(?:gateway|server|service|request|response|upstream|http)\b)",
+    re.IGNORECASE,
+)
+TIMEOUT_FAMILY_POSITIVE_PATTERNS = (
+    "timeout",
+    "timed out",
+    "deadline exceeded",
+    "context deadline exceeded",
+    "gateway timeout",
+    "etimedout",
+    "esockettimedout",
+    "econnreset",
+    "econnaborted",
+    "econnrefused",
+    "enetunreach",
+    "eai_again",
+    "fetch failed",
+    "network request failed",
+    "connection reset",
+    "connection error",
+    "network error",
+)
+TIMEOUT_FAMILY_EXCLUSION_PATTERNS = (
+    "approval timeout",
+    "approval timed out",
+    "timed out waiting for approval",
+    "sandbox timeout",
+    "sandbox timed out",
+    "exec timeout",
+    "exec timed out",
+    "tool timeout",
+    "tool timed out",
+    "skill script timeout",
+    "skill script timed out",
+    "script timeout",
+    "script timed out",
+    "auth failed",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "invalid api key",
+    "billing",
+    "insufficient_quota",
+    "quota exceeded",
+    "rate limit",
+    "ratelimit",
+    "too many requests",
+    "context overflow",
+    "context length",
+    "maximum context",
+    "max context",
+    "model not found",
+    "image size",
+    "role ordering",
+    "invalid role",
+    "format error",
+    "invalid format",
+    "response_format",
+    "invalid_request_error",
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +91,10 @@ class ConvergencePolicy:
 
 
 def _iter_transcript_messages(transcript_path: Path) -> list[dict[str, Any]]:
+    return [event["message"] for event in _iter_transcript_events(transcript_path) if isinstance(event.get("message"), dict)]
+
+
+def _iter_transcript_events(transcript_path: Path) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     if not transcript_path.is_file():
         return messages
@@ -38,9 +105,8 @@ def _iter_transcript_messages(transcript_path: Path) -> list[dict[str, Any]]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        message = event.get("message")
-        if isinstance(message, dict):
-            messages.append(message)
+        if isinstance(event, dict):
+            messages.append(event)
     return messages
 
 
@@ -60,7 +126,16 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     assistant_turn_count = 0
     tool_call_count = 0
     tool_names: list[str] = []
-    for message in _iter_transcript_messages(transcript_path):
+    prompt_errors: list[str] = []
+    for event in _iter_transcript_events(transcript_path):
+        if event.get("customType") == "openclaw:prompt-error":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            error_text = str(data.get("error") or data.get("message") or "").strip()
+            if error_text:
+                prompt_errors.append(error_text)
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
         if message.get("role") == "assistant":
             assistant_turn_count += 1
             for item in message.get("content") or []:
@@ -69,12 +144,27 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
                     name = str(item.get("name") or "")
                     if name:
                         tool_names.append(name)
+    latest_prompt_error = prompt_errors[-1] if prompt_errors else ""
     return {
         "transcript_path": str(transcript_path),
         "assistant_turn_count": assistant_turn_count,
         "tool_call_count": tool_call_count,
         "tool_names": tool_names,
+        "prompt_error_count": len(prompt_errors),
+        "latest_prompt_error": latest_prompt_error,
+        "latest_prompt_error_is_timeout": is_timeout_family_text(latest_prompt_error),
     }
+
+
+def is_timeout_family_text(text: Any) -> bool:
+    candidate = str(text or "").strip().lower()
+    if not candidate:
+        return False
+    if any(pattern in candidate for pattern in TIMEOUT_FAMILY_EXCLUSION_PATTERNS):
+        return False
+    if TIMEOUT_FAMILY_HTTP_STATUS_RE.search(candidate):
+        return True
+    return any(pattern in candidate for pattern in TIMEOUT_FAMILY_POSITIVE_PATTERNS)
 
 
 def _strip_final_answer_emphasis(answer: str, marker: str) -> str:

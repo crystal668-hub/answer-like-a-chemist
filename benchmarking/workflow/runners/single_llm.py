@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.core.convergence import ConvergencePolicy, has_final_answer_marker
+from benchmarking.core.convergence import ConvergencePolicy, has_final_answer_marker, is_timeout_family_text
 from benchmarking.skills.audit import build_skill_use_audit
 
 
@@ -48,15 +50,66 @@ class AgentErrorClassification:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TimeoutRetryDecision:
+    retryable: bool
+    reason: str = ""
+
+
+def _error_dict(runner_meta: dict[str, Any]) -> dict[str, Any]:
+    error = runner_meta.get("error")
+    return error if isinstance(error, dict) else {}
+
+
+def jsonish_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return repr(value)
+
+
+def is_runner_meta_timeout_family(runner_meta: dict[str, Any]) -> bool:
+    error = _error_dict(runner_meta)
+    kind = str(error.get("kind") or runner_meta.get("error_kind") or runner_meta.get("kind") or "").strip().lower()
+    if kind == "timeout":
+        return True
+    candidates = [
+        runner_meta.get("error"),
+        runner_meta.get("message"),
+        runner_meta.get("stderr"),
+        runner_meta.get("stdout"),
+        error.get("message"),
+        error.get("code"),
+        error.get("type"),
+    ]
+    convergence = runner_meta.get("convergence")
+    if isinstance(convergence, dict):
+        if convergence.get("latest_prompt_error_is_timeout") is True:
+            return True
+        candidates.extend(
+            [
+                convergence.get("latest_prompt_error"),
+                convergence.get("prompt_error"),
+                convergence.get("finalization_rescue_error"),
+            ]
+        )
+    return any(is_timeout_family_text(candidate) for candidate in candidates if candidate is not None)
+
+
 def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_text: str) -> bool:
+    if is_runner_meta_timeout_family(runner_meta):
+        return True
     text = str(full_response_text or "")
     stripped = text.strip()
     has_timeout_text = any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS)
-    if not has_timeout_text:
-        return False
-    if stripped in OPENCLAW_TIMEOUT_SENTINELS:
+    if has_timeout_text and stripped in OPENCLAW_TIMEOUT_SENTINELS:
         return True
-    return runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
+    if has_timeout_text and (
+        runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
+    ):
+        return True
+    if has_final_answer_marker(text) or HLE_ANSWER_RE.search(text):
+        return False
+    return is_timeout_family_text(text)
 
 
 def classify_agent_error_payload(
@@ -162,6 +215,21 @@ def validate_candidate_answer_contract(
     full_text = str(full_response_text or "").strip()
     short_text = str(short_answer_text or "").strip()
     eval_kind = str(getattr(record, "eval_kind", "") or "").strip()
+    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_text):
+        message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
+        return CandidateAnswerContract(
+            valid=False,
+            code="agent_response_timeout",
+            message=message,
+            details=_candidate_contract_meta(
+                valid=False,
+                record=record,
+                short_answer_text=short_text,
+                full_response_text=full_text,
+                code="agent_response_timeout",
+                message=message,
+            ),
+        )
     if not full_text:
         message = "Single-LLM candidate answer contract invalid: full_response_text is empty."
         return CandidateAnswerContract(
@@ -176,21 +244,6 @@ def validate_candidate_answer_contract(
                 code="candidate_answer_contract_invalid",
                 message=message,
                 missing_fields=["full_response_text"],
-            ),
-        )
-    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_text):
-        message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
-        return CandidateAnswerContract(
-            valid=False,
-            code="agent_response_timeout",
-            message=message,
-            details=_candidate_contract_meta(
-                valid=False,
-                record=record,
-                short_answer_text=short_text,
-                full_response_text=full_text,
-                code="agent_response_timeout",
-                message=message,
             ),
         )
     if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not has_final_answer_marker(full_text):
@@ -256,6 +309,9 @@ class SingleLLMRunner:
         configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
         convergence_policy: ConvergencePolicy | None = None,
+        timeout_retries: int = 3,
+        timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
+        sleep_fn: Callable[[float], None] = time.sleep,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
@@ -273,19 +329,29 @@ class SingleLLMRunner:
         self._slugify = slugify
         self._benchmark_agent_thinking = benchmark_agent_thinking
         self.skill_health_summary = dict(skill_health_summary or {})
-
-    def run(self, record: Any, group: Any) -> RunnerResult:
-        input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
-        prompt = self._build_single_llm_prompt(
-            record,
-            websearch_enabled=group.websearch,
-            skills_enabled=bool(getattr(group, "skills_enabled", True)),
-            input_bundle=input_bundle,
-            available_skills=set(self.configured_skills),
-            time_budget_seconds=self.convergence_policy.timeout_seconds,
+        self.timeout_retries = max(0, int(timeout_retries))
+        self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
+            timeout_retry_backoff_seconds,
+            max_retries=self.timeout_retries,
         )
-        session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
-        wrapper_path = Path(__file__).resolve().parents[2] / "runtime" / "single_llm_openclaw_wrapper.py"
+        self._sleep = sleep_fn
+
+    @staticmethod
+    def _normalize_backoff_seconds(
+        raw: tuple[int | float, ...] | list[int | float],
+        *,
+        max_retries: int,
+    ) -> tuple[float, ...]:
+        if max_retries <= 0:
+            return ()
+        values = [max(0.0, float(value)) for value in raw]
+        if not values:
+            values = [0.0]
+        while len(values) < max_retries:
+            values.append(values[-1])
+        return tuple(values[:max_retries])
+
+    def _build_command(self, *, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
         command = [
             sys.executable,
             str(wrapper_path),
@@ -305,10 +371,240 @@ class SingleLLMRunner:
             str(self.convergence_policy.finalization_grace_seconds),
             "--json",
         ]
+        return command
+
+    def _timeout_failure_result(
+        self,
+        *,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        payload: dict[str, Any],
+        runner_meta: dict[str, Any],
+        message: str,
+        details: dict[str, Any],
+    ) -> RunnerResult:
+        runner_meta["error"] = message
+        runner_meta["agent_timeout_detected"] = True
+        runner_meta["skill_use_audit"] = build_skill_use_audit(
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            configured_skills=self.configured_skills,
+            runner_meta=runner_meta,
+            final_response_text="",
+            skill_health_summary=self.skill_health_summary,
+        )
+        if input_bundle is not None:
+            runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        return RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw=payload,
+            runner_meta=runner_meta,
+            failure=FailureInfo(
+                code="agent_response_timeout",
+                message=message,
+                details=details,
+            ),
+        )
+
+    def _exception_timeout_result(
+        self,
+        *,
+        exc: Exception,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        session_id: str,
+    ) -> RunnerResult:
+        timeout_value = getattr(exc, "timeout", None)
+        stdout = str(getattr(exc, "stdout", None) or getattr(exc, "output", None) or "")
+        stderr = str(getattr(exc, "stderr", "") or "")
+        message = "Single-LLM OpenClaw subprocess timed out before producing a benchmark answer."
+        details = {
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+            "timeout": timeout_value,
+            "stdout_excerpt": stdout[:1000],
+            "stderr_excerpt": stderr[:1000],
+            "session_id": session_id,
+        }
+        runner_meta = {
+            "convergence_policy": self.convergence_policy.to_meta(),
+            "timeout_exception": dict(details),
+            "session_id": session_id,
+        }
+        return self._timeout_failure_result(
+            record=record,
+            group=group,
+            input_bundle=input_bundle,
+            payload={"exception": dict(details)},
+            runner_meta=runner_meta,
+            message=message,
+            details=details,
+        )
+
+    def _attempt_history_entry(
+        self,
+        *,
+        attempt_number: int,
+        session_id: str,
+        result: RunnerResult,
+        retryable: bool,
+        retry_reason: str,
+    ) -> dict[str, Any]:
+        failure = result.failure
+        timeout_exception = result.runner_meta.get("timeout_exception")
+        entry: dict[str, Any] = {
+            "attempt": attempt_number,
+            "session_id": session_id,
+            "status": str(result.status.value),
+            "failure_code": str(getattr(failure, "code", "") or ""),
+            "retryable": retryable,
+            "retry_reason": retry_reason,
+        }
+        if isinstance(timeout_exception, dict):
+            entry["exception_type"] = str(timeout_exception.get("exception_type") or "")
+            entry["exception_message"] = str(timeout_exception.get("message") or "")[:1000]
+        return entry
+
+    def _timeout_retry_decision(self, result: RunnerResult) -> TimeoutRetryDecision:
+        failure = result.failure
+        runner_meta = result.runner_meta or {}
+        if getattr(failure, "code", "") == "agent_response_timeout":
+            return TimeoutRetryDecision(True, "agent_response_timeout")
+        if is_runner_meta_timeout_family(runner_meta):
+            return TimeoutRetryDecision(True, "runner_meta_timeout_family")
+        details = getattr(failure, "details", {}) if failure is not None else {}
+        detail_text = jsonish_text(details)
+        message = str(getattr(failure, "message", "") or "")
+        if is_timeout_family_text(message) or is_timeout_family_text(detail_text):
+            return TimeoutRetryDecision(True, "failure_timeout_family")
+        return TimeoutRetryDecision(False, "")
+
+    def _attach_timeout_retry_meta(
+        self,
+        result: RunnerResult,
+        *,
+        triggered: bool,
+        attempts: int,
+        retries_used: int,
+        exhausted: bool,
+        retry_reason: str,
+        attempt_history: list[dict[str, Any]],
+    ) -> RunnerResult:
+        result.runner_meta["timeout_retry"] = {
+            "triggered": triggered,
+            "max_retries": self.timeout_retries,
+            "backoff_seconds": list(self.timeout_retry_backoff_seconds),
+            "attempts": attempts,
+            "retries_used": retries_used,
+            "exhausted": exhausted,
+            "retry_reason": retry_reason,
+            "attempt_history": attempt_history,
+        }
+        return result
+
+    def run(self, record: Any, group: Any) -> RunnerResult:
+        input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
+        prompt = self._build_single_llm_prompt(
+            record,
+            websearch_enabled=group.websearch,
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            input_bundle=input_bundle,
+            available_skills=set(self.configured_skills),
+            time_budget_seconds=self.convergence_policy.timeout_seconds,
+        )
+        initial_session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
+        wrapper_path = Path(__file__).resolve().parents[2] / "runtime" / "single_llm_openclaw_wrapper.py"
         env = os.environ.copy()
         env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
-        result = self._run_subprocess(command, env=env, timeout=self.convergence_policy.timeout_seconds + 30)
-        payload = self._parse_json_stdout(result, command)
+        attempt_history: list[dict[str, Any]] = []
+        triggered = False
+        retry_reason = ""
+        total_attempts = self.timeout_retries + 1
+        last_result: RunnerResult | None = None
+        for attempt_index in range(total_attempts):
+            session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
+            result = self._run_attempt(
+                record,
+                group,
+                input_bundle=input_bundle,
+                prompt=prompt,
+                session_id=session_id,
+                wrapper_path=wrapper_path,
+                env=env,
+            )
+            last_result = result
+            decision = self._timeout_retry_decision(result)
+            can_retry = decision.retryable and attempt_index < self.timeout_retries
+            if decision.retryable:
+                triggered = True
+                retry_reason = decision.reason
+            attempt_history.append(
+                self._attempt_history_entry(
+                    attempt_number=attempt_index + 1,
+                    session_id=session_id,
+                    result=result,
+                    retryable=can_retry,
+                    retry_reason=decision.reason,
+                )
+            )
+            if not can_retry:
+                return self._attach_timeout_retry_meta(
+                    result,
+                    triggered=triggered,
+                    attempts=attempt_index + 1,
+                    retries_used=attempt_index,
+                    exhausted=decision.retryable and triggered and attempt_index >= self.timeout_retries,
+                    retry_reason=retry_reason,
+                    attempt_history=attempt_history,
+                )
+            backoff = self.timeout_retry_backoff_seconds[attempt_index]
+            self._sleep(backoff)
+        assert last_result is not None
+        return self._attach_timeout_retry_meta(
+            last_result,
+            triggered=triggered,
+            attempts=total_attempts,
+            retries_used=max(0, total_attempts - 1),
+            exhausted=triggered,
+            retry_reason=retry_reason,
+            attempt_history=attempt_history,
+        )
+
+    def _run_attempt(
+        self,
+        record: Any,
+        group: Any,
+        *,
+        input_bundle: Any,
+        prompt: str,
+        session_id: str,
+        wrapper_path: Path,
+        env: dict[str, str],
+    ) -> RunnerResult:
+        command = self._build_command(session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
+        try:
+            result = self._run_subprocess(command, env=env, timeout=self.convergence_policy.timeout_seconds + 30)
+            payload = self._parse_json_stdout(result, command)
+        except subprocess.TimeoutExpired as exc:
+            return self._exception_timeout_result(
+                exc=exc,
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            if is_timeout_family_text(str(exc)):
+                return self._exception_timeout_result(
+                    exc=exc,
+                    record=record,
+                    group=group,
+                    input_bundle=input_bundle,
+                    session_id=session_id,
+                )
+            raise
         result_payload = self._unwrap_agent_payload(payload)
         runner_meta = dict(result_payload.get("meta") or {})
         runner_meta["convergence_policy"] = self.convergence_policy.to_meta()

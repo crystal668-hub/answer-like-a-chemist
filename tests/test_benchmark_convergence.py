@@ -83,6 +83,62 @@ class BenchmarkConvergenceTests(unittest.TestCase):
         self.assertEqual(1, summary["tool_call_count"])
         self.assertEqual(2, summary["assistant_turn_count"])
         self.assertEqual(["read"], summary["tool_names"])
+        self.assertEqual(0, summary["prompt_error_count"])
+        self.assertEqual("", summary["latest_prompt_error"])
+        self.assertFalse(summary["latest_prompt_error_is_timeout"])
+
+    def test_transcript_summary_detects_timeout_prompt_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "custom",
+                                "customType": "openclaw:prompt-error",
+                                "data": {"error": "context deadline exceeded while waiting for model response"},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "custom",
+                                "customType": "openclaw:prompt-error",
+                                "data": {"error": "HTTP 504 gateway timeout from provider"},
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_transcript_convergence(transcript)
+
+        self.assertEqual(2, summary["prompt_error_count"])
+        self.assertEqual("HTTP 504 gateway timeout from provider", summary["latest_prompt_error"])
+        self.assertTrue(summary["latest_prompt_error_is_timeout"])
+
+    def test_transcript_summary_ignores_non_timeout_prompt_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "custom",
+                        "customType": "openclaw:prompt-error",
+                        "data": {"error": "invalid_request_error: role ordering is invalid"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_transcript_convergence(transcript)
+
+        self.assertEqual(1, summary["prompt_error_count"])
+        self.assertEqual("invalid_request_error: role ordering is invalid", summary["latest_prompt_error"])
+        self.assertFalse(summary["latest_prompt_error_is_timeout"])
 
     def test_extract_latest_complete_answer_from_transcript(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
