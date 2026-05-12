@@ -5,13 +5,13 @@ import tempfile
 from pathlib import Path
 
 import runtime_paths
-from benchmarking.skill_health import (
+from benchmarking.skills.health import (
     HealthRequirement,
     check_skill_health,
     health_requirements_for_allowlist,
     summarize_skill_health,
 )
-from benchmarking.skill_tree import benchmark_skill_allowlist
+from benchmarking.skills.tree import benchmark_skill_allowlist
 
 
 def test_health_requirements_cover_every_allowlisted_skill() -> None:

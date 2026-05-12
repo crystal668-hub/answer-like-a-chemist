@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from benchmarking.openclaw_env import (
+from benchmarking.runtime.openclaw_env import (
     build_openclaw_subprocess_env,
     parse_scutil_proxy_output,
     proxy_environment_report,

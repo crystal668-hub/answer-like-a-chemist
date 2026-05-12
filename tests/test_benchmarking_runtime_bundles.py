@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmarking.datasets import BenchmarkRecord
-from benchmarking.runtime_bundles import (
+from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.runtime.bundles import (
     RuntimeBundleError,
     _superchem_asset_cache_relative_path,
     ensure_runtime_bundle,

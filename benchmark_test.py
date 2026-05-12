@@ -9,10 +9,10 @@ _SOURCE_ROOT = Path(__file__).resolve().parent
 if str(_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SOURCE_ROOT))
 
-# Compatibility facade: new code should import benchmarking.* directly.
-from benchmarking import cli as _benchmark_cli
-from benchmarking.cli import *  # noqa: F403
-from benchmarking.cli import main
+# Compatibility facade: new code should import layered benchmarking modules directly.
+from benchmarking.workflow import cli as _benchmark_cli
+from benchmarking.workflow.cli import *  # noqa: F403
+from benchmarking.workflow.cli import main
 
 
 def __getattr__(name: str) -> object:

@@ -6,12 +6,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarking.contracts import AnswerPayload, RunnerResult, RunStatus
-from benchmarking.datasets import BenchmarkRecord
-from benchmarking.evaluators import EvaluationResult, normalize_answer_tracks
-from benchmarking.experiments import ExperimentSpec
-from benchmarking.orchestration import run_group
-from benchmarking.reporting import build_error_group_record_result
+from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
+from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.scoring.evaluators import EvaluationResult, normalize_answer_tracks
+from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.workflow.orchestration import run_group
+from benchmarking.core.reporting import build_error_group_record_result
 
 
 @dataclass(frozen=True)

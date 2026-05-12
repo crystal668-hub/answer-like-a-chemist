@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from benchmarking.skill_audit import build_skill_use_audit
+from benchmarking.skills.audit import build_skill_use_audit
 
 
 def test_skill_use_audit_detects_tool_calls() -> None:

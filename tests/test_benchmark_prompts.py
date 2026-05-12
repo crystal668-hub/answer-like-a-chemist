@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from benchmarking.datasets import BenchmarkRecord
-from benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
+from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.workflow.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
 
 
 class BenchmarkPromptsTests(unittest.TestCase):

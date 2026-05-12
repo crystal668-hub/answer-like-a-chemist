@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmarking import cleanroom
+from benchmarking.runtime import cleanroom
 
 
 class CleanroomModuleTests(unittest.TestCase):

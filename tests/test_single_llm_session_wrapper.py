@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from benchmarking import single_llm_openclaw_wrapper as wrapper
+from benchmarking.runtime import single_llm_openclaw_wrapper as wrapper
 
 
 class SingleLLMSessionWrapperTests(unittest.TestCase):

@@ -3,19 +3,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmarking.config_renderer import render_run_config
-from benchmarking.experiments import ExperimentSpec
-from benchmarking.provisioning import (
+from benchmarking.runtime.config import render_run_config
+from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
     provision_slot_workspace,
 )
-from benchmarking.runtime_config import (
+from benchmarking.runtime.config_pool import (
     RuntimeConfigContext,
     RuntimeConfigError,
     build_run_scoped_config_payload,
 )
-from benchmarking.skill_tree import benchmark_skill_allowlist
+from benchmarking.skills.tree import benchmark_skill_allowlist
 
 
 class RuntimeConfigGroup:

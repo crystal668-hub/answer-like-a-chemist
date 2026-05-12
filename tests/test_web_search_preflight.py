@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from benchmarking.web_search_preflight import (
+from benchmarking.runtime.web_search_preflight import (
     evaluate_web_search_transcript,
     run_web_search_preflight,
 )

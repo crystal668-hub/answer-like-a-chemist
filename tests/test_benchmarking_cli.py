@@ -4,8 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from benchmarking import cli as benchmarking_cli
-from benchmarking.reporting import GroupRecordResult as ReportingGroupRecordResult
+from benchmarking.core.reporting import GroupRecordResult as ReportingGroupRecordResult
+from benchmarking.workflow import cli as benchmarking_cli
 
 
 def test_benchmark_test_is_thin_compatibility_facade() -> None:

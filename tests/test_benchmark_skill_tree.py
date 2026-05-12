@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from benchmarking.skill_tree import (
+from benchmarking.skills.tree import (
     benchmark_skill_allowlist,
     load_chemistry_skill_inventory,
     load_skill_tree,

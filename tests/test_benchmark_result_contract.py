@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from benchmarking.result_contract import normalize_agent_result_payload, parse_agent_stdout
+from benchmarking.core.result_contract import normalize_agent_result_payload, parse_agent_stdout
 
 
 def test_accepts_wrapped_result_payloads() -> None:

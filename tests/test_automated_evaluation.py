@@ -4,8 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from benchmarking import automated_evaluation
-from benchmarking import automated_evaluation_launcher
+from benchmarking.analysis import automated as automated_evaluation
+from benchmarking.analysis import launcher as automated_evaluation_launcher
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -205,7 +205,7 @@ def test_launcher_starts_detached_background_process_and_writes_status(tmp_path:
 
     assert status["status"] == "launched"
     assert status["pid"] == 12345
-    assert calls[0]["command"][:4] == ["/venv/bin/python", "-m", "benchmarking.automated_evaluation", "run"]
+    assert calls[0]["command"][:4] == ["/venv/bin/python", "-m", "benchmarking.analysis.automated", "run"]
     assert "--output-root" in calls[0]["command"]
     assert calls[0]["start_new_session"] is True
     status_payload = json.loads((tmp_path / "run" / "analysis" / "status.json").read_text(encoding="utf-8"))

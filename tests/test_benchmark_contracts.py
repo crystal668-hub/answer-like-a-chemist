@@ -1,13 +1,13 @@
 import unittest
 
-from benchmarking.contracts import (
+from benchmarking.core.contracts import (
     AnswerPayload,
     FailureInfo,
     RecoveryInfo,
     RunStatus,
     RunnerResult,
 )
-from benchmarking.experiments import ExperimentSpec
+from benchmarking.core.experiments import ExperimentSpec
 
 
 class BenchmarkContractsTests(unittest.TestCase):

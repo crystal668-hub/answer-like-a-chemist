@@ -26,182 +26,92 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 if str(_SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SOURCE_ROOT))
 
-try:
-    from benchmarking.runtime import cleanroom as _cleanroom
-    from benchmarking.workflow import orchestration as _orchestration
-    from benchmarking.runtime import bundles as _runtime_bundles
-    from benchmarking.analysis.launcher import launch_automated_evaluation
-    from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
-    from benchmarking.core.convergence import ConvergencePolicy
-    from benchmarking.core.datasets import (
-        BenchmarkRecord,
-        GradingSpec,
-        RecordValidationError,
-        classify_subset as classify_record_subset,
-        dataset_name_from_file as dataset_name_from_record_file,
-        load_records as load_benchmark_records,
-        source_pair_key as record_source_pair_key,
-    )
-    from benchmarking.scoring.evaluation import EvaluationRegistryError, evaluate_record, register_default_evaluators
-    from benchmarking.runtime.session_isolation import (
-        SessionIsolationError,
-        inspect_postflight_session,
-        merge_preflight_postflight_audit,
-        reset_agent_main_session_if_stale,
-    )
-    from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
-    from benchmarking.runtime.web_search_preflight import run_web_search_preflight
-    from benchmarking.skills.tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
-    from benchmarking.scoring.evaluators import (
-        EvaluationError,
-        EvaluationResult,
-        build_execution_error_evaluation as _shared_build_execution_error_evaluation,
-        evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
-        evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
-        evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
-        evaluate_generic_semantic as _shared_evaluate_generic_semantic,
-        evaluate_hle as _shared_evaluate_hle,
-        evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
-        extract_candidate_short_answer,
-        extract_final_answer_line,
-        last_nonempty_line,
-        maybe_json_loads,
-        normalize_answer_tracks,
-        normalize_space,
-        parse_frontierscience_research_rubric,
-        parse_superchem_checkpoint_weight,
-        parse_superchem_checkpoints,
-        parse_superchem_option_answer as _shared_parse_superchem_option_answer,
-        safe_json_extract as _shared_safe_json_extract,
-        superchem_valid_options,
-    )
-    from benchmarking.core.experiments import ExperimentSpec
-    from benchmarking.workflow.runners import build_runner
-    from benchmarking.workflow.runners import ChemQARunner as _BenchmarkingChemQARunner
-    from benchmarking.workflow.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
-    from benchmarking.workflow.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
-    from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
-    from benchmarking.core.reporting import (
-        GroupRecordResult as _SharedGroupRecordResult,
-        aggregate_bucket,
-        aggregate_results,
-        average_optional_metric,
-        build_error_group_record_result as _shared_build_error_group_record_result,
-        materialize_group_failure_results as _shared_materialize_group_failure_results,
-    )
-    from benchmarking.core.status import (
-        is_chemqa_success_status,
-        is_chemqa_terminal_status,
-        normalize_chemqa_run_status,
-        normalize_run_status_value,
-    )
-    from benchmarking.runtime.config_pool import (
-        ConfigPool as _RuntimeConfigPool,
-        RuntimeConfigContext,
-        RuntimeConfigError,
-        actual_slot_ids,
-        build_run_scoped_config_payload as _build_run_scoped_config_payload,
-        logical_slot_ids,
-        slot_role_map,
-    )
-    from benchmarking.runtime.bundles import (
-        RuntimeBundle,
-        RuntimeBundleError,
-        _superchem_asset_cache_relative_path,
-        build_hle_question_markdown,
-        build_superchem_question_markdown,
-        ensure_runtime_bundle as _shared_ensure_runtime_bundle,
-        superchem_image_paths,
-    )
-except ModuleNotFoundError as exc:  # pragma: no cover - package-style import fallback
-    if exc.name != "benchmarking":
-        raise
-    from workspace.benchmarking import cleanroom as _cleanroom
-    from workspace.benchmarking import orchestration as _orchestration
-    from workspace.benchmarking import runtime_bundles as _runtime_bundles
-    from workspace.benchmarking.automated_evaluation_launcher import launch_automated_evaluation
-    from workspace.benchmarking.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
-    from workspace.benchmarking.convergence import ConvergencePolicy
-    from workspace.benchmarking.datasets import (
-        BenchmarkRecord,
-        GradingSpec,
-        RecordValidationError,
-        classify_subset as classify_record_subset,
-        dataset_name_from_file as dataset_name_from_record_file,
-        load_records as load_benchmark_records,
-        source_pair_key as record_source_pair_key,
-    )
-    from workspace.benchmarking.evaluation import EvaluationRegistryError, evaluate_record, register_default_evaluators
-    from workspace.benchmarking.openclaw_session_isolation import (
-        SessionIsolationError,
-        inspect_postflight_session,
-        merge_preflight_postflight_audit,
-        reset_agent_main_session_if_stale,
-    )
-    from workspace.benchmarking.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
-    from workspace.benchmarking.web_search_preflight import run_web_search_preflight
-    from workspace.benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
-    from workspace.benchmarking.evaluators import (
-        EvaluationError,
-        EvaluationResult,
-        build_execution_error_evaluation as _shared_build_execution_error_evaluation,
-        evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
-        evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
-        evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
-        evaluate_generic_semantic as _shared_evaluate_generic_semantic,
-        evaluate_hle as _shared_evaluate_hle,
-        evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
-        extract_candidate_short_answer,
-        extract_final_answer_line,
-        last_nonempty_line,
-        maybe_json_loads,
-        normalize_answer_tracks,
-        normalize_space,
-        parse_frontierscience_research_rubric,
-        parse_superchem_checkpoint_weight,
-        parse_superchem_checkpoints,
-        parse_superchem_option_answer as _shared_parse_superchem_option_answer,
-        safe_json_extract as _shared_safe_json_extract,
-        superchem_valid_options,
-    )
-    from workspace.benchmarking.experiments import ExperimentSpec
-    from workspace.benchmarking.runners import build_runner
-    from workspace.benchmarking.runners import ChemQARunner as _BenchmarkingChemQARunner
-    from workspace.benchmarking.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
-    from workspace.benchmarking.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
-    from workspace.benchmarking.skill_health import check_all_skill_health, summarize_skill_health
-    from workspace.benchmarking.reporting import (
-        GroupRecordResult as _SharedGroupRecordResult,
-        aggregate_bucket,
-        aggregate_results,
-        average_optional_metric,
-        build_error_group_record_result as _shared_build_error_group_record_result,
-        materialize_group_failure_results as _shared_materialize_group_failure_results,
-    )
-    from workspace.benchmarking.status import (
-        is_chemqa_success_status,
-        is_chemqa_terminal_status,
-        normalize_chemqa_run_status,
-        normalize_run_status_value,
-    )
-    from workspace.benchmarking.runtime_config import (
-        ConfigPool as _RuntimeConfigPool,
-        RuntimeConfigContext,
-        RuntimeConfigError,
-        actual_slot_ids,
-        build_run_scoped_config_payload as _build_run_scoped_config_payload,
-        logical_slot_ids,
-        slot_role_map,
-    )
-    from workspace.benchmarking.runtime_bundles import (
-        RuntimeBundle,
-        RuntimeBundleError,
-        _superchem_asset_cache_relative_path,
-        build_hle_question_markdown,
-        build_superchem_question_markdown,
-        ensure_runtime_bundle as _shared_ensure_runtime_bundle,
-        superchem_image_paths,
-    )
+from benchmarking.runtime import bundles as _runtime_bundles
+from benchmarking.runtime import cleanroom as _cleanroom
+from benchmarking.workflow import orchestration as _orchestration
+from benchmarking.analysis.launcher import launch_automated_evaluation
+from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
+from benchmarking.core.convergence import ConvergencePolicy
+from benchmarking.core.datasets import (
+    BenchmarkRecord,
+    GradingSpec,
+    RecordValidationError,
+    classify_subset as classify_record_subset,
+    dataset_name_from_file as dataset_name_from_record_file,
+    load_records as load_benchmark_records,
+    source_pair_key as record_source_pair_key,
+)
+from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.core.reporting import (
+    GroupRecordResult as _SharedGroupRecordResult,
+    aggregate_bucket,
+    aggregate_results,
+    average_optional_metric,
+    build_error_group_record_result as _shared_build_error_group_record_result,
+    materialize_group_failure_results as _shared_materialize_group_failure_results,
+)
+from benchmarking.core.status import (
+    is_chemqa_success_status,
+    is_chemqa_terminal_status,
+    normalize_chemqa_run_status,
+    normalize_run_status_value,
+)
+from benchmarking.runtime.bundles import (
+    RuntimeBundle,
+    RuntimeBundleError,
+    _superchem_asset_cache_relative_path,
+    build_hle_question_markdown,
+    build_superchem_question_markdown,
+    ensure_runtime_bundle as _shared_ensure_runtime_bundle,
+    superchem_image_paths,
+)
+from benchmarking.runtime.config_pool import (
+    ConfigPool as _RuntimeConfigPool,
+    RuntimeConfigContext,
+    RuntimeConfigError,
+    actual_slot_ids,
+    build_run_scoped_config_payload as _build_run_scoped_config_payload,
+    logical_slot_ids,
+    slot_role_map,
+)
+from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
+from benchmarking.runtime.session_isolation import (
+    SessionIsolationError,
+    inspect_postflight_session,
+    merge_preflight_postflight_audit,
+    reset_agent_main_session_if_stale,
+)
+from benchmarking.runtime.web_search_preflight import run_web_search_preflight
+from benchmarking.scoring.evaluation import EvaluationRegistryError, evaluate_record, register_default_evaluators
+from benchmarking.scoring.evaluators import (
+    EvaluationError,
+    EvaluationResult,
+    build_execution_error_evaluation as _shared_build_execution_error_evaluation,
+    evaluate_chembench_open_ended as _shared_evaluate_chembench_open_ended,
+    evaluate_frontierscience_olympiad as _shared_evaluate_frontierscience_olympiad,
+    evaluate_frontierscience_research as _shared_evaluate_frontierscience_research,
+    evaluate_generic_semantic as _shared_evaluate_generic_semantic,
+    evaluate_hle as _shared_evaluate_hle,
+    evaluate_superchem_multiple_choice_rpf as _shared_evaluate_superchem_multiple_choice_rpf,
+    extract_candidate_short_answer,
+    extract_final_answer_line,
+    last_nonempty_line,
+    maybe_json_loads,
+    normalize_answer_tracks,
+    normalize_space,
+    parse_frontierscience_research_rubric,
+    parse_superchem_checkpoint_weight,
+    parse_superchem_checkpoints,
+    parse_superchem_option_answer as _shared_parse_superchem_option_answer,
+    safe_json_extract as _shared_safe_json_extract,
+    superchem_valid_options,
+)
+from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
+from benchmarking.skills.tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
+from benchmarking.workflow.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
+from benchmarking.workflow.runners import ChemQARunner as _BenchmarkingChemQARunner
+from benchmarking.workflow.runners import SingleLLMRunner as _BenchmarkingSingleLLMRunner
+from benchmarking.workflow.runners import build_runner
 
 _runner_factory = build_runner
 

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmarking.convergence import (
+from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
     summarize_transcript_convergence,

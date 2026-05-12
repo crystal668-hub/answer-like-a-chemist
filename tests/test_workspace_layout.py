@@ -26,6 +26,17 @@ class WorkspaceLayoutTests(unittest.TestCase):
         self.assertIn("analysis/automated.py", clustered_files)
         self.assertIn("workflow/cli.py", clustered_files)
 
+    def test_benchmarking_flat_compatibility_modules_are_removed(self) -> None:
+        benchmarking_root = ROOT / "benchmarking"
+        flat_modules = {
+            path.name
+            for path in benchmarking_root.glob("*.py")
+            if path.name != "__init__.py"
+        }
+
+        self.assertEqual(set(), flat_modules)
+        self.assertFalse((benchmarking_root / "runners").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

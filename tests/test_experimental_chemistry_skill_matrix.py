@@ -93,7 +93,7 @@ EXPECTED_EXPERIMENTAL_SKILLS = {
 
 
 def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
-    from benchmarking.skill_tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
+    from benchmarking.skills.tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
 
     inventory = load_chemistry_skill_inventory()
     skill_names = set(benchmark_skill_allowlist())
@@ -132,7 +132,7 @@ def test_core_new_skill_wrappers_are_installed() -> None:
 
 
 def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
-    from benchmarking.skill_tree import render_top_level_skill_tree
+    from benchmarking.skills.tree import render_top_level_skill_tree
 
     tree = render_top_level_skill_tree()
 
@@ -159,8 +159,8 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
 
 
 def test_single_agent_prompt_injects_skill_tree() -> None:
-    from benchmarking.datasets import BenchmarkRecord
-    from benchmarking.prompts import build_single_llm_prompt
+    from benchmarking.core.datasets import BenchmarkRecord
+    from benchmarking.workflow.prompts import build_single_llm_prompt
 
     record = BenchmarkRecord(
         record_id="route-cif",
@@ -185,8 +185,8 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 
 
 def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
-    from benchmarking.datasets import BenchmarkRecord
-    from benchmarking.prompts import build_single_llm_prompt
+    from benchmarking.core.datasets import BenchmarkRecord
+    from benchmarking.workflow.prompts import build_single_llm_prompt
 
     record = BenchmarkRecord(
         record_id="skills-off",

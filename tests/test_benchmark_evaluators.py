@@ -1,7 +1,7 @@
 import unittest
 
-from benchmarking.datasets import BenchmarkRecord
-from benchmarking.evaluators import (
+from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.scoring.evaluators import (
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
     evaluate_frontierscience_research,

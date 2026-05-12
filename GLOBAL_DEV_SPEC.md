@@ -55,7 +55,7 @@
 
 - Source modules
   - `workspace/benchmarking/`
-    - The canonical implementation is clustered by responsibility under subpackages; legacy top-level files such as `benchmarking/cli.py`, `benchmarking/datasets.py`, and `benchmarking/runtime_config.py` are compatibility shims that re-export the canonical modules and preserve historical import/script entrypoints.
+    - The canonical implementation is clustered by responsibility under subpackages. Flat compatibility modules under `workspace/benchmarking` have been removed; real implementation files live under `core/`, `scoring/`, `runtime/`, `skills/`, `analysis/`, and `workflow/`.
     - `core/`
       - `contracts.py`: defines `RunStatus`, `AnswerPayload`, `FailureInfo`, `RecoveryInfo`, `RunnerResult`.
       - `datasets.py`: normalizes benchmark records from JSONL.
@@ -91,7 +91,7 @@
       - `runners/chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
   - `workspace/benchmark_test.py`
     - Thin compatibility facade for historical `python benchmark_test.py ...` execution and `import benchmark_test.xxx` callers.
-    - Re-exports the package-owned CLI symbols from `workspace/benchmarking/workflow/cli.py` through the `benchmarking.cli` compatibility module without re-registering evaluators or redefining shared result dataclasses.
+    - Re-exports the package-owned CLI symbols directly from `workspace/benchmarking/workflow/cli.py` without re-registering evaluators or redefining shared result dataclasses.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
 
@@ -126,8 +126,8 @@
   - `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
   - `workspace/benchmarks/superchem/extract_superchem_pool.py`
 - Module interactions
-  - `benchmark_test.py` -> `benchmarking.cli` -> `benchmarking.workflow.cli`
-    - Preserves the historical CLI/import facade and delegates execution to the package entrypoint.
+  - `benchmark_test.py` -> `benchmarking.workflow.cli`
+    - Preserves the historical root script/import facade and delegates execution directly to the package entrypoint.
   - `benchmarking.workflow.cli` -> `benchmarking.core` / `benchmarking.scoring` / `benchmarking.runtime` / `benchmarking.skills` / `benchmarking.analysis` / `benchmarking.workflow`
     - Uses dataset loading, runtime config orchestration, visual bundle materialization, cleanroom glue, evaluator dispatch, per-group orchestration, and reporting.
   - `benchmarking.workflow.cli` -> `skills/chemqa-review`
@@ -154,7 +154,7 @@
   - Status: `DONE`
 
 ### Automated Benchmark Evaluation
-- Each full benchmark completion writes the usual final artifacts first, then starts the compatibility module `benchmarking.automated_evaluation` in a detached process through `benchmarking.analysis.launcher.launch_automated_evaluation`.
+- Each full benchmark completion writes the usual final artifacts first, then starts `python -m benchmarking.analysis.automated run ...` in a detached process through `benchmarking.analysis.launcher.launch_automated_evaluation`.
 - The benchmark CLI does not expose user-facing switches for this feature. It is a default post-run diagnostic path and is not a scoring gate.
 - Launch status is written to `output_root/analysis/status.json` and copied into `runtime-manifest.json` under `automated_evaluation`.
 - Analysis inputs are written to `output_root/analysis/input-bundle.json`. The bundle groups results by `record_id`, includes final answers, evaluator/judge details, reference answers, status axes, skill-use audit metadata, visible transcript summaries for single-agent runs, and ChemQA artifact summaries for ChemQA runs.
@@ -504,9 +504,9 @@
 - Primary execution flow: three-group skills benchmark
   - `workspace/benchmarking/workflow/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
   - On import, the facade and package CLI ensure the workspace source root is on `sys.path` and import benchmark internals through canonical subpackages plus `runtime_paths`, so loading the legacy entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
-  - It normalizes records through `benchmarking.core.datasets.load_records`; the legacy `benchmarking.datasets` module re-exports that implementation.
+  - It normalizes records through `benchmarking.core.datasets.load_records`.
   - It runs benchmark skill health checks through `benchmarking.skills.health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.
-  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime.config_pool.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.cli` keeps compatibility wrappers around that package module for legacy callers.
+  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime.config_pool.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.workflow.cli` exposes a small set of root-script facade wrappers for `benchmark_test.py`.
   - For OpenClaw subprocesses, `benchmarking.runtime.openclaw_env.build_openclaw_subprocess_env` preserves explicit proxy variables and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder.
   - It runs `benchmarking.runtime.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
   - After writing `results.json`, CSV summaries, and the final `runtime-manifest.json`, it starts the detached automated evaluation process and then rewrites `runtime-manifest.json` with the `automated_evaluation` launch status. If launcher setup raises, the CLI writes a `launch_failed` status under `analysis/status.json` and still returns according to the benchmark run outcome.
@@ -585,7 +585,7 @@
   - MinerU is treated as a required long-lived native macOS local HTTP service when complex PDF parsing/OCR is needed; the service helper installs the native runtime, pre-downloads models, and defaults runtime model loading to `MINERU_MODEL_SOURCE=local`.
 
 - Shortcuts, hacks, implicit logic
-  - `benchmarking.workflow.cli` is still broad: it owns CLI parsing, wave scheduling, subprocess helpers, result aggregation, and compatibility wrappers. Runtime config, prompts, status axes, evaluator implementations, per-group orchestration, runtime bundles, and cleanup glue are package-owned modules, and `benchmark_test.py` is no longer a real implementation boundary.
+  - `benchmarking.workflow.cli` is still broad: it owns CLI parsing, wave scheduling, subprocess helpers, result aggregation, and root-script facade wrappers. Runtime config, prompts, status axes, evaluator implementations, per-group orchestration, runtime bundles, and cleanup glue are package-owned modules, and `benchmark_test.py` is no longer a real implementation boundary.
   - `benchmark_test.py` remains only as a compatibility facade and intentionally does not preserve implementation-shape details such as `GroupRecordResult.__module__ == "benchmark_test"`.
   - The obsolete native workflow-package scaffold has been retired; current live ChemQA execution uses CLI/state-script orchestration.
   - Run-scoped OpenClaw configs are produced by mutating a copy of the user’s local `~/.openclaw/openclaw.json`.
@@ -603,7 +603,7 @@
   - Actual behavior is still script-heavy and subprocess-heavy:
     - `benchmarking.workflow.cli` is still a broad package CLI/entrypoint with embedded scheduling and aggregation logic.
     - ChemQA runs are controlled through external state scripts.
-  - `workspace/benchmarking/` is now the real benchmark implementation layer; the legacy root entrypoint is retained for compatibility.
+  - `workspace/benchmarking/` is now the real benchmark implementation layer, and its old flat compatibility modules have been removed; the legacy root `benchmark_test.py` entrypoint is retained for compatibility.
   - `workspace/pyproject.toml` advertises `web-ui` extras, but there is no corresponding app module.
   - Top-level repo contains a mix of source, runtime state, generated artifacts, logs, and secret-bearing config in one tree; module boundaries are not clean at the repository level.
 
@@ -620,7 +620,7 @@
   - ChemQA role topology is fixed to one candidate owner plus four reviewer lanes across the DebateClaw state script and ChemQA artifact/driver scripts.
 
 - Missing abstractions
-  - `benchmarking.workflow.cli` still combines CLI parsing, scheduling, aggregate result persistence, runtime manifest writing, and some compatibility wrappers.
+  - `benchmarking.workflow.cli` still combines CLI parsing, scheduling, aggregate result persistence, runtime manifest writing, and root-script facade wrappers.
   - Paper tools are standalone scripts with no shared higher-level orchestrator.
   - OpenClaw/ClawTeam integration is done through subprocess calls everywhere; there is no local adapter interface.
 

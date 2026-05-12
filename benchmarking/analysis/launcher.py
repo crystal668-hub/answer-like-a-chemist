@@ -46,7 +46,7 @@ def launch_automated_evaluation(
     command = [
         python_executable or sys.executable,
         "-m",
-        "benchmarking.automated_evaluation",
+        "benchmarking.analysis.automated",
         "run",
         "--output-root",
         str(root),

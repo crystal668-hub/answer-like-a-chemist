@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from benchmarking.status import is_chemqa_terminal_status, normalize_chemqa_run_status
+from benchmarking.core.status import is_chemqa_terminal_status, normalize_chemqa_run_status
 
 
 class BenchmarkStatusTests(unittest.TestCase):

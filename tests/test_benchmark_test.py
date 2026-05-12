@@ -24,8 +24,8 @@ assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = benchmark_test
 SPEC.loader.exec_module(benchmark_test)
 
-from benchmarking.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.reporting import build_error_group_record_result as shared_build_error_group_record_result
+from benchmarking.core.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
+from benchmarking.core.reporting import build_error_group_record_result as shared_build_error_group_record_result
 
 
 @contextmanager
@@ -350,7 +350,7 @@ print(json.dumps({{
             self.assertEqual(2, summary["pruned_paths"])
 
     def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
-        source = Path("benchmarking/runners/single_llm.py").read_text(encoding="utf-8")
+        source = Path("benchmarking/workflow/runners/single_llm.py").read_text(encoding="utf-8")
 
         self.assertNotIn("selected_skills", source)
         self.assertNotIn("config_for_record", source)
