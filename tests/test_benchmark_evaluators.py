@@ -7,6 +7,7 @@ from benchmarking.scoring.evaluators import (
     evaluate_frontierscience_research,
     evaluate_generic_semantic,
     evaluate_hle,
+    extract_candidate_short_answer,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
     safe_json_extract,
@@ -24,6 +25,10 @@ class JudgeStub:
 
 
 class BenchmarkEvaluatorTests(unittest.TestCase):
+    def test_extract_candidate_short_answer_strips_markdown_final_answer_marker(self) -> None:
+        self.assertEqual("B", extract_candidate_short_answer("Visible reasoning.\n**FINAL ANSWER:** B"))
+        self.assertEqual("B", extract_candidate_short_answer("Visible reasoning.\n**FINAL ANSWER: B**"))
+
     def test_chembench_open_ended_numeric_match_uses_judge_full_answer_text(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
         record = BenchmarkRecord(

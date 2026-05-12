@@ -8,6 +8,7 @@ from pathlib import Path
 from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
+    is_complete_benchmark_answer,
     summarize_transcript_convergence,
 )
 
@@ -121,6 +122,43 @@ class BenchmarkConvergenceTests(unittest.TestCase):
             answer = extract_latest_complete_answer_from_transcript(transcript)
 
         self.assertEqual("Explanation: short\nAnswer: 273\nConfidence: 55%", answer)
+
+    def test_extract_latest_complete_answer_accepts_markdown_final_answer_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": "draft\n**FINAL ANSWER:** A"}],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": "Reasoning\n**FINAL ANSWER: B**"}],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            answer = extract_latest_complete_answer_from_transcript(transcript)
+
+        self.assertEqual("Reasoning\n**FINAL ANSWER: B**", answer)
+
+    def test_empty_markdown_final_answer_marker_is_not_complete(self) -> None:
+        self.assertFalse(is_complete_benchmark_answer("Reasoning\n**FINAL ANSWER:**"))
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.core.convergence import ConvergencePolicy
+from benchmarking.core.convergence import ConvergencePolicy, has_final_answer_marker
 from benchmarking.skills.audit import build_skill_use_audit
 
 
@@ -25,7 +25,6 @@ OPENCLAW_TIMEOUT_SENTINELS = (
     OPENCLAW_RESPONSE_TIMEOUT_TEXT,
     OPENCLAW_IDLE_TIMEOUT_TEXT,
 )
-FINAL_ANSWER_RE = re.compile(r"(?im)^\s*FINAL\s+ANSWER\s*:")
 HLE_ANSWER_RE = re.compile(r"(?im)^\s*Answer\s*:\s*\S")
 FINAL_MARKER_REQUIRED_EVAL_KINDS = {
     "superchem_multiple_choice_rpf",
@@ -74,7 +73,7 @@ def classify_agent_error_payload(
     stop_reason = str(runner_meta.get("stopReason") or "").strip().lower()
     finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
     liveness_state = str(runner_meta.get("livenessState") or "").strip()
-    has_complete_answer = bool(FINAL_ANSWER_RE.search(full_response_text) or HLE_ANSWER_RE.search(full_response_text))
+    has_complete_answer = bool(has_final_answer_marker(full_response_text) or HLE_ANSWER_RE.search(full_response_text))
 
     if (
         any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
@@ -137,7 +136,7 @@ def _candidate_contract_meta(
         "dataset": str(getattr(record, "dataset", "") or ""),
         "short_answer_text_present": bool(str(short_answer_text or "").strip()),
         "full_response_text_present": bool(str(full_response_text or "").strip()),
-        "has_final_answer_marker": bool(FINAL_ANSWER_RE.search(str(full_response_text or ""))),
+        "has_final_answer_marker": has_final_answer_marker(str(full_response_text or "")),
         "has_hle_answer_field": bool(HLE_ANSWER_RE.search(str(full_response_text or ""))),
     }
     if code:
@@ -194,7 +193,7 @@ def validate_candidate_answer_contract(
                 message=message,
             ),
         )
-    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not FINAL_ANSWER_RE.search(full_text):
+    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not has_final_answer_marker(full_text):
         message = "Single-LLM candidate answer contract invalid: required `FINAL ANSWER:` marker is missing."
         return CandidateAnswerContract(
             valid=False,

@@ -7,8 +7,12 @@ from pathlib import Path
 from typing import Any
 
 
-FINAL_ANSWER_RE = re.compile(r"(?im)^\s*FINAL ANSWER\s*:\s*\S+")
+FINAL_ANSWER_LINE_RE = re.compile(
+    r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
+    re.IGNORECASE,
+)
 HLE_ANSWER_RE = re.compile(r"(?ims)^\s*Explanation\s*:.+^\s*Answer\s*:.+^\s*Confidence\s*:\s*\S+")
+MARKDOWN_BOLD_MARKER = "**"
 
 
 @dataclass(frozen=True)
@@ -73,9 +77,43 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     }
 
 
+def _strip_final_answer_emphasis(answer: str, marker: str) -> str:
+    candidate = str(answer or "").strip()
+    if marker:
+        if candidate.startswith(marker):
+            candidate = candidate[len(marker) :].strip()
+        if candidate.endswith(marker):
+            candidate = candidate[: -len(marker)].strip()
+        if candidate == marker:
+            return ""
+    if candidate == MARKDOWN_BOLD_MARKER:
+        return ""
+    if candidate.startswith(MARKDOWN_BOLD_MARKER) and candidate.endswith(MARKDOWN_BOLD_MARKER):
+        inner = candidate[len(MARKDOWN_BOLD_MARKER) : -len(MARKDOWN_BOLD_MARKER)].strip()
+        if inner:
+            return inner
+    return candidate
+
+
+def extract_final_answer_line(text: str) -> str:
+    answers: list[str] = []
+    for line in str(text or "").splitlines():
+        match = FINAL_ANSWER_LINE_RE.match(line)
+        if not match:
+            continue
+        answer = _strip_final_answer_emphasis(match.group("answer"), str(match.group("marker") or ""))
+        if answer:
+            answers.append(answer)
+    return answers[-1] if answers else ""
+
+
+def has_final_answer_marker(text: str) -> bool:
+    return bool(extract_final_answer_line(text))
+
+
 def is_complete_benchmark_answer(text: str) -> bool:
     candidate = str(text or "").strip()
-    return bool(FINAL_ANSWER_RE.search(candidate) or HLE_ANSWER_RE.search(candidate))
+    return bool(has_final_answer_marker(candidate) or HLE_ANSWER_RE.search(candidate))
 
 
 def extract_latest_complete_answer_from_transcript(transcript_path: Path) -> str:

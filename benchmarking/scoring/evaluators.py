@@ -7,10 +7,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from benchmarking.core.convergence import extract_final_answer_line
 from benchmarking.core.datasets import BenchmarkRecord
 
 
-FINAL_ANSWER_RE = re.compile(r"^\s*FINAL\s+ANSWER\s*[:：-]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
 NUMERIC_SCALAR_ANSWER_RE = re.compile(
     r"""
@@ -76,13 +76,6 @@ def last_nonempty_line(text: str) -> str:
         stripped = line.strip()
         if stripped:
             return stripped
-    return ""
-
-
-def extract_final_answer_line(text: str) -> str:
-    matches = FINAL_ANSWER_RE.findall(text)
-    if matches:
-        return matches[-1].strip()
     return ""
 
 
