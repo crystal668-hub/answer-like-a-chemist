@@ -20,6 +20,9 @@ PROXY_KEYS = (
     "no_proxy",
 )
 DEFAULT_NO_PROXY_ENTRIES = ("localhost", "127.0.0.1", "::1")
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_VENV = WORKSPACE_ROOT / ".venv"
+WORKSPACE_VENV_BIN = WORKSPACE_VENV / "bin"
 
 
 def parse_scutil_proxy_output(text: str) -> dict[str, str]:
@@ -69,6 +72,21 @@ def _merge_no_proxy(existing: str) -> str:
     return ",".join(entries)
 
 
+def _prefix_path(path: str, prefix: Path) -> str:
+    prefix_text = str(prefix)
+    entries = [item for item in str(path or "").split(os.pathsep) if item]
+    filtered = [item for item in entries if item != prefix_text]
+    return os.pathsep.join([prefix_text, *filtered])
+
+
+def _inject_workspace_python_env(environment: dict[str, str]) -> None:
+    if not WORKSPACE_VENV_BIN.is_dir():
+        return
+    environment["PATH"] = _prefix_path(environment.get("PATH", ""), WORKSPACE_VENV_BIN)
+    environment.setdefault("VIRTUAL_ENV", str(WORKSPACE_VENV))
+    environment["PYTHONNOUSERSITE"] = "1"
+
+
 def build_openclaw_subprocess_env(
     *,
     base_env: Mapping[str, str] | None = None,
@@ -78,6 +96,7 @@ def build_openclaw_subprocess_env(
     environment = dict(os.environ if base_env is None else base_env)
     if config_path is not None:
         environment["OPENCLAW_CONFIG_PATH"] = str(Path(config_path).expanduser())
+    _inject_workspace_python_env(environment)
 
     system_proxies = parse_scutil_proxy_output(system_proxy_text) if system_proxy_text is not None else macos_system_proxy_env()
     for key in ("HTTP_PROXY", "HTTPS_PROXY"):

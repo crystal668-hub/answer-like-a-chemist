@@ -9,6 +9,19 @@ from benchmarking.runtime.openclaw_env import (
 )
 
 
+def test_build_openclaw_subprocess_env_prefixes_workspace_venv_bin() -> None:
+    workspace_root = Path(__file__).resolve().parents[1]
+    env = build_openclaw_subprocess_env(
+        base_env={"PATH": "/usr/bin:/bin"},
+        system_proxy_text="",
+    )
+
+    venv_bin = str(workspace_root / ".venv" / "bin")
+    assert env["PATH"].split(":")[:1] == [venv_bin]
+    assert env["VIRTUAL_ENV"] == str(workspace_root / ".venv")
+    assert env["PYTHONNOUSERSITE"] == "1"
+
+
 def test_parse_scutil_proxy_output_extracts_http_and_https_proxy() -> None:
     payload = """
 <dictionary> {
