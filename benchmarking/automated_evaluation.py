@@ -541,13 +541,13 @@ def codex_exec_command(
 ) -> list[str]:
     return [
         codex_bin,
+        "--ask-for-approval",
+        "never",
         "exec",
         "--cd",
         str(workspace_root),
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
         "--json",
         *_codex_config_args(),
         "--output-last-message",

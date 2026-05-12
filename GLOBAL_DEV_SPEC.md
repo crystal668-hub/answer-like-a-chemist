@@ -184,7 +184,7 @@
 - Single-agent transcript summarization intentionally extracts only visible text, tool calls, and tool results; hidden `thinking` content and signatures are not carried into the analysis bundle.
 - ChemQA summarization reads archived `qa_result.json`, `artifact_manifest.json`, `candidate_view.json`, final/failure artifacts, and proposer/reviewer trajectory files when present.
 - The analysis process resolves the Codex binary from an explicit internal override, `PATH`, or `/Applications/Codex.app/Contents/Resources/codex`, then runs a read-only `codex exec` `hello` preflight before the full report request. The preflight writes `analysis/codex-preflight-events.jsonl` and `analysis/codex-preflight-last-message.txt`.
-- The full analysis calls `codex exec --sandbox read-only --ask-for-approval never --json --model gpt-5.5 -c model_reasoning_effort="xhigh"` from the canonical workspace root and writes `analysis/codex-events.jsonl`, `analysis/report.json`, and `analysis/report.md`.
+- The full analysis calls `codex --ask-for-approval never exec --sandbox read-only --json --model gpt-5.5 -c model_reasoning_effort="xhigh"` from the canonical workspace root and writes `analysis/codex-events.jsonl`, `analysis/report.json`, and `analysis/report.md`.
 - If Codex launch, execution, report parsing, or report validation fails, the analysis status becomes `failed` and a fallback report is still written from the local evidence bundle. Benchmark pass/fail, scoring, and process exit code are unchanged.
 
 ### Benchmark Result Status Axes

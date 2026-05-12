@@ -319,6 +319,7 @@ def test_run_automated_evaluation_runs_preflight_before_report_with_model_config
     assert calls[0][-1] == "hello"
     for command in calls:
         assert command[0] == str(Path(codex_bin).resolve())
+        assert command[1:4] == ["--ask-for-approval", "never", "exec"]
         assert command[command.index("--model") + 1] == "gpt-5.5"
         assert command[command.index("-c") + 1] == 'model_reasoning_effort="xhigh"'
     assert "codex-preflight-last-message.txt" in calls[0][calls[0].index("--output-last-message") + 1]
