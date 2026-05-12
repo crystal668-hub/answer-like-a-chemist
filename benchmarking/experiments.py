@@ -1,20 +1,7 @@
-from dataclasses import dataclass
+"""Compatibility shim for benchmarking.core.experiments."""
 
+import sys as _sys
 
-@dataclass(frozen=True)
-class ExperimentSpec:
-    id: str
-    label: str
-    runner_kind: str
-    websearch_enabled: bool
-    skills_enabled: bool = True
-    single_agent_id: str | None = None
-    slot_set: str | None = None
-    skill_allowlist: tuple[str, ...] | None = None
+from .core import experiments as _impl
 
-    def resolve_single_agent_id(self, override: str | None) -> str | None:
-        if override is not None:
-            stripped = override.strip()
-            if stripped:
-                return stripped
-        return self.single_agent_id
+_sys.modules[__name__] = _impl

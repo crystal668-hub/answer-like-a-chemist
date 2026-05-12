@@ -6,12 +6,12 @@
   - The main executable source code lives under `workspace/`.
   - The repo root also stores live runtime state for OpenClaw and ClawTeam: agent configs, generated workspaces, SQLite state, logs, device/auth files, and task/session registries.
 - Current capabilities (ONLY what works)
-  - `DONE`: Run benchmark batches across three skills experiment groups: `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on` via `workspace/benchmarking/cli.py`; `workspace/benchmark_test.py` is a thin compatibility facade for the historical script/import path. All groups keep websearch enabled, and the experiment variable is the health-filtered benchmark skills allowlist.
-  - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/datasets.py`.
-  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/evaluators.py` and `workspace/benchmarking/evaluation.py`.
-  - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, and `workspace/benchmarking/provisioning.py`.
-  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, preserves payload error markers such as `payloads[].isError`, applies runner-level convergence policy metadata and transcript recovery for complete benchmark answers, classifies OpenClaw agent error payloads such as `stream_read_error` and no-response fallbacks before candidate-answer contract validation, performs one bounded same-session finalization rescue for error-like payloads when transcript recovery finds no complete answer and session isolation is healthy, validates an internal candidate-answer contract before evaluation, treats unrecovered OpenClaw timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/openclaw_session_isolation.py`, `workspace/benchmarking/convergence.py`, and `workspace/benchmarking/result_contract.py`. Prompt convergence guidance tells agents to stop starting new tool paths at roughly 30% remaining budget, while tool/turn counts remain diagnostics only and are not enforced as hard exploration limits.
-  - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, applying runner-level convergence policy to unchanged-status recovery attempts, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/runners/chemqa.py`.
+  - `DONE`: Run benchmark batches across three skills experiment groups: `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on` via `workspace/benchmarking/workflow/cli.py`; `workspace/benchmark_test.py` is a thin compatibility facade for the historical script/import path. All groups keep websearch enabled, and the experiment variable is the health-filtered benchmark skills allowlist.
+  - `DONE`: Load benchmark JSONL datasets into a normalized `BenchmarkRecord` model via `workspace/benchmarking/core/datasets.py`.
+  - `DONE`: Score outputs with registered evaluators for ChemBench, FrontierScience Olympiad/Research, SuperChem, HLE, and generic semantic matching via `workspace/benchmarking/scoring/evaluators.py` and `workspace/benchmarking/scoring/evaluation.py`.
+  - `DONE`: Provision run-scoped OpenClaw configs and DebateClaw/ChemQA slot workspaces via `workspace/benchmarking/runtime/config_pool.py`, `workspace/benchmarking/runtime/config.py`, and `workspace/benchmarking/runtime/provisioning.py`.
+  - `DONE`: Run a single-agent OpenClaw baseline through a benchmark wrapper that gives each record a run-scoped `sessionId`, clears only stale `agent:<id>:main` session-store pointers before the turn, injects time-budget-aware answer instructions, validates OpenClaw stdout against a strict agent result schema before answer extraction, preserves payload error markers such as `payloads[].isError`, applies runner-level convergence policy metadata and transcript recovery for complete benchmark answers, classifies OpenClaw agent error payloads such as `stream_read_error` and no-response fallbacks before candidate-answer contract validation, performs one bounded same-session finalization rescue for error-like payloads when transcript recovery finds no complete answer and session isolation is healthy, validates an internal candidate-answer contract before evaluation, treats unrecovered OpenClaw timeout sentinel payloads as failed/non-scoreable runs, and preserves historical transcript files via `workspace/benchmarking/workflow/runners/single_llm.py`, `workspace/benchmarking/runtime/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/runtime/session_isolation.py`, `workspace/benchmarking/core/convergence.py`, and `workspace/benchmarking/core/result_contract.py`. Prompt convergence guidance tells agents to stop starting new tool paths at roughly 30% remaining budget, while tool/turn counts remain diagnostics only and are not enforced as hard exploration limits.
+  - `DONE`: Run a ChemQA multi-agent workflow by compiling/materializing a ChemQA launch, monitoring benchmark-visible run-status, applying runner-level convergence policy to unchanged-status recovery attempts, consuming canonical Artifact Flow outputs, archiving outputs, and cleaning runtime leftovers via `workspace/benchmarking/workflow/runners/chemqa.py`.
   - `DONE`: Manage DebateClaw V1 runtime, slot provisioning, prompt/materialization, and launch commands via `workspace/skills/debateclaw-v1/scripts/*.py`.
   - `DONE`: Maintain live debate protocol state in SQLite and expose CLI commands for init/status/next-action/submit/advance via `workspace/skills/debateclaw-v1/scripts/debate_state.py`.
   - `DONE`: Drive ChemQA reviewer/proposer/coordinator loops on top of DebateClaw state via `workspace/skills/chemqa-review/scripts/chemqa_review_openclaw_driver.py`, including phase-scoped multi-turn artifact production, role-phase run-status diagnostics, and deterministic coordinator fallback when model refinement aborts or leaves no valid protocol rewrite.
@@ -21,8 +21,8 @@
   - `DONE`: Provide an experimental medium-or-higher-value chemistry skill inventory via `workspace/skills/chemistry-routing-matrix.json`, covering 85 local skills from a general chemistry solving SOP, structure/materials, atomistic simulation, quantum chemistry, bioactivity/safety, molecular/materials ML, databases, spectra/formats, paper retrieval/access/parse/rerank, and workflow automation. Despite the historical filename, runtime benchmark prompts now treat it as inventory data, not as a deterministic router.
   - `DONE`: Run benchmark skill health checks before skills-on groups. Startup health checks verify declared Python imports through workspace `uv run`, paper PDF backend imports through the `paper-parse` optional extra, executables, API keys loaded from process env or the OpenClaw runtime `.env`, data files, and network providers with per-skill probe timeouts for slower providers such as ChEMBL; unavailable skills are removed from effective runtime allowlists and reported in `skill-health.json` plus `runtime-manifest.json`. Benchmark startup also runs a generic `web_search` preflight for websearch-enabled groups, retries transient OpenClaw/DuckDuckGo failures up to three attempts, and fails those groups early only when web search remains unavailable after those attempts.
   - `DONE`: Provide a fixed skill script runner via `scripts/run_skill.py`; agent-invoked skill scripts run through workspace `uv run --project <canonical workspace> python` while preserving the agent workspace as the execution cwd for relative input/output paths, with `paper-parse` scripts executed via `uv run --project <canonical workspace> --extra paper-parse python`, and return structured unavailable payloads such as `invalid_workspace_root`, `missing_dependency`, `missing_executable`, `missing_api_key`, and `provider_failure`.
-  - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, and `workspace/benchmarking/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, ask skills-on agents to read `act-like-a-chemist` before selecting provider skills, and post-run reporting tracks actual tool calls separately from answer scoring.
-  - `DONE`: Launch a default non-blocking automated benchmark evaluation and experience-extraction pass after every completed benchmark aggregation via `workspace/benchmarking/automated_evaluation_launcher.py` and `workspace/benchmarking/automated_evaluation.py`. The analysis builds a run-local evidence bundle from `results.json`, per-record JSON, single-LLM transcripts, and ChemQA archived artifacts, resolves an executable Codex binary including the macOS Codex app bundle fallback, runs a read-only `hello` preflight, then invokes a read-only `codex exec` session with `gpt-5.5` and `xhigh` reasoning to write `analysis/report.json` and `analysis/report.md`; launch or analysis failure is diagnostic only and does not change the benchmark exit code.
+  - `DONE`: Provide autonomous benchmark skill discovery and audit via `workspace/benchmarking/skills/tree.py`, `workspace/benchmarking/skills/audit.py`, and `workspace/benchmarking/core/reporting.py`: skills-on benchmark runs expose the health-filtered benchmark skill allowlist, prompts render a compact Hierarchical Skill Tree, ask skills-on agents to read `act-like-a-chemist` before selecting provider skills, and post-run reporting tracks actual tool calls separately from answer scoring.
+  - `DONE`: Launch a default non-blocking automated benchmark evaluation and experience-extraction pass after every completed benchmark aggregation via `workspace/benchmarking/analysis/launcher.py` and `workspace/benchmarking/analysis/automated.py`. The analysis builds a run-local evidence bundle from `results.json`, per-record JSON, single-LLM transcripts, and ChemQA archived artifacts, resolves an executable Codex binary including the macOS Codex app bundle fallback, runs a read-only `hello` preflight, then invokes a read-only `codex exec` session with `gpt-5.5` and `xhigh` reasoning to write `analysis/report.json` and `analysis/report.md`; launch or analysis failure is diagnostic only and does not change the benchmark exit code.
   - `DONE`: Retrieve literature candidates from OpenAlex, Semantic Scholar, and Crossref via `workspace/skills/paper-retrieval/scripts/paper_retrieval.py`.
   - `DONE`: Resolve accessible paper artifacts using direct OA URLs and optional Unpaywall lookup via `workspace/skills/paper-access/scripts/paper_access.py`.
   - `DONE`: Parse local PDF/text documents with MinerU or PyMuPDF fallback via `workspace/skills/paper-parse/scripts/paper_parse.py`.
@@ -55,66 +55,43 @@
 
 - Source modules
   - `workspace/benchmarking/`
-    - `contracts.py`
-      - Defines `RunStatus`, `AnswerPayload`, `FailureInfo`, `RecoveryInfo`, `RunnerResult`.
-    - `datasets.py`
-      - Normalizes benchmark records from JSONL.
-    - `evaluation.py`
-      - Registry/dispatch for evaluator functions.
-    - `evaluators.py`
-      - Implements benchmark scoring functions, answer parsing helpers, and the `EvaluationResult` payload.
-    - `experiments.py`
-      - Defines `ExperimentSpec`.
-    - `convergence.py`
-      - Defines benchmark runner convergence policy, transcript summary helpers, and complete-answer recovery from session transcripts. Tool/turn counts are diagnostics only and are not enforced as hard limits.
-    - `result_contract.py`
-      - Validates and normalizes OpenClaw agent stdout so only schema-valid `payloads[].text` entries become benchmark answers; invalid stdout is retained only as diagnostics.
-    - `openclaw_session_isolation.py`
-      - Provides shared OpenClaw agent session-store helpers for run-scoped benchmark isolation, including stale fixed-agent `main` session reset and postflight session/file/model verification for both single-agent runners and judge calls.
-    - `config_renderer.py`
-      - Produces run-scoped OpenClaw configs, toggles web search, injects agent entries, and applies runner-only benchmark skill allowlists.
-    - `provisioning.py`
-      - Creates slot workspaces and `.debateclaw-slot.json` sentinels.
-    - `runtime_config.py`
-      - Orchestrates run-scoped config payloads, ChemQA slot id mapping, slot workspace provisioning, and config-path pooling for benchmark runs.
-    - `cli.py`
-      - Owns the three-group benchmark CLI, wave scheduling, aggregate result writing, runtime manifest writing, judge OpenClaw invocation with session isolation, and legacy-compatible wrapper functions formerly exposed by `benchmark_test.py`.
-    - `orchestration.py`
-      - Owns per-group runner initialization, per-record runner/evaluator orchestration, result-axis derivation, and per-record persistence.
-    - `runtime_bundles.py`
-      - Materializes SuperChem/HLE run-local visual input bundles, resolves visible SuperChem `/media/uploads/...` locators, rewrites `question.md`, and rejects unavailable required images.
-    - `cleanroom.py`
-      - Owns cleanup manifest helper loading, pending-manifest registry, signal/atexit cleanup glue, and process-finalizer invocation used by benchmark runners.
-    - `prompts.py`
-      - Builds single-agent and ChemQA benchmark prompts, adds run-local visual bundle instructions when present, resolves ChemQA answer-kind hints, and keeps websearch availability controlled by runtime config rather than prompt wording.
-    - `reporting.py`
-      - Defines the per-record benchmark result schema and aggregates per-record results into summary buckets.
-    - `automated_evaluation.py`
-      - Builds the post-run automated evaluation input bundle, summarizes visible single-LLM transcript evidence without retaining hidden thinking content, summarizes ChemQA archived artifacts, invokes read-only `codex exec`, validates the report shape, writes fallback reports on analysis failure, and renders Markdown.
-    - `automated_evaluation_launcher.py`
-      - Detached launcher used by the benchmark CLI after final result artifacts are written; records launch status under `analysis/status.json` without affecting benchmark success/failure.
-    - `skill_tree.py`
-      - Loads the historical chemistry skill inventory, defines the full benchmark skill allowlist, and renders a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill, optionally filtered to health-available skills.
-    - `skill_audit.py`
-      - Extracts conservative post-run skill-use audit metadata from OpenClaw runner metadata, final answer text, and benchmark skill-health summary.
-    - `skill_health.py`
-      - Defines benchmark skill health requirements and startup checks for Python imports, optional-extra PDF backends, executables, API keys from process env/OpenClaw `.env`, data files, and network providers with per-skill probe timeouts.
-    - `openclaw_env.py`
-      - Builds OpenClaw subprocess environments, auto-detecting macOS system HTTP/HTTPS proxies through `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` when a proxy is present, preserving explicit user proxy environment values, and redacting proxy credentials in reports.
-    - `web_search_preflight.py`
-      - Runs a one-turn `openclaw agent --local` health check through the single-LLM wrapper, forces one `web_search` call per attempt, retries transient OpenClaw/DuckDuckGo failures up to three attempts with fresh session ids, and validates the resulting transcript toolResult so payloads like `{"status":"error","error":"fetch failed"}` fail even when `isError=false`.
-    - `skill_runtime.py`
-      - Provides the workspace `uv run python` skill runner, paper-parse optional-extra command selection, and structured unavailable/failure payload normalization.
-    - `status.py`
-      - Normalizes ChemQA run-status payloads and derives benchmark result status axes from runner results.
-    - `single_llm_openclaw_wrapper.py`
-      - Wraps `openclaw agent` for single-LLM benchmark turns, uses shared session-isolation helpers to reset stale fixed-agent `main` session-store entries before a run-scoped `sessionId` turn, validates stdout through the result contract, emits session isolation plus stdout diagnostics metadata, and can recover a latest complete benchmark answer from the run-scoped transcript after timeout-like OpenClaw output.
-    - `runners/`
-      - `single_llm.py`: baseline single-agent runner.
-      - `chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
+    - The canonical implementation is clustered by responsibility under subpackages; legacy top-level files such as `benchmarking/cli.py`, `benchmarking/datasets.py`, and `benchmarking/runtime_config.py` are compatibility shims that re-export the canonical modules and preserve historical import/script entrypoints.
+    - `core/`
+      - `contracts.py`: defines `RunStatus`, `AnswerPayload`, `FailureInfo`, `RecoveryInfo`, `RunnerResult`.
+      - `datasets.py`: normalizes benchmark records from JSONL.
+      - `experiments.py`: defines `ExperimentSpec`.
+      - `convergence.py`: defines runner convergence policy, transcript summary helpers, and complete-answer recovery from session transcripts.
+      - `result_contract.py`: validates and normalizes OpenClaw agent stdout so only schema-valid `payloads[].text` entries become benchmark answers.
+      - `status.py`: normalizes ChemQA run-status payloads and derives benchmark result status axes.
+      - `reporting.py`: defines per-record result schema and aggregate summary buckets.
+    - `scoring/`
+      - `evaluation.py`: registry/dispatch for evaluator functions.
+      - `evaluators.py`: implements ChemBench, FrontierScience, SuperChem, HLE, and generic semantic scoring plus answer parsing helpers.
+    - `runtime/`
+      - `config.py`, `config_pool.py`, `provisioning.py`: render run-scoped OpenClaw configs, provision slot workspaces, and manage config path pooling.
+      - `bundles.py`: materializes SuperChem/HLE run-local visual input bundles.
+      - `cleanroom.py`: owns cleanup manifest helper loading, pending-manifest registry, signal/atexit cleanup glue, and process-finalizer invocation.
+      - `openclaw_env.py`: builds OpenClaw subprocess environments, including macOS proxy detection and credential-redacted proxy reports.
+      - `session_isolation.py`: provides shared OpenClaw agent session-store isolation helpers for single-agent runners and judge calls.
+      - `single_llm_openclaw_wrapper.py`: wraps `openclaw agent` for single-LLM turns, validates stdout through the result contract, emits session isolation/stdout diagnostics, and can recover a latest complete answer from transcripts.
+      - `web_search_preflight.py`: probes web search with bounded retries before websearch-enabled groups are dispatched.
+    - `skills/`
+      - `tree.py`: loads the historical chemistry skill inventory, defines the benchmark allowlist, and renders the three-layer skill discovery tree.
+      - `health.py`: defines skill health requirements and startup checks.
+      - `runtime.py`: provides the workspace `uv run python` skill runner and structured unavailable/failure payload normalization.
+      - `audit.py`: extracts conservative post-run skill-use audit metadata.
+    - `analysis/`
+      - `automated.py`: builds the post-run automated evaluation bundle, invokes read-only `codex exec`, validates/writes reports, and renders Markdown.
+      - `launcher.py`: starts detached automated analysis and records launch status under `analysis/status.json`.
+    - `workflow/`
+      - `cli.py`: owns the three-group benchmark CLI, wave scheduling, aggregate result writing, runtime manifest writing, judge OpenClaw invocation, and legacy-compatible wrapper functions formerly exposed by `benchmark_test.py`.
+      - `orchestration.py`: owns per-group runner initialization, per-record runner/evaluator orchestration, result-axis derivation, and per-record persistence.
+      - `prompts.py`: builds single-agent and ChemQA benchmark prompts.
+      - `runners/single_llm.py`: baseline single-agent runner.
+      - `runners/chemqa.py`: ChemQA launch/monitor/archive/cleanup runner.
   - `workspace/benchmark_test.py`
     - Thin compatibility facade for historical `python benchmark_test.py ...` execution and `import benchmark_test.xxx` callers.
-    - Re-exports the package-owned CLI symbols from `workspace/benchmarking/cli.py` without re-registering evaluators or redefining shared result dataclasses.
+    - Re-exports the package-owned CLI symbols from `workspace/benchmarking/workflow/cli.py` through the `benchmarking.cli` compatibility module without re-registering evaluators or redefining shared result dataclasses.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
 
@@ -132,8 +109,8 @@
     - Guides agents to solve as rigorous chemists by tracking given/derived/tool-verified/source-supported/assumption claims, verifying uncertain structures/calculations/source facts with provider skills, applying organic mechanism guardrails, preserving numerical units/rounding paths, and producing auditable final-answer traces.
   - `chemistry-routing-matrix.json`
     - Historical experimental chemistry skill inventory for medium-or-higher-value chemistry capabilities. Despite the historical filename, runtime benchmark prompts treat this as inventory data, not as a deterministic router.
-    - `workspace/benchmarking/skill_tree.py` defines the benchmark skill allowlist and a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill. The first tree domain is the chemistry solving protocol containing `act-like-a-chemist`; skills-on prompts include only a short instruction to read it first and do not inline its SOP body.
-    - Benchmark startup checks the allowlist with `workspace/benchmarking/skill_health.py`; only health-available skills remain in effective skills-on runtime configs and prompts. Health checks merge API keys from the OpenClaw runtime `.env` when they are not present in the process environment.
+    - `workspace/benchmarking/skills/tree.py` defines the benchmark skill allowlist and a three-layer discovery tree: Domain -> Skill Family -> Concrete Skill. The first tree domain is the chemistry solving protocol containing `act-like-a-chemist`; skills-on prompts include only a short instruction to read it first and do not inline its SOP body.
+    - Benchmark startup checks the allowlist with `workspace/benchmarking/skills/health.py`; only health-available skills remain in effective skills-on runtime configs and prompts. Health checks merge API keys from the OpenClaw runtime `.env` when they are not present in the process environment.
     - Single-agent skills-on runs expose the health-filtered benchmark skill allowlist to the model. Prompts include a lightweight hierarchical skill tree and rely on the model to choose and call relevant skills when they help answer the record.
     - Agent-invoked skill scripts should go through `workspace/scripts/run_skill.py`, which validates that `--workspace-root` points to the canonical project root containing `pyproject.toml` and `uv.lock`, executes target scripts via `uv run --project <workspace-root> python` or `uv run --project <workspace-root> --extra paper-parse python` for `paper-parse` scripts, keeps `--execution-cwd` as the subprocess cwd for relative artifacts, and reports structured unavailable/failure payloads instead of raw shell failures.
     - Post-run reporting records actual tool-use audit metadata such as tool-call counts, model-declared skipped traces, skill-health summary, and no-tool-call outcomes. Skipped traces are diagnostic only and do not count as executed skill use.
@@ -149,13 +126,13 @@
   - `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
   - `workspace/benchmarks/superchem/extract_superchem_pool.py`
 - Module interactions
-  - `benchmark_test.py` -> `benchmarking.cli`
+  - `benchmark_test.py` -> `benchmarking.cli` -> `benchmarking.workflow.cli`
     - Preserves the historical CLI/import facade and delegates execution to the package entrypoint.
-  - `benchmarking.cli` -> `benchmarking/*`
+  - `benchmarking.workflow.cli` -> `benchmarking.core` / `benchmarking.scoring` / `benchmarking.runtime` / `benchmarking.skills` / `benchmarking.analysis` / `benchmarking.workflow`
     - Uses dataset loading, runtime config orchestration, visual bundle materialization, cleanroom glue, evaluator dispatch, per-group orchestration, and reporting.
-  - `benchmarking.cli` -> `skills/chemqa-review`
+  - `benchmarking.workflow.cli` -> `skills/chemqa-review`
     - Launches ChemQA preset flow, passes resolved `answer_kind`, polls benchmark-visible run status, prefers canonical Artifact Flow paths, archives outputs.
-  - `benchmarking.cleanroom` / `benchmarking.cli` -> `skills/benchmark-cleanroom`
+  - `benchmarking.runtime.cleanroom` / `benchmarking.workflow.cli` -> `skills/benchmark-cleanroom`
     - Writes cleanup manifests and runs process-finalizer cleanup hooks on exit/failure without deleting benchmark session or artifact state.
   - `chemqa_review_openclaw_driver.py` -> `debate_state.py`
     - Subprocess-driven control loop; asks for next action, submits artifacts, advances state.
@@ -173,11 +150,11 @@
     - After writing final result artifacts, the runner also starts a detached automated evaluation process by default and records its launch state under `runtime-manifest.json.automated_evaluation`; the analysis process writes under `analysis/`.
     - Per-record JSON entries are on schema version `2` and include `skills_enabled` plus explicit evaluability axes such as run lifecycle status, protocol completion/acceptance status, answer availability/reliability, evaluable/scored flags, recovery mode, degraded execution, and execution error kind.
     - Aggregate summaries in `results.json` and CSV exports retain legacy score fields and also expose `skills_enabled`, operational counters such as completed vs failed runs, protocol completion, evaluable/scored counts, recovered-evaluable counts, degraded execution counts, and HLE calibration RMSE for confidence diagnostics.
-  - Implementation location: `workspace/benchmarking/cli.py`, `workspace/benchmarking/*`; `workspace/benchmark_test.py` is the legacy facade.
+  - Implementation location: `workspace/benchmarking/workflow/cli.py`, `workspace/benchmarking/*`; `workspace/benchmark_test.py` is the legacy facade.
   - Status: `DONE`
 
 ### Automated Benchmark Evaluation
-- Each full benchmark completion writes the usual final artifacts first, then starts `benchmarking.automated_evaluation` in a detached process through `benchmarking.automated_evaluation_launcher.launch_automated_evaluation`.
+- Each full benchmark completion writes the usual final artifacts first, then starts the compatibility module `benchmarking.automated_evaluation` in a detached process through `benchmarking.analysis.launcher.launch_automated_evaluation`.
 - The benchmark CLI does not expose user-facing switches for this feature. It is a default post-run diagnostic path and is not a scoring gate.
 - Launch status is written to `output_root/analysis/status.json` and copied into `runtime-manifest.json` under `automated_evaluation`.
 - Analysis inputs are written to `output_root/analysis/input-bundle.json`. The bundle groups results by `record_id`, includes final answers, evaluator/judge details, reference answers, status axes, skill-use audit metadata, visible transcript summaries for single-agent runs, and ChemQA artifact summaries for ChemQA runs.
@@ -199,7 +176,7 @@
   - Input / Output:
     - Input: benchmark JSONL files.
     - Output: `BenchmarkRecord` objects with `GradingSpec`.
-  - Implementation location: `workspace/benchmarking/datasets.py`
+  - Implementation location: `workspace/benchmarking/core/datasets.py`
   - Status: `DONE`
 
 - Name: HLE chemistry pool extraction
@@ -215,7 +192,7 @@
   - Input / Output:
     - Input: SuperChem/HLE `BenchmarkRecord` payloads plus a run-local bundle root.
     - Output: `question.md` and localized `images/*` files referenced by single-agent and ChemQA prompts.
-  - Implementation location: `workspace/benchmarking/runtime_bundles.py`, `workspace/benchmarking/prompts.py`
+  - Implementation location: `workspace/benchmarking/runtime/bundles.py`, `workspace/benchmarking/workflow/prompts.py`
   - Status: `DONE`
 
 - Name: Evaluator registry and dispatch
@@ -223,7 +200,7 @@
   - Input / Output:
     - Input: `BenchmarkRecord`, short/full answer text, judge object.
     - Output: evaluator payload/dataclass.
-  - Implementation location: `workspace/benchmarking/evaluation.py`, `workspace/benchmarking/evaluators.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluation.py`, `workspace/benchmarking/scoring/evaluators.py`
   - Status: `DONE`
 
 - Name: ChemBench open-ended scoring
@@ -231,7 +208,7 @@
   - Input / Output:
     - Input: `BenchmarkRecord`, model answer text.
     - Output: `EvaluationResult`.
-  - Implementation location: `workspace/benchmarking/evaluators.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluators.py`
   - Status: `DONE`
 
 - Name: FrontierScience Olympiad scoring
@@ -239,7 +216,7 @@
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
-  - Implementation location: `workspace/benchmarking/evaluators.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluators.py`
   - Status: `DONE`
 
 - Name: FrontierScience Research scoring
@@ -247,7 +224,7 @@
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
-  - Implementation location: `workspace/benchmarking/evaluators.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluators.py`
   - Status: `DONE`
 
 - Name: SuperChem multimodal scoring
@@ -255,7 +232,7 @@
   - Input / Output:
     - Input: record + answer text.
     - Output: `EvaluationResult`.
-  - Implementation location: `workspace/benchmarking/evaluators.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluators.py`
   - Status: `DONE`
 
 - Name: HLE chemistry scoring
@@ -263,7 +240,7 @@
   - Input / Output:
     - Input: HLE chemistry `BenchmarkRecord` plus model response text.
     - Output: `EvaluationResult` with `primary_metric = hle_judge_accuracy` and judge details including extracted final answer and confidence.
-  - Implementation location: `workspace/benchmarking/evaluators.py`, `workspace/benchmarking/evaluation.py`
+  - Implementation location: `workspace/benchmarking/scoring/evaluators.py`, `workspace/benchmarking/scoring/evaluation.py`
   - Status: `DONE`
 
 - Name: Run-scoped OpenClaw config orchestration
@@ -271,15 +248,15 @@
   - Input / Output:
     - Input: base config payload/path, experiment group/spec, runtime roots, model overrides, slot template.
     - Output: modified config payloads and config JSON files under `runtime-config/`.
-  - Implementation location: `workspace/benchmarking/runtime_config.py`, `workspace/benchmarking/config_renderer.py`, `workspace/benchmarking/provisioning.py`
+  - Implementation location: `workspace/benchmarking/runtime/config_pool.py`, `workspace/benchmarking/runtime/config.py`, `workspace/benchmarking/runtime/provisioning.py`
   - Status: `DONE`
 
 - Name: Benchmark OpenClaw proxy environment and web search preflight
-  - Description: Constructs a shared environment for benchmark-owned OpenClaw subprocesses, auto-injecting macOS system proxy settings into `HTTP_PROXY`/`HTTPS_PROXY` and enabling Node's `NODE_USE_ENV_PROXY=1` when no explicit proxy variables are already set. Before dispatching websearch-enabled groups, the benchmark runs a real `web_search` probe through `benchmarking/single_llm_openclaw_wrapper.py`, saves `web-search-preflight.json`, includes the summary in `runtime-manifest.json` and `results.json`, and materializes group-level execution failures instead of letting records spend turns on repeated failed search calls.
+  - Description: Constructs a shared environment for benchmark-owned OpenClaw subprocesses, auto-injecting macOS system proxy settings into `HTTP_PROXY`/`HTTPS_PROXY` and enabling Node's `NODE_USE_ENV_PROXY=1` when no explicit proxy variables are already set. Before dispatching websearch-enabled groups, the benchmark runs a real `web_search` probe through `benchmarking/runtime/single_llm_openclaw_wrapper.py`, saves `web-search-preflight.json`, includes the summary in `runtime-manifest.json` and `results.json`, and materializes group-level execution failures instead of letting records spend turns on repeated failed search calls.
   - Input / Output:
     - Input: run-scoped OpenClaw config path, benchmark agent id, host/system proxy environment.
     - Output: OpenClaw subprocess env plus structured preflight report with provider/result/error/proxy metadata.
-  - Implementation location: `workspace/benchmarking/openclaw_env.py`, `workspace/benchmarking/web_search_preflight.py`, `workspace/benchmarking/cli.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/runners/chemqa.py`
+  - Implementation location: `workspace/benchmarking/runtime/openclaw_env.py`, `workspace/benchmarking/runtime/web_search_preflight.py`, `workspace/benchmarking/workflow/cli.py`, `workspace/benchmarking/runtime/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/workflow/runners/chemqa.py`
   - Status: `DONE`
 
 - Name: Slot workspace provisioning
@@ -287,7 +264,7 @@
   - Input / Output:
     - Input: workspace path, slot id, template text.
     - Output: initialized runtime workspace.
-  - Implementation location: `workspace/benchmarking/provisioning.py`
+  - Implementation location: `workspace/benchmarking/runtime/provisioning.py`
   - Status: `DONE`
 
 - Name: Single-agent OpenClaw baseline runner
@@ -296,7 +273,7 @@
     - Input: benchmark record, group config, runtime bundle root.
     - Output: `RunnerResult` with `runner_meta.session_isolation`, `runner_meta.stdout_diagnostics`, `runner_meta.convergence_policy`, `runner_meta.convergence`, `runner_meta.candidate_answer_contract`, and `runner_meta.skill_use_audit` metadata. Invalid stdout returns `RunStatus.FAILED` and `FailureInfo.code = agent_result_contract_invalid`; recovered transcript answers return `RunStatus.RECOVERED` with `RecoveryInfo.source = single-llm-session-transcript`; unrecovered OpenClaw timeout sentinel payloads return `RunStatus.FAILED`, `FailureInfo.code = agent_response_timeout`, empty answer tracks, and raw payload text retained only in diagnostics instead of evaluation input. Other missing candidate-answer fields return `FailureInfo.code = candidate_answer_contract_invalid`.
     - Prompt behavior: `build_single_llm_prompt` receives the per-record convergence timeout and tells the model to stop starting new tool/skill exploration once roughly 30% or less of the budget remains, then produce the required final answer format from evidence already gathered. The prompt asks SuperChem agents to show option checks and answer immediately when evidence distinguishes candidates; it does not impose a provider-skill call count cap. The prompt is advisory; enforcement/recovery lives in runner/wrapper metadata and transcript handling.
-  - Implementation location: `workspace/benchmarking/runners/single_llm.py`, `workspace/benchmarking/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/openclaw_session_isolation.py`, `workspace/benchmarking/convergence.py`, `workspace/benchmarking/result_contract.py`
+  - Implementation location: `workspace/benchmarking/workflow/runners/single_llm.py`, `workspace/benchmarking/runtime/single_llm_openclaw_wrapper.py`, `workspace/benchmarking/runtime/session_isolation.py`, `workspace/benchmarking/core/convergence.py`, `workspace/benchmarking/core/result_contract.py`
   - Status: `DONE`
 
 - Name: ChemQA benchmark runner
@@ -304,7 +281,7 @@
   - Input / Output:
     - Input: benchmark record, ChemQA skill root, config path, slot set, profile/round overrides.
     - Output: `RunnerResult` plus archived artifact tree including canonical final/failure artifacts when available.
-  - Implementation location: `workspace/benchmarking/runners/chemqa.py`
+  - Implementation location: `workspace/benchmarking/workflow/runners/chemqa.py`
   - Status: `DONE`
 
 - Name: DebateClaw preset compile/materialize/launch
@@ -416,7 +393,7 @@
   - Input / Output:
     - Input: benchmark record prompt plus effective configured benchmark skill allowlist.
     - Output: normal benchmark answer plus `runner_meta.skill_use_audit`, `skill-health.json`, runtime manifest skill-health summary, and aggregate skill tool-use counters.
-  - Implementation location: `workspace/benchmarking/skill_tree.py`, `workspace/benchmarking/skill_audit.py`, `workspace/benchmarking/prompts.py`, `workspace/benchmarking/reporting.py`
+  - Implementation location: `workspace/benchmarking/skills/tree.py`, `workspace/benchmarking/skills/audit.py`, `workspace/benchmarking/workflow/prompts.py`, `workspace/benchmarking/core/reporting.py`
   - Status: `DONE`
 
 - Name: Benchmark skill runtime health and fixed script runner
@@ -424,7 +401,7 @@
   - Input / Output:
     - Input: benchmark skill allowlist plus workspace root and environment variables.
     - Output: `skill-health.json`, runtime manifest health summary/effective allowlists, and structured skill runner payloads with `available=false`, `error_kind`, and `reason` on failure.
-  - Implementation location: `workspace/benchmarking/skill_health.py`, `workspace/benchmarking/skill_runtime.py`, `workspace/scripts/run_skill.py`, `workspace/benchmarking/cli.py`
+  - Implementation location: `workspace/benchmarking/skills/health.py`, `workspace/benchmarking/skills/runtime.py`, `workspace/scripts/run_skill.py`, `workspace/benchmarking/workflow/cli.py`
   - Status: `DONE`
 
 - Name: Experimental chemistry skill optional dependencies
@@ -525,20 +502,20 @@
 
 ## 4. Actual Behavior
 - Primary execution flow: three-group skills benchmark
-  - `workspace/benchmarking/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
-  - On import, both the facade and package CLI ensure the workspace source root is on `sys.path` and import benchmark internals via top-level `benchmarking.*`/`runtime_paths`, so loading the legacy entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
-  - It normalizes records through `benchmarking.datasets.load_records`.
-  - It runs benchmark skill health checks through `benchmarking.skill_health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.
-  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime_config.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.cli` keeps compatibility wrappers around that package module for legacy callers.
-  - For OpenClaw subprocesses, `benchmarking.openclaw_env.build_openclaw_subprocess_env` preserves explicit proxy variables and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder.
-  - It runs `benchmarking.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
+  - `workspace/benchmarking/workflow/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
+  - On import, the facade and package CLI ensure the workspace source root is on `sys.path` and import benchmark internals through canonical subpackages plus `runtime_paths`, so loading the legacy entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
+  - It normalizes records through `benchmarking.core.datasets.load_records`; the legacy `benchmarking.datasets` module re-exports that implementation.
+  - It runs benchmark skill health checks through `benchmarking.skills.health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.
+  - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime.config_pool.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.cli` keeps compatibility wrappers around that package module for legacy callers.
+  - For OpenClaw subprocesses, `benchmarking.runtime.openclaw_env.build_openclaw_subprocess_env` preserves explicit proxy variables and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder.
+  - It runs `benchmarking.runtime.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
   - After writing `results.json`, CSV summaries, and the final `runtime-manifest.json`, it starts the detached automated evaluation process and then rewrites `runtime-manifest.json` with the `automated_evaluation` launch status. If launcher setup raises, the CLI writes a `launch_failed` status under `analysis/status.json` and still returns according to the benchmark run outcome.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=True`, so the old web-on/web-off matrix is no longer an experiment axis.
-  - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skill_tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`). Startup health filtering writes only available skills to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
+  - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skills.tree.benchmark_skill_allowlist()` from the historical `workspace/skills/chemistry-routing-matrix.json` inventory (`skills[].skill`). Startup health filtering writes only available skills to skills-on runner agents. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
   - Runtime configs add `workspace/skills` to `skills.load.extraDirs` so run-scoped benchmark workspaces can discover the newly available local skills.
-  - Before dispatching a record, `benchmarking.runtime_bundles` materializes run-local input bundles for benchmark visual inputs. SuperChem bundles parse `/media/uploads/...` locators from the current question/options text, copy only those visible per-record images into `images/`, rewrite `question.md` to reference the local files, and do not expose full shared asset buckets or reference-reasoning images to answer-generation prompts. Required visible multimodal images that cannot be resolved raise a package runtime-bundle error, which `benchmarking.cli` translates to `BenchmarkError` for legacy callers. HLE bundles decode base64 image data or copy local image files so prompts with "provided information" retain their visual context.
+  - Before dispatching a record, `benchmarking.runtime.bundles` materializes run-local input bundles for benchmark visual inputs. SuperChem bundles parse `/media/uploads/...` locators from the current question/options text, copy only those visible per-record images into `images/`, rewrite `question.md` to reference the local files, and do not expose full shared asset buckets or reference-reasoning images to answer-generation prompts. Required visible multimodal images that cannot be resolved raise a package runtime-bundle error, which `benchmarking.workflow.cli` translates to `BenchmarkError` for legacy callers. HLE bundles decode base64 image data or copy local image files so prompts with "provided information" retain their visual context.
   - For `single_llm_*` groups:
-    - The runner shells out through `benchmarking/single_llm_openclaw_wrapper.py`, which invokes `openclaw agent --local ... --json`, validates stdout with `benchmarking.result_contract`, and normalizes invalid stdout into `result.meta.stdout_diagnostics`.
+    - The runner shells out through `benchmarking/runtime/single_llm_openclaw_wrapper.py`, which invokes `openclaw agent --local ... --json`, validates stdout with `benchmarking.core.result_contract`, and normalizes invalid stdout into `result.meta.stdout_diagnostics`.
     - It does not use a native Python OpenClaw API.
     - Invalid stdout, such as tool argument JSON without schema-valid answer payloads, is never passed to answer extraction or the evaluator. The record becomes failed/unscored with `agent_result_contract_invalid`.
     - Schema-valid stdout still must pass the runner's internal candidate-answer contract before evaluation. Timeout sentinels such as `LLM request timed out.` return `agent_response_timeout`; missing required answer markers/fields return `candidate_answer_contract_invalid`; both paths keep `answer` empty and retain raw payload text only in `runner_meta.candidate_answer_contract`.
@@ -574,8 +551,8 @@
   - Rebuttal artifacts now carry explicit `mode`: `response_only`, `answer_revision`, or `concession`. Only `answer_revision` updates the Artifact Flow current candidate view.
   - `chemqa-review/scripts/bundle_common.py` and the prompt pack now treat all skills listed in `skills/chemistry-routing-matrix.json` as required sibling skills alongside DebateClaw and the paper pipeline.
   - ChemQA proposer prompts use full-availability skill discovery wording: provider skills can be used directly when they help, full `SKILL.md` files should be read only for skills about to be used, and unexecuted skills are not valid provider traces.
-  - `benchmarking/prompts.py` injects the compact Hierarchical Skill Tree into single-agent benchmark prompts, so single-agent skills-on runs receive domain/family discovery guidance rather than record-level route selection.
-  - Single-agent benchmark turns use a fixed OpenClaw agent per experiment group and rely on `benchmarking/single_llm_openclaw_wrapper.py` to delete stale `agent:<id>:main` entries before each run-scoped session turn; old transcript files are not deleted.
+  - `benchmarking/workflow/prompts.py` injects the compact Hierarchical Skill Tree into single-agent benchmark prompts, so single-agent skills-on runs receive domain/family discovery guidance rather than record-level route selection.
+  - Single-agent benchmark turns use a fixed OpenClaw agent per experiment group and rely on `benchmarking/runtime/single_llm_openclaw_wrapper.py` to delete stale `agent:<id>:main` entries before each run-scoped session turn; old transcript files are not deleted.
   - `pyproject.toml` exposes optional experimental chemistry extras for PyPI-resolvable dependency families. `chemqa[chem-experimental]` aggregates those families but is intentionally not included in `chemqa[full]`, and OpenFF/tooluniverse/HPC executable stacks remain conda, preinstalled, API, or external-service dependencies described by their skill docs rather than default pip dependencies.
   - The shared ChemQA prompt module is named for the fixed-lane protocol rather than native workflow-package execution.
   - ChemQA candidate submissions are validated in provider-trace audit mode by default. The policy audits provider traces the model actually submits; skipped provider traces are invalid and do not satisfy tool-backed evidence.
@@ -608,7 +585,7 @@
   - MinerU is treated as a required long-lived native macOS local HTTP service when complex PDF parsing/OCR is needed; the service helper installs the native runtime, pre-downloads models, and defaults runtime model loading to `MINERU_MODEL_SOURCE=local`.
 
 - Shortcuts, hacks, implicit logic
-  - `benchmarking.cli` is still broad: it owns CLI parsing, wave scheduling, subprocess helpers, result aggregation, and compatibility wrappers. Runtime config, prompts, status axes, evaluator implementations, per-group orchestration, runtime bundles, and cleanup glue are package-owned modules, and `benchmark_test.py` is no longer a real implementation boundary.
+  - `benchmarking.workflow.cli` is still broad: it owns CLI parsing, wave scheduling, subprocess helpers, result aggregation, and compatibility wrappers. Runtime config, prompts, status axes, evaluator implementations, per-group orchestration, runtime bundles, and cleanup glue are package-owned modules, and `benchmark_test.py` is no longer a real implementation boundary.
   - `benchmark_test.py` remains only as a compatibility facade and intentionally does not preserve implementation-shape details such as `GroupRecordResult.__module__ == "benchmark_test"`.
   - The obsolete native workflow-package scaffold has been retired; current live ChemQA execution uses CLI/state-script orchestration.
   - Run-scoped OpenClaw configs are produced by mutating a copy of the user’s local `~/.openclaw/openclaw.json`.
@@ -624,7 +601,7 @@
 - Architectural inconsistencies
   - Intended architecture suggests package-based workflows and reusable modules.
   - Actual behavior is still script-heavy and subprocess-heavy:
-    - `benchmarking.cli` is still a broad package CLI/entrypoint with embedded scheduling and aggregation logic.
+    - `benchmarking.workflow.cli` is still a broad package CLI/entrypoint with embedded scheduling and aggregation logic.
     - ChemQA runs are controlled through external state scripts.
   - `workspace/benchmarking/` is now the real benchmark implementation layer; the legacy root entrypoint is retained for compatibility.
   - `workspace/pyproject.toml` advertises `web-ui` extras, but there is no corresponding app module.
@@ -632,18 +609,18 @@
 
 ## 6. Risks & Technical Debt
 - Fragile logic
-  - Artifact recovery depends on specific filenames and directory heuristics in `workspace/benchmarking/runners/chemqa.py`.
+  - Artifact recovery depends on specific filenames and directory heuristics in `workspace/benchmarking/workflow/runners/chemqa.py`.
   - Cleanup depends on manifests and process command-line matching in `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`; session/artifact retention is intentional and may require separate manual pruning outside benchmark correctness paths.
   - ChemQA recovery depends on `spawn_registry.json`, `/proc`-style process inspection when available, and workspace naming conventions in `workspace/skills/chemqa-review/scripts/recover_run.py`.
 
 - Hardcoded values
   - Default OpenClaw home/config roots are hardcoded in `workspace/runtime_paths.py`.
-  - Default model ids, agent ids, workspace roots, slot sets, and timeouts are hardcoded in `workspace/benchmarking/cli.py`.
+  - Default model ids, agent ids, workspace roots, slot sets, and timeouts are hardcoded in `workspace/benchmarking/workflow/cli.py`.
   - GROBID and MinerU default URLs are hardcoded in docs/scripts.
   - ChemQA role topology is fixed to one candidate owner plus four reviewer lanes across the DebateClaw state script and ChemQA artifact/driver scripts.
 
 - Missing abstractions
-  - `benchmarking.cli` still combines CLI parsing, scheduling, aggregate result persistence, runtime manifest writing, and some compatibility wrappers.
+  - `benchmarking.workflow.cli` still combines CLI parsing, scheduling, aggregate result persistence, runtime manifest writing, and some compatibility wrappers.
   - Paper tools are standalone scripts with no shared higher-level orchestrator.
   - OpenClaw/ClawTeam integration is done through subprocess calls everywhere; there is no local adapter interface.
 
@@ -654,7 +631,7 @@
 
 ## 7. Suggested Next Steps
 - Continue shrinking the package CLI:
-  - Move more scheduling, result persistence, and aggregation glue from `workspace/benchmarking/cli.py` into smaller package modules once their contracts stabilize.
+  - Move more scheduling, result persistence, and aggregation glue from `workspace/benchmarking/workflow/cli.py` into smaller package modules once their contracts stabilize.
 - Separate source from runtime state:
   - Move generated workspaces, logs, DBs, and mutable OpenClaw runtime state outside the analyzed source tree or document them as runtime-only roots.
 - Remove or implement misleading declared surfaces:

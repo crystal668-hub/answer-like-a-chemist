@@ -111,7 +111,7 @@ print(json.dumps({{
         self.assertEqual("", completed.stderr)
         self.assertEqual(0, completed.returncode)
         payload = json.loads(completed.stdout)
-        self.assertEqual("benchmarking.contracts", payload["answer_payload_module"])
+        self.assertEqual("benchmarking.core.contracts", payload["answer_payload_module"])
         self.assertEqual("runtime_paths", payload["runtime_paths_module"])
 
     def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
@@ -2475,8 +2475,8 @@ Points: 0.5, Item: Second criterion
             ),
         ]
         summary = benchmark_test.aggregate_results(sample)
-        self.assertEqual("benchmarking.reporting", benchmark_test.GroupRecordResult.__module__)
-        self.assertEqual("benchmarking.reporting", benchmark_test.aggregate_results.__module__)
+        self.assertEqual("benchmarking.core.reporting", benchmark_test.GroupRecordResult.__module__)
+        self.assertEqual("benchmarking.core.reporting", benchmark_test.aggregate_results.__module__)
         self.assertIs(benchmark_test.GroupRecordResult, benchmark_test._benchmark_cli.GroupRecordResult)
         self.assertEqual(["group_order", "groups", "group_subset"], list(summary.keys()))
         self.assertEqual(["g1"], summary["group_order"])

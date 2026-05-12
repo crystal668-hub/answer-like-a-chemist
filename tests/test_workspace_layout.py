@@ -11,6 +11,21 @@ class WorkspaceLayoutTests(unittest.TestCase):
     def test_review_loop_benchmark_entrypoint_is_removed(self) -> None:
         self.assertFalse((ROOT / "benchmark_rl.py").exists())
 
+    def test_benchmarking_code_is_clustered_under_layered_packages(self) -> None:
+        benchmarking_root = ROOT / "benchmarking"
+        clustered_files = {
+            path.relative_to(benchmarking_root).as_posix()
+            for package in ("core", "scoring", "runtime", "skills", "analysis", "workflow")
+            for path in (benchmarking_root / package).glob("*.py")
+        }
+
+        self.assertIn("core/contracts.py", clustered_files)
+        self.assertIn("scoring/evaluators.py", clustered_files)
+        self.assertIn("runtime/config.py", clustered_files)
+        self.assertIn("skills/health.py", clustered_files)
+        self.assertIn("analysis/automated.py", clustered_files)
+        self.assertIn("workflow/cli.py", clustered_files)
+
 
 if __name__ == "__main__":
     unittest.main()

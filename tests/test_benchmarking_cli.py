@@ -18,7 +18,7 @@ def test_benchmark_test_is_thin_compatibility_facade() -> None:
 
     assert module.main is benchmarking_cli.main
     assert module.GroupRecordResult is ReportingGroupRecordResult
-    assert module.GroupRecordResult.__module__ == "benchmarking.reporting"
+    assert module.GroupRecordResult.__module__ == "benchmarking.core.reporting"
     assert module.BenchmarkRecord is benchmarking_cli.BenchmarkRecord
 
 

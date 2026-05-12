@@ -1,14 +1,6 @@
-from .chemqa import ChemQARunner
-from .single_llm import SingleLLMRunner
+"""Compatibility package for benchmarking.workflow.runners."""
 
-
-def build_runner(*, runner_kind: str, chemqa_runner_cls=ChemQARunner, single_llm_runner_cls=SingleLLMRunner, **kwargs):
-    if runner_kind == "chemqa":
-        return chemqa_runner_cls(**kwargs)
-    if runner_kind == "single_llm":
-        return single_llm_runner_cls(**kwargs)
-    raise ValueError(f"Unsupported runner kind: {runner_kind}")
-
+from benchmarking.workflow.runners import ChemQARunner, SingleLLMRunner, build_runner
 
 __all__ = [
     "ChemQARunner",
