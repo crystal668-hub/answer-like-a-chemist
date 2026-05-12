@@ -73,6 +73,38 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("Confidence:", chemqa_goal)
         self.assertIn("ChemQA Artifact Flow answer kind: multiple_choice.", chemqa_goal)
 
+    def test_hle_prompt_specializes_multiple_choice_answer_field(self) -> None:
+        record = BenchmarkRecord(
+            record_id="hle-mc",
+            dataset="hle",
+            source_file="/tmp/hle.jsonl",
+            eval_kind="hle",
+            prompt="Which option is correct?\nA. X\nB. Y",
+            reference_answer="B",
+            payload={"answer_type": "multipleChoice"},
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+
+        self.assertIn("For HLE multiple-choice tasks, put only the option letter", prompt)
+        self.assertIn("Do not add `FINAL ANSWER:`", prompt)
+
+    def test_hle_prompt_specializes_exact_match_answer_field(self) -> None:
+        record = BenchmarkRecord(
+            record_id="hle-exact",
+            dataset="hle",
+            source_file="/tmp/hle.jsonl",
+            eval_kind="hle",
+            prompt="Give the rate constant.",
+            reference_answer="1.4E-14 hr^-1",
+            payload={"answer_type": "exactMatch"},
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+
+        self.assertIn("For HLE exact-match tasks, put only the final value, expression, or entity", prompt)
+        self.assertIn("Do not add `FINAL ANSWER:`", prompt)
+
     def test_single_llm_prompt_respects_skills_enabled_flag(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
@@ -161,6 +193,104 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("Show concise reasoning", prompt)
         self.assertNotIn("at most one", prompt.lower())
         self.assertNotIn("max one", prompt.lower())
+
+    def test_superchem_prompt_targets_checkpoint_rpf(self) -> None:
+        record = BenchmarkRecord(
+            record_id="superchem-1",
+            dataset="superchem",
+            source_file="/tmp/superchem.jsonl",
+            eval_kind="superchem_multiple_choice_rpf",
+            prompt="Choose the product.\nA. X\nB. Y",
+            reference_answer="B",
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+
+        self.assertIn("checkpoint-like", prompt)
+        self.assertIn("key structure, mechanism, stoichiometry, and elimination checks", prompt)
+        self.assertIn("Use only uppercase option letters", prompt)
+        self.assertIn("separate multiple correct letters with `|`", prompt)
+
+    def test_chembench_prompt_distinguishes_numeric_and_exact_answers(self) -> None:
+        numeric_record = BenchmarkRecord(
+            record_id="chembench-numeric",
+            dataset="chembench",
+            source_file="/tmp/chembench.jsonl",
+            eval_kind="chembench_open_ended",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={},
+        )
+        exact_record = BenchmarkRecord(
+            record_id="chembench-exact",
+            dataset="chembench",
+            source_file="/tmp/chembench.jsonl",
+            eval_kind="chembench_open_ended",
+            prompt="What is the IUPAC name of [START_SMILES]CCO[END_SMILES]?",
+            reference_answer="ethanol",
+            payload={},
+        )
+
+        numeric_prompt = build_single_llm_prompt(numeric_record, websearch_enabled=True, skills_enabled=True)
+        exact_prompt = build_single_llm_prompt(exact_record, websearch_enabled=True, skills_enabled=True)
+
+        self.assertIn("formulas, substitutions, units, rounding", numeric_prompt)
+        self.assertIn("precise final string, structure, name, or count", exact_prompt)
+        self.assertIn("Avoid adding irrelevant formulas", exact_prompt)
+
+    def test_single_llm_prompt_specializes_frontierscience_research(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-research",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_research",
+            prompt="Context: protocol. Question: evaluate each changed condition.",
+            reference_answer="Points: 1.0, Item: Covers each condition.",
+            payload={"track": "research"},
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+
+        self.assertIn("research-track", prompt)
+        self.assertIn("itemized reasoning criteria", prompt)
+        self.assertIn("every requested sub-question", prompt)
+        self.assertIn("Do not collapse", prompt)
+        self.assertNotIn("FINAL ANSWER:", prompt)
+        self.assertNotIn("concise answer summary", prompt)
+
+    def test_frontierscience_olympiad_final_answer_is_exact_short_target(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-olympiad",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_olympiad",
+            prompt="Calculate the pH.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+
+        self.assertIn("The final line should contain only the requested value, expression, formula, structure name, or entity", prompt)
+        self.assertIn("Do not provide multiple answer attempts", prompt)
+
+    def test_chemqa_goal_specializes_frontierscience_research(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-research",
+            dataset="frontierscience",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="frontierscience_research",
+            prompt="Context: protocol. Question: evaluate each changed condition.",
+            reference_answer="Points: 1.0, Item: Covers each condition.",
+            payload={"track": "research"},
+        )
+
+        goal = build_chemqa_goal(record, websearch_enabled=True)
+
+        self.assertIn("complete multi-part research answer", goal)
+        self.assertIn("Do not compress the response to a concise final answer", goal)
+        self.assertNotIn("concise answer summary", goal)
+        self.assertIn("ChemQA Artifact Flow answer kind: multi_part_research_answer.", goal)
 
     def test_chemqa_goal_omits_websearch_guidance(self) -> None:
         record = BenchmarkRecord(
