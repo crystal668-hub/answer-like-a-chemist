@@ -53,6 +53,7 @@
     - Base OpenClaw config used and rewritten into run-scoped configs by benchmark launchers.
     - Defines a legacy global `openai/MiniMax-M2.7` provider shim that uses the `openai` provider name while routing requests to the Minimax OpenAI-compatible chat-completions endpoint via `${MINIMAX_BASE_URL}` and `${MINIMAX_API_KEY}`.
     - Defines global Anthropic-compatible MiniMax routes `minimax/MiniMax-M2.7` and `minimax/MiniMax-M2.7-highspeed` through `${MINIMAX_ANTHROPIC_BASE_URL}/v1` and `${MINIMAX_API_KEY}` with `authHeader: true`, `api: anthropic-messages`, a 204800-token context window, and a 65536-token single-turn output cap. The default primary model remains `su8/gpt-5.4`.
+    - Defines global OpenAI-compatible Qwen route `qwen/qwen3.6-plus` through `${QWEN_BASE_URL}` and `${QWEN_API_KEY}` with `api: openai-completions`, Qwen thinking-format compatibility, a 1000000-token context window, and a 65536-token single-turn output cap.
 
 - Source modules
   - `workspace/benchmarking/`
