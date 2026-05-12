@@ -14,6 +14,10 @@ from typing import Any, Callable
 
 SCHEMA_VERSION = 1
 DEFAULT_CODEX_BIN = "codex"
+CODEX_APP_BUNDLE_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
+DEFAULT_CODEX_MODEL = "gpt-5.5"
+DEFAULT_CODEX_REASONING_EFFORT = "xhigh"
+DEFAULT_CODEX_PREFLIGHT_TIMEOUT_SECONDS = 60
 MAX_TEXT_CHARS = 6000
 TEXT_ITEM_TYPES = {"text"}
 
@@ -471,6 +475,144 @@ def extract_last_json_object(text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _codex_config_args() -> list[str]:
+    return [
+        "--model",
+        DEFAULT_CODEX_MODEL,
+        "-c",
+        f'model_reasoning_effort="{DEFAULT_CODEX_REASONING_EFFORT}"',
+    ]
+
+
+def _candidate_status(source: str, path: str | Path | None) -> dict[str, Any]:
+    raw_path = str(path or "").strip()
+    payload: dict[str, Any] = {
+        "source": source,
+        "path": raw_path,
+        "exists": False,
+        "executable": False,
+        "usable": False,
+    }
+    if not raw_path:
+        return payload
+    resolved_path = Path(raw_path).expanduser()
+    try:
+        resolved_path = resolved_path.resolve()
+    except OSError:
+        pass
+    payload["path"] = str(resolved_path)
+    payload["exists"] = resolved_path.is_file()
+    payload["executable"] = os.access(resolved_path, os.X_OK)
+    payload["usable"] = bool(payload["exists"] and payload["executable"])
+    return payload
+
+
+def resolve_codex_binary(
+    codex_bin: str | Path | None = None,
+    *,
+    which_func: Callable[[str], str | None] = shutil.which,
+    app_bundle_bin: str | Path = CODEX_APP_BUNDLE_BIN,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    candidates: list[dict[str, Any]] = []
+    explicit = str(codex_bin or "").strip()
+    if explicit:
+        explicit_path = Path(explicit).expanduser()
+        if explicit_path.is_absolute() or explicit_path.parent != Path("."):
+            candidates.append(_candidate_status("explicit", explicit_path))
+        else:
+            resolved_explicit = which_func(explicit)
+            candidates.append(_candidate_status("explicit", resolved_explicit or explicit))
+
+    path_candidate = which_func(DEFAULT_CODEX_BIN)
+    candidates.append(_candidate_status("path", path_candidate))
+    candidates.append(_candidate_status("app_bundle", app_bundle_bin))
+    for candidate in candidates:
+        if candidate.get("usable"):
+            return str(candidate["path"]), candidates
+    return None, candidates
+
+
+def codex_exec_command(
+    *,
+    codex_bin: str,
+    workspace_root: Path,
+    last_message_path: Path,
+    prompt: str,
+) -> list[str]:
+    return [
+        codex_bin,
+        "exec",
+        "--cd",
+        str(workspace_root),
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+        "--json",
+        *_codex_config_args(),
+        "--output-last-message",
+        str(last_message_path),
+        prompt,
+    ]
+
+
+def run_codex_preflight(
+    *,
+    analysis_dir: Path,
+    timeout_seconds: int = DEFAULT_CODEX_PREFLIGHT_TIMEOUT_SECONDS,
+    codex_bin: str = DEFAULT_CODEX_BIN,
+    run_subprocess: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    workspace_root = Path(__file__).resolve().parents[1]
+    last_message_path = analysis_dir / "codex-preflight-last-message.txt"
+    events_path = analysis_dir / "codex-preflight-events.jsonl"
+    command = codex_exec_command(
+        codex_bin=codex_bin,
+        workspace_root=workspace_root,
+        last_message_path=last_message_path,
+        prompt="hello",
+    )
+    started = time.time()
+    try:
+        result = run_subprocess(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+            cwd=str(workspace_root),
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "stage": "codex_preflight",
+            "error": f"Codex preflight failed: {type(exc).__name__}: {exc}",
+            "command": command,
+            "elapsed_seconds": time.time() - started,
+        }
+    events_path.write_text(result.stdout or "", encoding="utf-8")
+    if result.returncode != 0:
+        return {
+            "status": "failed",
+            "stage": "codex_preflight",
+            "error": f"Codex preflight failed with return code {result.returncode}.",
+            "returncode": result.returncode,
+            "stdout_path": str(events_path),
+            "stderr": result.stderr,
+            "last_message_path": str(last_message_path),
+            "command": command,
+            "elapsed_seconds": time.time() - started,
+        }
+    return {
+        "status": "completed",
+        "stage": "codex_preflight",
+        "stdout_path": str(events_path),
+        "last_message_path": str(last_message_path),
+        "command": command,
+        "elapsed_seconds": time.time() - started,
+    }
+
+
 def run_codex_analysis(
     *,
     output_root: Path,
@@ -486,20 +628,12 @@ def run_codex_analysis(
     save_json(schema_path, report_schema())
     prompt = automated_evaluation_prompt(input_bundle_path, schema_path)
     workspace_root = Path(__file__).resolve().parents[1]
-    command = [
-        codex_bin,
-        "exec",
-        "--cd",
-        str(workspace_root),
-        "--sandbox",
-        "read-only",
-        "--ask-for-approval",
-        "never",
-        "--json",
-        "--output-last-message",
-        str(last_message_path),
-        prompt,
-    ]
+    command = codex_exec_command(
+        codex_bin=codex_bin,
+        workspace_root=workspace_root,
+        last_message_path=last_message_path,
+        prompt=prompt,
+    )
     started = time.time()
     try:
         result = run_subprocess(
@@ -558,6 +692,8 @@ def run_automated_evaluation(
     *,
     timeout_seconds: int = 3600,
     codex_bin: str | None = None,
+    codex_which: Callable[[str], str | None] = shutil.which,
+    app_bundle_bin: str | Path = CODEX_APP_BUNDLE_BIN,
     run_subprocess: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
     root = Path(output_root).expanduser().resolve()
@@ -575,7 +711,55 @@ def run_automated_evaluation(
     bundle = build_input_bundle(root)
     input_bundle_path = analysis_dir / "input-bundle.json"
     save_json(input_bundle_path, bundle)
-    resolved_codex = codex_bin or shutil.which(DEFAULT_CODEX_BIN) or DEFAULT_CODEX_BIN
+    resolved_codex, codex_candidates = resolve_codex_binary(
+        codex_bin,
+        which_func=codex_which,
+        app_bundle_bin=app_bundle_bin,
+    )
+    if not resolved_codex:
+        codex_status = {
+            "status": "failed",
+            "stage": "codex_resolve",
+            "error": "No executable Codex binary found.",
+            "codex_candidates": codex_candidates,
+        }
+        report = fallback_report(bundle, reason=str(codex_status["error"]))
+        report_path = analysis_dir / "report.json"
+        markdown_path = analysis_dir / "report.md"
+        save_json(report_path, report)
+        markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
+        final_status = {
+            **codex_status,
+            "updated_at": utc_timestamp(),
+            "output_root": str(root),
+            "input_bundle_path": str(input_bundle_path),
+            "report_path": str(report_path),
+            "markdown_report_path": str(markdown_path),
+        }
+        save_json(status_path, final_status)
+        return final_status
+    preflight_status = run_codex_preflight(
+        analysis_dir=analysis_dir,
+        codex_bin=resolved_codex,
+        run_subprocess=run_subprocess,
+    )
+    if preflight_status.get("status") != "completed":
+        report = fallback_report(bundle, reason=str(preflight_status.get("error") or preflight_status.get("stage")))
+        report_path = analysis_dir / "report.json"
+        markdown_path = analysis_dir / "report.md"
+        save_json(report_path, report)
+        markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
+        final_status = {
+            **preflight_status,
+            "codex_candidates": codex_candidates,
+            "updated_at": utc_timestamp(),
+            "output_root": str(root),
+            "input_bundle_path": str(input_bundle_path),
+            "report_path": str(report_path),
+            "markdown_report_path": str(markdown_path),
+        }
+        save_json(status_path, final_status)
+        return final_status
     report, codex_status = run_codex_analysis(
         output_root=root,
         analysis_dir=analysis_dir,
@@ -592,6 +776,8 @@ def run_automated_evaluation(
     markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
     final_status = {
         **codex_status,
+        "codex_candidates": codex_candidates,
+        "preflight": preflight_status,
         "updated_at": utc_timestamp(),
         "output_root": str(root),
         "input_bundle_path": str(input_bundle_path),

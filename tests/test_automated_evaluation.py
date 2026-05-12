@@ -18,6 +18,13 @@ def write_jsonl(path: Path, events: list[dict[str, object]]) -> None:
     path.write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n", encoding="utf-8")
 
 
+def make_executable(path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
 def minimal_record_payload(*, group_id: str, record_id: str, runner: str, runner_meta: dict[str, object]) -> dict[str, object]:
     return {
         "schema_version": 2,
@@ -61,6 +68,21 @@ def minimal_record_payload(*, group_id: str, record_id: str, runner: str, runner
         "execution_error_kind": None,
         "error": None,
     }
+
+
+def write_minimal_run(output_root: Path) -> None:
+    result = minimal_record_payload(group_id="single_llm_skills_off", record_id="r1", runner="single_llm", runner_meta={})
+    write_json(
+        output_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-05-11T00:00:00+0000",
+            "groups": [{"id": "single_llm_skills_off"}],
+            "results": [result],
+            "summary": {"groups": {"single_llm_skills_off": {"count": 1}}},
+        },
+    )
+    write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_off"]})
 
 
 def test_single_llm_transcript_summary_skips_thinking_and_keeps_visible_evidence(tmp_path: Path) -> None:
@@ -207,20 +229,132 @@ def test_launcher_records_launch_failure_without_raising(tmp_path: Path) -> None
     assert status_payload["status"] == "launch_failed"
 
 
+def test_resolve_codex_binary_prefers_explicit_executable(tmp_path: Path) -> None:
+    explicit = make_executable(tmp_path / "explicit" / "codex")
+    path_candidate = make_executable(tmp_path / "path" / "codex")
+    app_bundle_candidate = make_executable(tmp_path / "Codex.app" / "Contents" / "Resources" / "codex")
+
+    resolved, candidates = automated_evaluation.resolve_codex_binary(
+        explicit,
+        which_func=lambda _name: path_candidate,
+        app_bundle_bin=app_bundle_candidate,
+    )
+
+    assert resolved == str(Path(explicit).resolve())
+    assert candidates[0]["source"] == "explicit"
+    assert candidates[0]["usable"] is True
+
+
+def test_resolve_codex_binary_uses_app_bundle_when_path_missing(tmp_path: Path) -> None:
+    app_bundle_candidate = make_executable(tmp_path / "Codex.app" / "Contents" / "Resources" / "codex")
+
+    resolved, candidates = automated_evaluation.resolve_codex_binary(
+        None,
+        which_func=lambda _name: None,
+        app_bundle_bin=app_bundle_candidate,
+    )
+
+    assert resolved == str(Path(app_bundle_candidate).resolve())
+    assert candidates[-1]["source"] == "app_bundle"
+    assert candidates[-1]["usable"] is True
+
+
+def test_run_automated_evaluation_falls_back_when_codex_binary_unavailable(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    write_minimal_run(output_root)
+
+    def fail_if_called(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"unexpected subprocess call: {command}")
+
+    status = automated_evaluation.run_automated_evaluation(
+        output_root,
+        run_subprocess=fail_if_called,
+        codex_which=lambda _name: None,
+        app_bundle_bin=tmp_path / "missing-codex",
+    )
+
+    assert status["status"] == "failed"
+    assert status["stage"] == "codex_resolve"
+    report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
+    assert report["run_summary"]["analysis_status"] == "fallback"
+    assert "No executable Codex binary" in report["run_summary"]["reason"]
+    assert (output_root / "analysis" / "report.md").is_file()
+
+
+def test_run_automated_evaluation_runs_preflight_before_report_with_model_config(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    write_minimal_run(output_root)
+    codex_bin = make_executable(tmp_path / "codex")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        last_message_path = Path(command[command.index("--output-last-message") + 1])
+        if command[-1] == "hello":
+            last_message_path.write_text("hello\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout='{"event":"preflight"}\n', stderr="")
+        last_message_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_summary": {"record_count": 1},
+                    "per_record_analysis": [{"record_id": "r1"}],
+                    "cross_record_patterns": [],
+                    "architecture_recommendations": [],
+                    "skill_orchestration_recommendations": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout='{"event":"report"}\n', stderr="")
+
+    status = automated_evaluation.run_automated_evaluation(
+        output_root,
+        codex_bin=codex_bin,
+        run_subprocess=fake_run,
+    )
+
+    assert status["status"] == "completed"
+    assert len(calls) == 2
+    assert calls[0][-1] == "hello"
+    for command in calls:
+        assert command[0] == str(Path(codex_bin).resolve())
+        assert command[command.index("--model") + 1] == "gpt-5.5"
+        assert command[command.index("-c") + 1] == 'model_reasoning_effort="xhigh"'
+    assert "codex-preflight-last-message.txt" in calls[0][calls[0].index("--output-last-message") + 1]
+    assert "codex-last-message.txt" in calls[1][calls[1].index("--output-last-message") + 1]
+
+
+def test_run_automated_evaluation_skips_report_when_preflight_fails(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    write_minimal_run(output_root)
+    codex_bin = make_executable(tmp_path / "codex")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 42, stdout='{"event":"preflight_failed"}\n', stderr="not available")
+
+    status = automated_evaluation.run_automated_evaluation(
+        output_root,
+        codex_bin=codex_bin,
+        run_subprocess=fake_run,
+    )
+
+    assert status["status"] == "failed"
+    assert status["stage"] == "codex_preflight"
+    assert len(calls) == 1
+    assert calls[0][-1] == "hello"
+    report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
+    assert report["run_summary"]["analysis_status"] == "fallback"
+    assert "Codex preflight failed" in report["run_summary"]["reason"]
+    assert (output_root / "analysis" / "report.md").is_file()
+
+
 def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) -> None:
     output_root = tmp_path / "run"
-    result = minimal_record_payload(group_id="single_llm_skills_off", record_id="r1", runner="single_llm", runner_meta={})
-    write_json(
-        output_root / "results.json",
-        {
-            "schema_version": 2,
-            "generated_at": "2026-05-11T00:00:00+0000",
-            "groups": [{"id": "single_llm_skills_off"}],
-            "results": [result],
-            "summary": {"groups": {"single_llm_skills_off": {"count": 1}}},
-        },
-    )
-    write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_off"]})
+    write_minimal_run(output_root)
+    codex_bin = make_executable(tmp_path / "codex")
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         last_message_path = Path(command[command.index("--output-last-message") + 1])
@@ -249,7 +383,7 @@ def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) 
 
     status = automated_evaluation.run_automated_evaluation(
         output_root,
-        codex_bin="/fake/codex",
+        codex_bin=codex_bin,
         run_subprocess=fake_run,
     )
 
@@ -263,18 +397,8 @@ def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) 
 
 def test_run_automated_evaluation_falls_back_when_codex_report_is_invalid(tmp_path: Path) -> None:
     output_root = tmp_path / "run"
-    result = minimal_record_payload(group_id="single_llm_skills_off", record_id="r1", runner="single_llm", runner_meta={})
-    write_json(
-        output_root / "results.json",
-        {
-            "schema_version": 2,
-            "generated_at": "2026-05-11T00:00:00+0000",
-            "groups": [{"id": "single_llm_skills_off"}],
-            "results": [result],
-            "summary": {"groups": {"single_llm_skills_off": {"count": 1}}},
-        },
-    )
-    write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_off"]})
+    write_minimal_run(output_root)
+    codex_bin = make_executable(tmp_path / "codex")
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         last_message_path = Path(command[command.index("--output-last-message") + 1])
@@ -283,7 +407,7 @@ def test_run_automated_evaluation_falls_back_when_codex_report_is_invalid(tmp_pa
 
     status = automated_evaluation.run_automated_evaluation(
         output_root,
-        codex_bin="/fake/codex",
+        codex_bin=codex_bin,
         run_subprocess=fake_run,
     )
 
