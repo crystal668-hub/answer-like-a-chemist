@@ -86,6 +86,73 @@ class BenchmarkConvergenceTests(unittest.TestCase):
         self.assertEqual(0, summary["prompt_error_count"])
         self.assertEqual("", summary["latest_prompt_error"])
         self.assertFalse(summary["latest_prompt_error_is_timeout"])
+        self.assertEqual(0, summary["missing_skill_doc_read_count"])
+        self.assertEqual(0, summary["tool_result_error_count"])
+        self.assertEqual(0, summary["request_shape_error_count"])
+        self.assertFalse(summary["coverage_checklist_present"])
+
+    def test_transcript_summary_detects_tool_misuse_and_checklist_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Coverage checklist:\n- todo: equation\n- done: units\n- blocked: source",
+                                        },
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "read",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "ENOENT: no such file or directory, access '/workspace/skills/benchmark-solving-protocol/SKILL.md'",
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "exec",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "usage: canonicalize.py [-h] --request-json REQUEST_JSON --output-dir OUTPUT_DIR",
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_transcript_convergence(transcript)
+
+        self.assertTrue(summary["coverage_checklist_present"])
+        self.assertEqual(1, summary["missing_skill_doc_read_count"])
+        self.assertEqual(2, summary["tool_result_error_count"])
+        self.assertEqual(1, summary["request_shape_error_count"])
 
     def test_transcript_summary_detects_timeout_prompt_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

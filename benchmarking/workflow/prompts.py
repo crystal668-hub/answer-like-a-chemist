@@ -72,10 +72,8 @@ def build_single_llm_prompt(
         instructions.extend(
             [
                 f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.",
-                "When roughly 30% or less of the budget remains, stop starting new tool or skill exploration.",
-                "At that point, use the evidence already gathered and produce the requested final answer format immediately, even if uncertain.",
-                "If a tool path fails twice or is unavailable, switch to best-effort chemistry reasoning instead of trying more variants of the same path.",
-                "If paper or web paths return 403, 429, or empty results twice in total, stop broadening that path and answer from available evidence.",
+                "Follow the Benchmark Coverage Checklist SOP in `act-like-a-chemist` to plan coverage, choose tools, and mark unresolved gaps.",
+                "When coverage is sufficient or blocked, produce the requested final answer format immediately.",
             ]
         )
     if skills_enabled:

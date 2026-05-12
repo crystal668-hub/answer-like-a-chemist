@@ -12,8 +12,8 @@ INVENTORY_PATH = ROOT / "skills" / "chemistry-routing-matrix.json"
 
 SKILL_TREE: tuple[dict[str, Any], ...] = (
     {
-        "id": "benchmark-solving-protocol",
-        "label": "Benchmark chemistry solving protocol",
+        "id": "chemist-sop",
+        "label": "Chemist benchmark SOP",
         "families": (
             {
                 "id": "chemistry-reasoning-sop",
@@ -259,7 +259,7 @@ def lookup_skill_family(family_id: str) -> dict[str, Any]:
 def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str:
     lines = [
         "Skill capability tree:",
-        "Read `act-like-a-chemist` first for the chemistry solving SOP, then choose provider skills only when they help answer the record.",
+        "Read `act-like-a-chemist` first for the chemistry solving SOP and Benchmark Coverage Checklist, then choose provider skills only when they help answer the record.",
         "First choose a capability domain, then a skill family, then call a concrete skill only when it helps answer the record.",
     ]
     if available_skills is None:

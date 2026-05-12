@@ -137,7 +137,7 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
     tree = render_top_level_skill_tree()
 
     for domain_or_family in (
-        "benchmark-solving-protocol",
+        "chemist-sop",
         "chemistry-reasoning-sop",
         "calculation-math",
         "molecular-structure-identity",
@@ -175,6 +175,7 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 
     assert "Skill capability tree:" in prompt
     assert "Read `act-like-a-chemist` first" in prompt
+    assert "Benchmark Coverage Checklist" in prompt
     assert "materials-crystals" in prompt
     assert "paper-pipeline" in prompt
     assert "Organic mechanism SOP" not in prompt
@@ -182,6 +183,22 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "--workspace-root /Users/xutao/.openclaw/workspace" in prompt
     assert "--execution-cwd \"$PWD\"" in prompt
     assert "python3 <skill-root>" not in prompt
+    assert "benchmark-solving-protocol" not in prompt
+
+
+def test_act_like_a_chemist_defines_benchmark_coverage_checklist_contract() -> None:
+    text = (SKILLS_ROOT / "act-like-a-chemist" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "## Benchmark Coverage Checklist" in text
+    assert "`todo`" in text
+    assert "`done`" in text
+    assert "`blocked`" in text
+    assert "Numeric, Formula, Or Table Tasks" in text
+    assert "Multiple-Choice Tasks" in text
+    assert "Research Or Open-Ended Tasks" in text
+    assert "HLE Tasks" in text
+    assert "Do not use `python`, `python3`, `pip`" in text
+    assert "usage error" in text
 
 
 def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:

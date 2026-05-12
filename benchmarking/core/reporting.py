@@ -80,6 +80,11 @@ def skill_tool_call_count(item: GroupRecordResult) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
+def skill_audit_int(item: GroupRecordResult, key: str) -> int:
+    value = skill_audit(item).get(key)
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
 def session_isolation_audit(item: GroupRecordResult) -> dict[str, Any]:
     audit = (item.runner_meta or {}).get("session_isolation") or {}
     return audit if isinstance(audit, dict) else {}
@@ -117,6 +122,11 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "skill_model_declared_skip_count": sum(1 for item in items if skill_audit(item).get("model_declared_skip")),
         "skill_no_tool_call_count": sum(1 for item in items if skill_audit(item).get("no_tool_call")),
         "skill_tool_call_total": sum(skill_tool_call_count(item) for item in items),
+        "skill_tool_failure_total": sum(skill_audit_int(item, "tool_failure_count") for item in items),
+        "missing_skill_doc_read_total": sum(skill_audit_int(item, "missing_skill_doc_read_count") for item in items),
+        "tool_result_error_total": sum(skill_audit_int(item, "tool_result_error_count") for item in items),
+        "request_shape_error_total": sum(skill_audit_int(item, "request_shape_error_count") for item in items),
+        "coverage_checklist_present_count": sum(1 for item in items if skill_audit(item).get("coverage_checklist_present")),
         "session_isolation_ok_count": sum(1 for item in items if session_isolation_audit(item).get("session_isolation_ok") is True),
         "session_isolation_failed_count": sum(1 for item in items if session_isolation_failed(item)),
         "session_contaminated_count": sum(1 for item in items if session_contaminated(item)),

@@ -28,6 +28,44 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 4. Solve step by step, checking conservation, units, structures, and source facts before committing to the final answer.
 5. End in the exact requested format while preserving the visible checkpoints that justify it.
 
+## Benchmark Coverage Checklist
+
+For benchmark runs, start visible work by writing a compact coverage checklist. Use only these states:
+
+- `todo`: a coverage gap that must be filled before a reliable answer.
+- `done`: a gap already satisfied by prompt evidence, derivation, source evidence, or tool output.
+- `blocked`: a gap that cannot be resolved within the available tools or after the allowed failure budget.
+
+Every tool call must target a specific `todo` item. Before calling a tool, state the checklist gap it will close and the expected output shape. After the call, mark the item `done` only if the result actually supports the claim; otherwise keep it `todo` or mark it `blocked`.
+
+If the same verification target fails twice, mark that item `blocked` and stop trying alternate commands for that target. A script usage error, request-shape error, malformed JSON request, missing required argument, invalid input shape, or timeout counts as a failed attempt for that verification target. Do not spend the benchmark run debugging tool invocation style.
+
+Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for alternate runners to call skill scripts directly. Benchmark agents may run skill scripts only through the canonical `scripts/run_skill.py` wrapper command supplied in the benchmark prompt. If that wrapper returns a usage error or structured unavailable/error payload twice for the same target, mark the target `blocked`.
+
+### Numeric, Formula, Or Table Tasks
+
+- `todo`: identify requested quantity, formula/law, givens, units, conversions, table values, and rounding rule.
+- `done`: formula is written, substitutions and units are visible, intermediate values are checked, and final precision matches the prompt.
+- `blocked`: missing table/image/source value, inconsistent units, or unavailable calculation verification after two failed attempts.
+
+### Multiple-Choice Tasks
+
+- `todo`: inspect all provided options/images, define discriminating criteria, and check each option or option group.
+- `done`: every plausible option has a visible accept/reject reason tied to structure, mechanism, calculation, or source evidence.
+- `blocked`: an option depends on unavailable source/image/tool evidence after two failed attempts; choose from remaining evidence and state the limitation.
+
+### Research Or Open-Ended Tasks
+
+- `todo`: list source-specific claims, required entities, mechanisms, assays, protocols, materials, or calculations that affect the answer.
+- `done`: material claims are supported by retrieved/provided sources, tool output, or explicit derivation, with uncertainty separated from facts.
+- `blocked`: full text, database record, identifier resolution, or provider access remains unavailable after two failed attempts.
+
+### HLE Tasks
+
+- `todo`: identify answer type, required final format, decisive facts, image/table inputs, and any source or tool evidence needed.
+- `done`: explanation covers the decisive facts and checks, answer is directly stated, and confidence reflects remaining uncertainty.
+- `blocked`: unresolved evidence is explicitly named before giving the best supported answer in the official HLE format.
+
 ## Mandatory Verification Triggers
 
 Use these tools when the trigger is material to the answer:

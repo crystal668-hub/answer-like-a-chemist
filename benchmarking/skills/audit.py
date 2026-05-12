@@ -21,6 +21,8 @@ def build_skill_use_audit(
     tool_names = [str(item) for item in raw_tools] if isinstance(raw_tools, list) else []
     configured = [str(skill) for skill in configured_skills]
     declared_skip = bool(SKIP_TRACE_RE.search(str(final_response_text or "")))
+    convergence = runner_meta.get("convergence") if isinstance(runner_meta, dict) else {}
+    convergence = convergence if isinstance(convergence, dict) else {}
     return {
         "skills_enabled": bool(skills_enabled),
         "available_skill_count": len(configured),
@@ -28,8 +30,16 @@ def build_skill_use_audit(
         "tool_call_count": calls,
         "tool_names": tool_names,
         "tool_failure_count": int(tool_summary.get("failures") or 0) if isinstance(tool_summary, dict) else 0,
+        "missing_skill_doc_read_count": _int_meta(convergence.get("missing_skill_doc_read_count")),
+        "tool_result_error_count": _int_meta(convergence.get("tool_result_error_count")),
+        "request_shape_error_count": _int_meta(convergence.get("request_shape_error_count")),
+        "coverage_checklist_present": bool(convergence.get("coverage_checklist_present")),
         "skill_tool_executed": bool(calls > 0),
         "model_declared_skip": declared_skip,
         "no_tool_call": bool(calls == 0),
         "skill_health_summary": dict(skill_health_summary or {}),
     }
+
+
+def _int_meta(value: Any) -> int:
+    return int(value) if isinstance(value, (int, float)) else 0

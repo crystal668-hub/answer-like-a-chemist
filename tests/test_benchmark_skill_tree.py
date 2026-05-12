@@ -40,7 +40,7 @@ def test_skill_tree_covers_every_allowlisted_skill() -> None:
 def test_skill_tree_has_three_layers_and_paper_pipeline_family() -> None:
     tree = load_skill_tree()
 
-    assert tree[0]["id"] == "benchmark-solving-protocol"
+    assert tree[0]["id"] == "chemist-sop"
     sop_family = lookup_skill_family("chemistry-reasoning-sop")
     assert sop_family["id"] == "chemistry-reasoning-sop"
     assert sop_family["skills"] == ("act-like-a-chemist",)
@@ -56,7 +56,9 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "Skill capability tree" in rendered
     assert "Read `act-like-a-chemist` first" in rendered
     assert "First choose a capability domain" in rendered
-    assert "benchmark-solving-protocol" in rendered
+    assert "benchmark-solving-protocol" not in rendered
+    assert "skills/benchmark-solving-protocol" not in rendered
+    assert "chemist-sop" in rendered
     assert "chemistry-reasoning-sop" in rendered
     assert "paper-pipeline" in rendered
     assert "literature-evidence" in rendered
@@ -82,6 +84,7 @@ def test_top_level_skill_tree_reflects_health_filtered_availability() -> None:
     rendered = render_top_level_skill_tree(available_skills={"act-like-a-chemist", "rdkit", "paper-access"})
 
     assert "Only health-checked skills in this run are available" in rendered
-    assert "benchmark-solving-protocol" in rendered
+    assert "benchmark-solving-protocol" not in rendered
+    assert "chemist-sop" in rendered
     assert "molecular-structure-identity" in rendered
     assert "literature-evidence" in rendered

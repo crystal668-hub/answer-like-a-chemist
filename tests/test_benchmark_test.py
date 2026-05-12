@@ -1532,7 +1532,7 @@ Points: 0.5, Item: Second criterion
         self.assertNotIn("Skill capability tree", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
 
-    def test_build_single_llm_prompt_includes_time_budget_stop_rule(self) -> None:
+    def test_build_single_llm_prompt_short_references_coverage_sop(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1552,9 +1552,12 @@ Points: 0.5, Item: Second criterion
         )
 
         self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertIn("Benchmark Coverage Checklist", prompt)
+        self.assertIn("act-like-a-chemist", prompt)
+        self.assertIn("coverage is sufficient or blocked", prompt)
+        self.assertNotIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertNotIn("todo / done / blocked", prompt)
         self.assertNotIn("20% or less", prompt)
-        self.assertIn("stop starting new tool or skill exploration", prompt)
         self.assertIn("Do not skip task-relevant derivation steps", prompt)
         self.assertIn("FINAL ANSWER", prompt)
 
@@ -2085,6 +2088,10 @@ Points: 0.5, Item: Second criterion
                     "skill_use_audit": {
                         "skills_enabled": True,
                         "tool_call_count": 2,
+                        "tool_failure_count": 3,
+                        "missing_skill_doc_read_count": 1,
+                        "request_shape_error_count": 2,
+                        "coverage_checklist_present": True,
                         "skill_tool_executed": True,
                         "model_declared_skip": False,
                         "no_tool_call": False,
@@ -2135,6 +2142,10 @@ Points: 0.5, Item: Second criterion
                     "skill_use_audit": {
                         "skills_enabled": True,
                         "tool_call_count": 0,
+                        "tool_failure_count": 1,
+                        "missing_skill_doc_read_count": 0,
+                        "request_shape_error_count": 1,
+                        "coverage_checklist_present": False,
                         "skill_tool_executed": False,
                         "model_declared_skip": True,
                         "no_tool_call": True,
@@ -2168,6 +2179,10 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["skill_model_declared_skip_count"])
         self.assertEqual(1, summary["groups"]["g1"]["skill_no_tool_call_count"])
         self.assertEqual(2, summary["groups"]["g1"]["skill_tool_call_total"])
+        self.assertEqual(4, summary["groups"]["g1"]["skill_tool_failure_total"])
+        self.assertEqual(1, summary["groups"]["g1"]["missing_skill_doc_read_total"])
+        self.assertEqual(3, summary["groups"]["g1"]["request_shape_error_total"])
+        self.assertEqual(1, summary["groups"]["g1"]["coverage_checklist_present_count"])
         self.assertEqual(1, summary["groups"]["g1"]["session_isolation_ok_count"])
         self.assertEqual(1, summary["groups"]["g1"]["session_isolation_failed_count"])
         self.assertEqual(1, summary["groups"]["g1"]["session_contaminated_count"])

@@ -76,6 +76,39 @@ TIMEOUT_FAMILY_EXCLUSION_PATTERNS = (
     "response_format",
     "invalid_request_error",
 )
+TOOL_RESULT_ERROR_PATTERNS = (
+    "enoent",
+    '"status": "error"',
+    "'status': 'error'",
+    '"error":',
+    "'error':",
+    "usage:",
+    "traceback",
+    "modulenotfounderror",
+    "no module named",
+    "unrecognized arguments",
+    "the following arguments are required",
+    "required: --request-json",
+    "missing_request_json",
+    "invalid_molecule",
+    "request json",
+)
+REQUEST_SHAPE_ERROR_PATTERNS = (
+    "usage:",
+    "--request-json",
+    "missing_request_json",
+    "invalid_molecule",
+    "unrecognized arguments",
+    "the following arguments are required",
+    "request json",
+    "malformed json",
+    "invalid input",
+)
+MISSING_SKILL_DOC_PATTERNS = (
+    "skills/benchmark-solving-protocol/skill.md",
+    "benchmark-solving-protocol/skill.md",
+)
+CHECKLIST_STATE_RE = re.compile(r"\b(?:todo|done|blocked)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -127,6 +160,10 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     tool_call_count = 0
     tool_names: list[str] = []
     prompt_errors: list[str] = []
+    missing_skill_doc_read_count = 0
+    tool_result_error_count = 0
+    request_shape_error_count = 0
+    coverage_checklist_present = False
     for event in _iter_transcript_events(transcript_path):
         if event.get("customType") == "openclaw:prompt-error":
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -138,12 +175,24 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
             continue
         if message.get("role") == "assistant":
             assistant_turn_count += 1
+            assistant_text = _text_from_content(message.get("content"))
+            if "coverage checklist" in assistant_text.lower() and CHECKLIST_STATE_RE.search(assistant_text):
+                coverage_checklist_present = True
             for item in message.get("content") or []:
                 if isinstance(item, dict) and item.get("type") == "toolCall":
                     tool_call_count += 1
                     name = str(item.get("name") or "")
                     if name:
                         tool_names.append(name)
+        elif message.get("role") == "toolResult":
+            tool_text = _text_from_content(message.get("content"))
+            normalized = tool_text.lower()
+            if any(pattern in normalized for pattern in MISSING_SKILL_DOC_PATTERNS):
+                missing_skill_doc_read_count += 1
+            if _looks_like_tool_result_error(normalized):
+                tool_result_error_count += 1
+            if _looks_like_request_shape_error(normalized):
+                request_shape_error_count += 1
     latest_prompt_error = prompt_errors[-1] if prompt_errors else ""
     return {
         "transcript_path": str(transcript_path),
@@ -153,7 +202,21 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
         "prompt_error_count": len(prompt_errors),
         "latest_prompt_error": latest_prompt_error,
         "latest_prompt_error_is_timeout": is_timeout_family_text(latest_prompt_error),
+        "missing_skill_doc_read_count": missing_skill_doc_read_count,
+        "tool_result_error_count": tool_result_error_count,
+        "request_shape_error_count": request_shape_error_count,
+        "coverage_checklist_present": coverage_checklist_present,
     }
+
+
+def _looks_like_tool_result_error(normalized_text: str) -> bool:
+    candidate = str(normalized_text or "")
+    return any(pattern in candidate for pattern in TOOL_RESULT_ERROR_PATTERNS)
+
+
+def _looks_like_request_shape_error(normalized_text: str) -> bool:
+    candidate = str(normalized_text or "")
+    return any(pattern in candidate for pattern in REQUEST_SHAPE_ERROR_PATTERNS)
 
 
 def is_timeout_family_text(text: Any) -> bool:

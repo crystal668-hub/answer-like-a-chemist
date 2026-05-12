@@ -119,7 +119,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("Do not use web search", web_off)
         self.assertNotIn("external browsing", web_off)
 
-    def test_single_llm_prompt_uses_30_percent_stop_rule_and_visible_checks(self) -> None:
+    def test_single_llm_prompt_short_references_benchmark_checklist_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -132,9 +132,13 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True, time_budget_seconds=900)
 
-        self.assertIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("Benchmark Coverage Checklist", prompt)
+        self.assertIn("act-like-a-chemist", prompt)
+        self.assertIn("coverage is sufficient or blocked", prompt)
+        self.assertNotIn("When roughly 30% or less of the budget remains", prompt)
+        self.assertNotIn("todo / done / blocked", prompt)
         self.assertNotIn("20% or less", prompt)
-        self.assertNotIn("Be careful, concise", prompt)
         self.assertIn("Do not skip task-relevant derivation steps", prompt)
         self.assertIn("include enough visible checks for grading", prompt)
 
