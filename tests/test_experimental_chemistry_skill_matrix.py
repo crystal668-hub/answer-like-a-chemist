@@ -182,6 +182,9 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "Experimental chemistry skill routing rules" not in prompt
     assert "--workspace-root /Users/xutao/.openclaw/workspace" in prompt
     assert "--execution-cwd \"$PWD\"" in prompt
+    assert "tool name must be exactly `exec`" in prompt
+    assert '{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in prompt
+    assert "`python3` tool call" in prompt
     assert "python3 <skill-root>" not in prompt
     assert "benchmark-solving-protocol" not in prompt
 
@@ -219,6 +222,8 @@ def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
     assert "Do not use OpenClaw skills" in prompt
     assert "act-like-a-chemist" not in prompt
     assert "Skill capability tree:" not in prompt
+    assert "tool name must be exactly `exec`" not in prompt
+    assert "`python3` tool call" not in prompt
     assert "Organic mechanism SOP" not in prompt
 
 

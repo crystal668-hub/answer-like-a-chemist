@@ -123,11 +123,16 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("First choose a capability domain", skills_on)
         self.assertIn("paper-pipeline", skills_on)
         self.assertIn("calculation-math", skills_on)
+        self.assertIn("tool name must be exactly `exec`", skills_on)
+        self.assertIn('{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py', skills_on)
+        self.assertIn("`python3` tool call", skills_on)
         self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
         self.assertNotIn("first matching primary route", skills_on)
         self.assertNotIn("SKILL TRACE: skipped", skills_on)
         self.assertNotIn("Do not use OpenClaw skills", skills_on)
         self.assertNotIn("Skill capability tree", skills_off)
+        self.assertNotIn("tool name must be exactly `exec`", skills_off)
+        self.assertNotIn("`python3` tool call", skills_off)
         self.assertIn("Do not use OpenClaw skills", skills_off)
 
     def test_single_llm_prompt_omits_websearch_guidance(self) -> None:

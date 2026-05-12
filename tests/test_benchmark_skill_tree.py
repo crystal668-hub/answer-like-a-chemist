@@ -65,6 +65,13 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "--workspace-root /Users/xutao/.openclaw/workspace" in rendered
     assert "--execution-cwd \"$PWD\"" in rendered
     assert "--script skills/<skill>/scripts/<script>.py --" in rendered
+    assert "tool name must be exactly `exec`" in rendered
+    assert '{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in rendered
+    assert "`python3` tool call" in rendered
+    assert "`script`, `cmd`, or `command` tool call" in rendered
+    assert "`exec` with `{}`" in rendered
+    assert "direct `python skills/" in rendered
+    assert "`system-event-scheduler`" in rendered
     assert "fact ledger" not in rendered
     assert "Organic mechanism SOP" not in rendered
     assert "Experimental chemistry skill routing rules" not in rendered

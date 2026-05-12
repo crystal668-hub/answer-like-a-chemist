@@ -257,6 +257,12 @@ def lookup_skill_family(family_id: str) -> dict[str, Any]:
 
 
 def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str:
+    run_skill_command = (
+        'python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
+        '--workspace-root /Users/xutao/.openclaw/workspace '
+        '--execution-cwd "$PWD" '
+        "--script skills/<skill>/scripts/<script>.py -- ..."
+    )
     lines = [
         "Skill capability tree:",
         "Read `act-like-a-chemist` first for the chemistry solving SOP and Benchmark Coverage Checklist, then choose provider skills only when they help answer the record.",
@@ -277,8 +283,17 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
             lines.append(f"- `{domain['id']}`: {domain['label']} Families: {', '.join(families)}.")
     lines.append(
         "When a family is relevant, run local skill scripts only through the canonical wrapper: "
-        "`python /Users/xutao/.openclaw/workspace/scripts/run_skill.py --workspace-root /Users/xutao/.openclaw/workspace --execution-cwd \"$PWD\" --script skills/<skill>/scripts/<script>.py -- ...`."
+        f"`{run_skill_command}`."
     )
-    lines.append("Do not search for alternate runners or call skill scripts directly with `python` or `python3`.")
+    lines.append("To run that wrapper, call the OpenClaw tool whose tool name must be exactly `exec`; its JSON arguments object must contain `command`.")
+    lines.append(f'Positive example: checklist gap -> call `exec` with {{"command": "{run_skill_command}"}}; then use stdout/artifacts in the answer.')
+    lines.append(
+        "Negative examples: `python3` tool call is invalid because `python3` is a shell program, not a tool name; "
+        "`script`, `cmd`, or `command` tool call uses nonexistent tool names; `exec` with `{}` is invalid because `command` is missing."
+    )
+    lines.append(
+        "Also invalid: direct `python skills/...` bypasses the wrapper; do not call `bash`, `reasoning`, or `system-event-scheduler` tools."
+    )
+    lines.append("Do not search for alternate runners or call skill scripts directly with `python` or `python3`; after two failed attempts for the same target, mark it blocked and answer.")
     lines.append("Use tool outputs, artifact paths, or cited retrieved evidence in the answer when a skill contributes.")
     return "\n".join(lines)
