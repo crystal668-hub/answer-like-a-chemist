@@ -290,6 +290,70 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 str((root / "benchmark-runtime" / "benchmark-single-skills-on").resolve()),
                 agents["benchmark-single-skills-on"]["workspace"],
             )
+            tools_md = root / "benchmark-runtime" / "benchmark-single-skills-on" / "TOOLS.md"
+            self.assertTrue(tools_md.is_file())
+            tools_text = tools_md.read_text(encoding="utf-8")
+            self.assertIn("Benchmark-managed TOOLS.md", tools_text)
+            self.assertIn(
+                'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py',
+                tools_text,
+            )
+            self.assertIn("--execution-cwd \\\"$PWD\\\"", tools_text)
+            self.assertIn("tool name must be exactly `exec`", tools_text)
+            self.assertIn("`python3`", tools_text)
+            self.assertIn("`script`", tools_text)
+            self.assertIn("`cmd`", tools_text)
+            self.assertIn("`command`", tools_text)
+            self.assertIn("`system-event-scheduler`", tools_text)
+            self.assertIn("`exec {}`", tools_text)
+            self.assertIn("direct `python skills/...", tools_text)
+            self.assertFalse((root / "benchmark-runtime" / "benchmark-judge" / "TOOLS.md").exists())
+
+    def test_build_run_scoped_config_payload_does_not_write_skill_exec_tools_md_for_skills_off(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            context = RuntimeConfigContext(
+                baseline_workspace_root=root / "benchmark-runtime",
+                chemqa_workspace_roots={},
+                agents_root=root / "agents",
+                judge_agent_id="benchmark-judge",
+                chemqa_slot_sets={},
+                experiment_specs={
+                    "single_llm_skills_off": ExperimentSpec(
+                        id="single_llm_skills_off",
+                        label="Single LLM without skills",
+                        runner_kind="single_llm",
+                        websearch_enabled=True,
+                        skills_enabled=False,
+                        single_agent_id="benchmark-single-skills-off",
+                    )
+                },
+                load_slot_agents_template=lambda: "# slot template\n",
+                benchmark_skills_root=root / "workspace" / "skills",
+            )
+            base = {
+                "agents": {"list": []},
+                "tools": {"web": {"search": {"enabled": False}}},
+                "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
+            }
+            group = RuntimeConfigGroup(
+                id="single_llm_skills_off",
+                label="Single LLM without skills",
+                runner="single_llm",
+                websearch=True,
+                skills_enabled=False,
+            )
+
+            build_run_scoped_config_payload(
+                base,
+                context=context,
+                group=group,
+                single_agent_model="qwen3.5-plus",
+                judge_model="su8/gpt-5.4",
+            )
+
+            tools_md = root / "benchmark-runtime" / "benchmark-single-skills-off" / "TOOLS.md"
+            self.assertFalse(tools_md.exists())
 
     def test_build_run_scoped_config_payload_provisions_chemqa_slots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -344,6 +408,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-5"]["skills"])
             self.assertTrue((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / "AGENTS.md").is_file())
             self.assertTrue((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / ".debateclaw-slot.json").is_file())
+            self.assertFalse((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / "TOOLS.md").exists())
 
     def test_build_run_scoped_config_payload_wraps_renderer_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

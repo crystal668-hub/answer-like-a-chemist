@@ -12,6 +12,7 @@ from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
     ensure_basic_agent_dirs,
+    provision_single_agent_skill_tools_md,
     provision_slot_workspace,
 )
 
@@ -171,6 +172,8 @@ def build_run_scoped_config_payload(
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
+        if single_spec.skills_enabled:
+            provision_single_agent_skill_tools_md(workspace)
         _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
         return payload
 

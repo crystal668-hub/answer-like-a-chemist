@@ -62,18 +62,18 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "chemistry-reasoning-sop" in rendered
     assert "paper-pipeline" in rendered
     assert "literature-evidence" in rendered
-    assert "--workspace-root /Users/xutao/.openclaw/workspace" in rendered
-    assert "--execution-cwd \"$PWD\"" in rendered
-    assert "--script skills/<skill>/scripts/<script>.py --" in rendered
-    assert "tool name must be exactly `exec`" in rendered
-    assert 'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in rendered
-    assert '--execution-cwd \\"$PWD\\"' in rendered
-    assert '{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in rendered
-    assert "`python3` tool call" in rendered
-    assert "`script`, `cmd`, or `command` tool call" in rendered
-    assert "`exec` with `{}`" in rendered
-    assert "direct `python skills/" in rendered
-    assert "`system-event-scheduler`" in rendered
+    assert "--workspace-root /Users/xutao/.openclaw/workspace" not in rendered
+    assert "--execution-cwd" not in rendered
+    assert "--script skills/<skill>/scripts/<script>.py --" not in rendered
+    assert "tool name must be exactly `exec`" not in rendered
+    assert 'exec {"command":' not in rendered
+    assert "run_skill.py" not in rendered
+    assert "`python3` tool call" not in rendered
+    assert "`script`, `cmd`, or `command` tool call" not in rendered
+    assert "`exec` with `{}`" not in rendered
+    assert "direct `python skills/" not in rendered
+    assert "`system-event-scheduler`" not in rendered
+    assert "TOOLS.md" not in rendered
     assert "fact ledger" not in rendered
     assert "Organic mechanism SOP" not in rendered
     assert "Experimental chemistry skill routing rules" not in rendered

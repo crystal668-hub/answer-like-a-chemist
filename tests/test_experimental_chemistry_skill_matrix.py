@@ -180,13 +180,13 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "paper-pipeline" in prompt
     assert "Organic mechanism SOP" not in prompt
     assert "Experimental chemistry skill routing rules" not in prompt
-    assert "--workspace-root /Users/xutao/.openclaw/workspace" in prompt
-    assert "--execution-cwd \"$PWD\"" in prompt
-    assert "tool name must be exactly `exec`" in prompt
-    assert 'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in prompt
-    assert '--execution-cwd \\"$PWD\\"' in prompt
-    assert '{"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py' in prompt
-    assert "`python3` tool call" in prompt
+    assert "--workspace-root /Users/xutao/.openclaw/workspace" not in prompt
+    assert "--execution-cwd" not in prompt
+    assert "tool name must be exactly `exec`" not in prompt
+    assert 'exec {"command":' not in prompt
+    assert "run_skill.py" not in prompt
+    assert "`python3` tool call" not in prompt
+    assert "TOOLS.md" not in prompt
     assert "python3 <skill-root>" not in prompt
     assert "benchmark-solving-protocol" not in prompt
 
