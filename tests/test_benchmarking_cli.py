@@ -224,13 +224,19 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
         output_path = Path(output_root)
         assert (output_path / "results.json").is_file()
         assert (output_path / "runtime-manifest.json").is_file()
-        assert (output_path / "summary_by_group.csv").is_file()
+        assert not (output_path / "summary_by_group.csv").exists()
+        assert not (output_path / "summary_by_group_and_subset.csv").exists()
         launched.append(output_path)
         return {
             "status": "launched",
             "status_path": str(output_path / "analysis" / "status.json"),
             "report_path": str(output_path / "analysis" / "report.json"),
         }
+
+    output_path = tmp_path / "out"
+    output_path.mkdir()
+    (output_path / "summary_by_group.csv").write_text("stale\n", encoding="utf-8")
+    (output_path / "summary_by_group_and_subset.csv").write_text("stale\n", encoding="utf-8")
 
     monkeypatch.setattr(
         benchmarking_cli,

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import gc
 import hashlib
 import json
@@ -1386,141 +1385,17 @@ def evaluate_answer(
 register_default_evaluators()
 
 
-
-def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: row.get(name, "") for name in fieldnames})
+LEGACY_SUMMARY_CSV_FILENAMES = (
+    "summary_by_group.csv",
+    "summary_by_group_and_subset.csv",
+)
 
 
-
-def export_csv_reports(output_root: Path, summary: dict[str, Any], group_ids: list[str]) -> None:
-    summary_rows = []
-    for group_id in group_ids:
-        group_summary = summary["groups"].get(group_id)
-        if not group_summary:
-            continue
-        summary_rows.append(
-            {
-                "group_id": group_id,
-                "runner": group_summary["runner"],
-                "websearch": group_summary["websearch"],
-                "skills_enabled": group_summary.get("skills_enabled", False),
-                "count": group_summary["count"],
-                "pass_count": group_summary["pass_count"],
-                "run_completed_count": group_summary["run_completed_count"],
-                "run_failed_count": group_summary["run_failed_count"],
-                "protocol_completed_count": group_summary["protocol_completed_count"],
-                "protocol_failed_count": group_summary["protocol_failed_count"],
-                "evaluable_count": group_summary["evaluable_count"],
-                "scored_count": group_summary["scored_count"],
-                "recovered_evaluable_count": group_summary["recovered_evaluable_count"],
-                "native_evaluable_count": group_summary["native_evaluable_count"],
-                "degraded_execution_count": group_summary["degraded_execution_count"],
-                "non_evaluable_count": group_summary["non_evaluable_count"],
-                "session_isolation_ok_count": group_summary.get("session_isolation_ok_count", 0),
-                "session_isolation_failed_count": group_summary.get("session_isolation_failed_count", 0),
-                "session_contaminated_count": group_summary.get("session_contaminated_count", 0),
-                "avg_normalized_score": group_summary["avg_normalized_score"],
-                "avg_answer_accuracy": group_summary.get("avg_answer_accuracy"),
-                "avg_rpf": group_summary.get("avg_rpf"),
-                "hle_calibration_rmse": group_summary.get("hle_calibration_rmse"),
-            }
-        )
-    write_csv(
-        output_root / "summary_by_group.csv",
-        summary_rows,
-        [
-            "group_id",
-            "runner",
-            "websearch",
-            "skills_enabled",
-            "count",
-            "pass_count",
-            "run_completed_count",
-            "run_failed_count",
-            "protocol_completed_count",
-            "protocol_failed_count",
-            "evaluable_count",
-            "scored_count",
-            "recovered_evaluable_count",
-            "native_evaluable_count",
-            "degraded_execution_count",
-            "non_evaluable_count",
-            "session_isolation_ok_count",
-            "session_isolation_failed_count",
-            "session_contaminated_count",
-            "avg_normalized_score",
-            "avg_answer_accuracy",
-            "avg_rpf",
-            "hle_calibration_rmse",
-        ],
-    )
-
-    subset_rows = []
-    for key in sorted(summary.get("group_subset", {})):
-        row = summary["group_subset"][key]
-        subset_rows.append(
-            {
-                "group_id": row["group_id"],
-                "runner": row["runner"],
-                "websearch": row["websearch"],
-                "skills_enabled": row.get("skills_enabled", False),
-                "subset": row["subset"],
-                "count": row["count"],
-                "pass_count": row["pass_count"],
-                "run_completed_count": row["run_completed_count"],
-                "run_failed_count": row["run_failed_count"],
-                "protocol_completed_count": row["protocol_completed_count"],
-                "protocol_failed_count": row["protocol_failed_count"],
-                "evaluable_count": row["evaluable_count"],
-                "scored_count": row["scored_count"],
-                "recovered_evaluable_count": row["recovered_evaluable_count"],
-                "native_evaluable_count": row["native_evaluable_count"],
-                "degraded_execution_count": row["degraded_execution_count"],
-                "non_evaluable_count": row["non_evaluable_count"],
-                "session_isolation_ok_count": row.get("session_isolation_ok_count", 0),
-                "session_isolation_failed_count": row.get("session_isolation_failed_count", 0),
-                "session_contaminated_count": row.get("session_contaminated_count", 0),
-                "avg_normalized_score": row["avg_normalized_score"],
-                "avg_answer_accuracy": row.get("avg_answer_accuracy"),
-                "avg_rpf": row.get("avg_rpf"),
-                "hle_calibration_rmse": row.get("hle_calibration_rmse"),
-            }
-        )
-    write_csv(
-        output_root / "summary_by_group_and_subset.csv",
-        subset_rows,
-        [
-            "group_id",
-            "runner",
-            "websearch",
-            "skills_enabled",
-            "subset",
-            "count",
-            "pass_count",
-            "run_completed_count",
-            "run_failed_count",
-            "protocol_completed_count",
-            "protocol_failed_count",
-            "evaluable_count",
-            "scored_count",
-            "recovered_evaluable_count",
-            "native_evaluable_count",
-            "degraded_execution_count",
-            "non_evaluable_count",
-            "session_isolation_ok_count",
-            "session_isolation_failed_count",
-            "session_contaminated_count",
-            "avg_normalized_score",
-            "avg_answer_accuracy",
-            "avg_rpf",
-            "hle_calibration_rmse",
-        ],
-    )
+def remove_legacy_summary_csvs(output_root: Path) -> None:
+    for filename in LEGACY_SUMMARY_CSV_FILENAMES:
+        path = output_root / filename
+        if path.exists():
+            path.unlink()
 
 
 def select_group_ids(raw: str) -> list[str]:
@@ -2157,7 +2032,7 @@ def main() -> int:
         ],
     }
     save_json(output_root / "results.json", payload)
-    export_csv_reports(output_root, summary, aggregate_group_ids)
+    remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
         "execution_plan": {
             "mode": "wave-batched",
