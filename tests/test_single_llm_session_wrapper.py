@@ -52,6 +52,38 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         )
         return config_path
 
+    def agent_result(self, text: str, *, meta: dict | None = None, is_error: bool = False) -> subprocess.CompletedProcess:
+        item = {"text": text}
+        if is_error:
+            item["isError"] = True
+        return subprocess.CompletedProcess(
+            ["openclaw"],
+            0,
+            stdout=json.dumps({"result": {"payloads": [item], "meta": meta or {}}}),
+            stderr="",
+        )
+
+    def attach_time_reminder_meta(
+        self,
+        completed: subprocess.CompletedProcess,
+        *,
+        due: bool,
+        elapsed: float,
+        remaining: float,
+        enabled: bool = True,
+        threshold: int = 600,
+    ) -> subprocess.CompletedProcess:
+        completed.time_reminder_meta = {
+            "enabled": enabled,
+            "threshold_seconds": threshold,
+            "due_before_primary_return": due,
+            "primary_elapsed_seconds": elapsed,
+            "applied": False,
+            "skipped_reason": "",
+            "remaining_seconds_at_primary_return": remaining,
+        }
+        return completed
+
     def test_missing_session_store_is_a_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -867,6 +899,229 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertFalse(convergence["agent_error_payload_detected"])
         self.assertEqual("", convergence["agent_error_kind"])
         self.assertFalse(convergence["finalization_rescue_attempted"])
+
+    def test_time_reminder_not_sent_before_threshold_when_answer_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=900,
+                json=True,
+                finalization_grace_seconds=90,
+            )
+            completed = self.attach_time_reminder_meta(
+                self.agent_result("Reasoning.\nFINAL ANSWER: B"),
+                due=False,
+                elapsed=120.0,
+                remaining=780.0,
+            )
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        reminder = payload["result"]["meta"]["convergence"]["time_reminder"]
+        self.assertTrue(reminder["enabled"])
+        self.assertFalse(reminder["due_before_primary_return"])
+        self.assertFalse(reminder["applied"])
+        self.assertEqual("threshold_not_reached", reminder["skipped_reason"])
+
+    def test_time_reminder_due_after_threshold_but_not_sent_when_answer_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=900,
+                json=True,
+                finalization_grace_seconds=90,
+            )
+            completed = self.attach_time_reminder_meta(
+                self.agent_result("Reasoning.\nFINAL ANSWER: B"),
+                due=True,
+                elapsed=650.0,
+                remaining=250.0,
+            )
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        reminder = payload["result"]["meta"]["convergence"]["time_reminder"]
+        self.assertTrue(reminder["due_before_primary_return"])
+        self.assertFalse(reminder["applied"])
+        self.assertEqual("complete_answer_available", reminder["skipped_reason"])
+
+    def test_time_reminder_sent_after_threshold_when_answer_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=900,
+                json=True,
+                finalization_grace_seconds=90,
+            )
+            primary = self.attach_time_reminder_meta(
+                self.agent_result("Partial reasoning without final marker."),
+                due=True,
+                elapsed=650.0,
+                remaining=250.0,
+            )
+            reminder_result = self.agent_result("Condensed reasoning.\nFINAL ANSWER: B")
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[primary, reminder_result]) as run_mock, \
+                mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(2, run_mock.call_count)
+        reminder_kwargs = run_mock.call_args_list[1].kwargs
+        self.assertEqual(250, reminder_kwargs["timeout_override"])
+        self.assertIn("Less than one third of the answer budget remains", reminder_kwargs["message_override"])
+        self.assertIn("Please quickly organize the reasoning chain already available in this session", reminder_kwargs["message_override"])
+        self.assertIn("Converge on a complete final answer in the required format", reminder_kwargs["message_override"])
+        self.assertIn("Do not start new tool chains or skill exploration", reminder_kwargs["message_override"])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("Condensed reasoning.\nFINAL ANSWER: B", payload["result"]["payloads"][0]["text"])
+        reminder = payload["result"]["meta"]["convergence"]["time_reminder"]
+        self.assertTrue(reminder["applied"])
+        self.assertEqual("", reminder["skipped_reason"])
+
+    def test_time_reminder_not_sent_after_threshold_when_no_time_remains(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=900,
+                json=True,
+                finalization_grace_seconds=90,
+            )
+            completed = self.attach_time_reminder_meta(
+                self.agent_result("Request timed out before a response was generated.", meta={"aborted": True}),
+                due=True,
+                elapsed=900.0,
+                remaining=0.0,
+            )
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        reminder = payload["result"]["meta"]["convergence"]["time_reminder"]
+        self.assertTrue(reminder["due_before_primary_return"])
+        self.assertFalse(reminder["applied"])
+        self.assertEqual("no_remaining_time", reminder["skipped_reason"])
+
+    def test_primary_time_reminder_tracking_does_not_kill_running_turn_at_threshold(self) -> None:
+        fake_args = argparse.Namespace(timeout=900)
+        poll_values = [None, 0]
+        killed = {"value": False}
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+                status = poll_values.pop(0)
+                if status is None:
+                    raise subprocess.TimeoutExpired(["openclaw"], timeout)
+                return (json.dumps({"result": {"payloads": [{"text": "FINAL ANSWER: B"}], "meta": {}}}), "")
+
+            def kill(self) -> None:
+                killed["value"] = True
+
+            def terminate(self) -> None:
+                killed["value"] = True
+
+        with mock.patch.object(wrapper.subprocess, "Popen", return_value=FakeProcess()), \
+            mock.patch.object(wrapper.time, "monotonic", side_effect=[0.0, 601.0, 650.0]), \
+            mock.patch.object(wrapper.time, "sleep", return_value=None):
+            result = wrapper._run_openclaw_with_time_reminder_tracking(["openclaw"], args=fake_args, env={})
+
+        self.assertFalse(killed["value"])
+        self.assertEqual(0, result.returncode)
+        self.assertTrue(result.time_reminder_meta["due_before_primary_return"])
+        self.assertEqual(650.0, result.time_reminder_meta["primary_elapsed_seconds"])
+        self.assertEqual(250.0, result.time_reminder_meta["remaining_seconds_at_primary_return"])
 
 
 if __name__ == "__main__":

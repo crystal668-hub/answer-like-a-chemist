@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,12 @@ OPENCLAW_TIMEOUT_SENTINELS = (
     "LLM request timed out.",
     "Request timed out.",
 )
+TIME_REMINDER_SECONDS = 600
+TIME_REMINDER_POLL_SECONDS = 1.0
+TIME_REMINDER_PROMPT = """TIME REMINDER:
+Less than one third of the answer budget remains. Please quickly organize the reasoning chain already available in this session.
+Converge on a complete final answer in the required format.
+Do not start new tool chains or skill exploration unless one short decisive check is clearly necessary."""
 FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
 Do not call tools or inspect files. Use only the reasoning already present in this session.
 Provide a brief but complete visible derivation and checks, then end with exactly one final answer line in the required format from the benchmark prompt.
@@ -179,6 +186,58 @@ def _rescue_output_text(payload: Any) -> str:
     return "\n\n".join(_payload_texts(target)).strip()
 
 
+def _time_reminder_enabled(args: argparse.Namespace) -> bool:
+    timeout = int(getattr(args, "timeout", 0) or 0)
+    return timeout > TIME_REMINDER_SECONDS
+
+
+def _base_time_reminder_meta(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "enabled": _time_reminder_enabled(args),
+        "threshold_seconds": TIME_REMINDER_SECONDS,
+        "due_before_primary_return": False,
+        "primary_elapsed_seconds": 0.0,
+        "applied": False,
+        "skipped_reason": "disabled" if not _time_reminder_enabled(args) else "threshold_not_reached",
+        "remaining_seconds_at_primary_return": float(max(0, int(getattr(args, "timeout", 0) or 0))),
+    }
+
+
+def _time_reminder_meta_from_result(result: subprocess.CompletedProcess[str], args: argparse.Namespace) -> dict[str, Any]:
+    raw = getattr(result, "time_reminder_meta", None)
+    if isinstance(raw, dict):
+        meta = _base_time_reminder_meta(args)
+        meta.update(raw)
+        return meta
+    return _base_time_reminder_meta(args)
+
+
+def _has_complete_answer_in_payload(payload: Any) -> bool:
+    target = _target_result_payload(payload)
+    if target is None:
+        return False
+    return any(is_complete_benchmark_answer(text) for text in _payload_texts(target))
+
+
+def _has_complete_answer_in_result(result: subprocess.CompletedProcess[str], audit: dict[str, Any]) -> bool:
+    output = (result.stdout or "").strip() or (result.stderr or "").strip()
+    if output:
+        try:
+            if _has_complete_answer_in_payload(parse_openclaw_json_output(output)):
+                return True
+        except Exception:
+            pass
+    transcript_path = transcript_path_from_audit(audit)
+    return bool(transcript_path is not None and extract_latest_complete_answer_from_transcript(transcript_path))
+
+
+def _parse_remaining_seconds(value: Any) -> int:
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _try_finalization_rescue(
     target: dict[str, Any],
     *,
@@ -247,6 +306,7 @@ def merge_convergence_metadata(
     args: argparse.Namespace,
     audit: dict[str, Any],
     env: dict[str, str] | None = None,
+    time_reminder_meta: dict[str, Any] | None = None,
 ) -> Any:
     target = _target_result_payload(payload)
     if target is None:
@@ -262,6 +322,7 @@ def merge_convergence_metadata(
         "agent_error_kind": "",
         "finalization_rescue_attempted": False,
         "finalization_rescue_succeeded": False,
+        "time_reminder": dict(time_reminder_meta or _base_time_reminder_meta(args)),
     }
     transcript_path = transcript_path_from_audit(audit)
     if transcript_path is not None:
@@ -313,13 +374,12 @@ def resolve_openclaw_executable() -> str:
     raise SessionIsolationError("Missing openclaw executable in PATH.")
 
 
-def run_openclaw(
+def _build_openclaw_command(
     args: argparse.Namespace,
     *,
-    env: dict[str, str],
     message_override: str | None = None,
     timeout_override: int | None = None,
-) -> subprocess.CompletedProcess[str]:
+) -> list[str]:
     timeout = args.timeout if timeout_override is None else timeout_override
     command = [
         resolve_openclaw_executable(),
@@ -338,7 +398,91 @@ def run_openclaw(
         command.extend(["--timeout", str(max(1, int(timeout)))])
     if args.json:
         command.append("--json")
+    return command
+
+
+def _run_openclaw_with_time_reminder_tracking(
+    command: list[str],
+    *,
+    args: argparse.Namespace,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    timeout_seconds = int(getattr(args, "timeout", 0) or 0)
+    start = time.monotonic()
+    reminder_due = False
+    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=TIME_REMINDER_POLL_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - start
+            if not reminder_due and elapsed >= TIME_REMINDER_SECONDS:
+                reminder_due = True
+    elapsed = time.monotonic() - start
+    reminder_due = reminder_due or elapsed >= TIME_REMINDER_SECONDS
+    remaining = max(0.0, float(timeout_seconds) - elapsed) if timeout_seconds > 0 else 0.0
+    result = subprocess.CompletedProcess(command, proc.returncode, stdout=stdout, stderr=stderr)
+    result.time_reminder_meta = {
+        "enabled": True,
+        "threshold_seconds": TIME_REMINDER_SECONDS,
+        "due_before_primary_return": reminder_due,
+        "primary_elapsed_seconds": elapsed,
+        "applied": False,
+        "skipped_reason": "" if reminder_due else "threshold_not_reached",
+        "remaining_seconds_at_primary_return": remaining,
+    }
+    return result
+
+
+def run_openclaw(
+    args: argparse.Namespace,
+    *,
+    env: dict[str, str],
+    message_override: str | None = None,
+    timeout_override: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    command = _build_openclaw_command(args, message_override=message_override, timeout_override=timeout_override)
+    if message_override is None and timeout_override is None and _time_reminder_enabled(args):
+        return _run_openclaw_with_time_reminder_tracking(command, args=args, env=env)
     return subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+
+
+def _maybe_run_time_reminder(
+    primary_result: subprocess.CompletedProcess[str],
+    *,
+    args: argparse.Namespace,
+    env: dict[str, str],
+    audit: dict[str, Any],
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    reminder_meta = _time_reminder_meta_from_result(primary_result, args)
+    if not reminder_meta.get("enabled"):
+        reminder_meta["skipped_reason"] = "disabled"
+        return primary_result, reminder_meta
+    if not reminder_meta.get("due_before_primary_return"):
+        reminder_meta["skipped_reason"] = "threshold_not_reached"
+        return primary_result, reminder_meta
+    if _has_complete_answer_in_result(primary_result, audit):
+        reminder_meta["skipped_reason"] = "complete_answer_available"
+        return primary_result, reminder_meta
+    remaining_seconds = _parse_remaining_seconds(reminder_meta.get("remaining_seconds_at_primary_return"))
+    if remaining_seconds <= 0:
+        reminder_meta["skipped_reason"] = "no_remaining_time"
+        return primary_result, reminder_meta
+
+    reminder_result = run_openclaw(
+        args,
+        env=env,
+        message_override=TIME_REMINDER_PROMPT,
+        timeout_override=remaining_seconds,
+    )
+    reminder_meta["applied"] = True
+    reminder_meta["skipped_reason"] = ""
+    if reminder_result.returncode != 0:
+        reminder_meta["reminder_returncode"] = reminder_result.returncode
+        reminder_meta["reminder_stderr_excerpt"] = str(reminder_result.stderr or "")[:1000]
+        return primary_result, reminder_meta
+    return reminder_result, reminder_meta
 
 
 def main() -> int:
@@ -352,12 +496,15 @@ def main() -> int:
             sys.stdout.write(result.stdout)
             sys.stderr.write(result.stderr)
             return result.returncode
+        primary_postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
+        primary_audit = merge_preflight_postflight_audit(preflight_audit, primary_postflight_audit)
+        result, time_reminder_meta = _maybe_run_time_reminder(result, args=args, env=env, audit=primary_audit)
         postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
         audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
         if args.json:
             output = result.stdout.strip() or result.stderr.strip()
             payload = parse_openclaw_json_output(output)
-            payload = merge_convergence_metadata(payload, args=args, audit=audit, env=env)
+            payload = merge_convergence_metadata(payload, args=args, audit=audit, env=env, time_reminder_meta=time_reminder_meta)
             payload = merge_isolation_audit(payload, audit)
             print(json.dumps(payload, ensure_ascii=False))
         else:
