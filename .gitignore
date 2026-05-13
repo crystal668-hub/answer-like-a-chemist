@@ -33,6 +33,7 @@ __pycache__/
 /skills/chemqa-review/control/run-status/
 /skills/debateclaw-v1/control/runplans/
 /skills/debateclaw-v1/control/run-status/
+/skills/chemistry-query/viz/
 /skills/*/generated/
 
 # Benchmark run output roots
