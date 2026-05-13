@@ -482,6 +482,10 @@ def test_automated_evaluation_prompt_requests_chinese_user_facing_content(tmp_pa
 
     assert "中文" in prompt
     assert "保留 JSON 字段名" in prompt
+    assert "所有模型生成的自然语言字符串值" in prompt
+    assert "cross_record_patterns" in prompt
+    assert "architecture_recommendations" in prompt
+    assert "per_record_analysis" in prompt
     assert "最终答案只返回 JSON" in prompt
 
 
