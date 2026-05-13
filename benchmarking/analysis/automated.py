@@ -20,6 +20,15 @@ DEFAULT_CODEX_REASONING_EFFORT = "xhigh"
 DEFAULT_CODEX_PREFLIGHT_TIMEOUT_SECONDS = 60
 MAX_TEXT_CHARS = 6000
 TEXT_ITEM_TYPES = {"text"}
+ANSWER_CORRECTNESS_METRICS = {
+    "judge_accuracy",
+    "semantic_match",
+    "exact",
+    "exact_str_match",
+    "hle_judge_accuracy",
+}
+RUBRIC_SCORE_METRICS = {"rubric_points"}
+SUPER_CHEM_RPF_EVAL_KIND = "superchem_multiple_choice_rpf"
 
 
 def utc_timestamp() -> str:
@@ -399,7 +408,150 @@ def fallback_report(bundle: dict[str, Any], *, reason: str) -> dict[str, Any]:
     }
 
 
-def render_markdown_report(report: dict[str, Any]) -> str:
+def markdown_table_cell(value: Any) -> str:
+    text = str(value if value is not None else "")
+    return text.replace("\n", " ").replace("\r", " ").replace("|", "\\|")
+
+
+def format_number(value: Any, *, digits: int = 3) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    formatted = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+    return formatted or "0"
+
+
+def format_percent(value: Any, *, digits: int = 1) -> str:
+    try:
+        number = float(value) * 100.0
+    except (TypeError, ValueError):
+        return ""
+    formatted = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+    return f"{formatted or '0'}%"
+
+
+def group_order_from_bundle(bundle: dict[str, Any]) -> list[str]:
+    run_summary = bundle.get("run_summary") if isinstance(bundle, dict) else {}
+    summary = (run_summary or {}).get("summary") or {}
+    group_order = summary.get("group_order") if isinstance(summary, dict) else None
+    if isinstance(group_order, list):
+        ordered = [str(group_id) for group_id in group_order if str(group_id or "").strip()]
+        if ordered:
+            return ordered
+    ordered: list[str] = []
+    for record in bundle.get("records", []) if isinstance(bundle, dict) else []:
+        if not isinstance(record, dict):
+            continue
+        for group in record.get("groups", []) or []:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("group_id") or "").strip()
+            if group_id and group_id not in ordered:
+                ordered.append(group_id)
+    return ordered
+
+
+def format_result_cell(group: dict[str, Any] | None) -> str:
+    if not isinstance(group, dict):
+        return "-"
+    status_axes = group.get("status_axes") if isinstance(group.get("status_axes"), dict) else {}
+    execution_error_kind = str(status_axes.get("execution_error_kind") or "").strip()
+    if execution_error_kind:
+        return f"执行错误: {execution_error_kind}"
+    if status_axes.get("evaluable") is False:
+        return "不可评估"
+    if status_axes.get("scored") is False:
+        return "未评分"
+
+    evaluation = group.get("evaluation") if isinstance(group.get("evaluation"), dict) else {}
+    if not evaluation:
+        return "未评分"
+    eval_kind = str(evaluation.get("eval_kind") or "").strip()
+    primary_metric = str(evaluation.get("primary_metric") or "").strip()
+    passed = bool(evaluation.get("passed"))
+
+    if eval_kind == SUPER_CHEM_RPF_EVAL_KIND:
+        details = evaluation.get("details") if isinstance(evaluation.get("details"), dict) else {}
+        label = "答案正确" if passed else "错误"
+        rpf = details.get("rpf")
+        if rpf is None:
+            return label
+        return f"{label}; RPF {format_percent(rpf)}"
+    if primary_metric in RUBRIC_SCORE_METRICS:
+        score = format_number(evaluation.get("score"))
+        max_score = format_number(evaluation.get("max_score"))
+        normalized = format_percent(evaluation.get("normalized_score"))
+        if score and max_score and normalized:
+            return f"{score}/{max_score} ({normalized})"
+        if score and max_score:
+            return f"{score}/{max_score}"
+    if primary_metric in ANSWER_CORRECTNESS_METRICS:
+        return "正确" if passed else "错误"
+    normalized = format_number(evaluation.get("normalized_score"))
+    return normalized if normalized else ("正确" if passed else "错误")
+
+
+def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
+    run_summary = bundle.get("run_summary") if isinstance(bundle, dict) else {}
+    summary_payload = (run_summary or {}).get("summary") or {}
+    summary = summary_payload.get("groups") or {}
+    group_summary = summary.get(group_id) if isinstance(summary, dict) else None
+    if not isinstance(group_summary, dict):
+        return "-"
+    count = group_summary.get("count")
+    pass_count = group_summary.get("pass_count")
+    parts: list[str] = []
+    try:
+        count_number = int(count)
+        pass_number = int(pass_count)
+    except (TypeError, ValueError):
+        count_number = 0
+        pass_number = 0
+    if count_number > 0:
+        parts.append(f"正确率 {pass_number}/{count_number} ({format_percent(pass_number / count_number)})")
+    avg_normalized_score = format_number(group_summary.get("avg_normalized_score"))
+    if avg_normalized_score:
+        parts.append(f"平均分 {avg_normalized_score}")
+    avg_answer_accuracy = format_number(group_summary.get("avg_answer_accuracy"))
+    if avg_answer_accuracy:
+        parts.append(f"答案均值 {avg_answer_accuracy}")
+    avg_rpf = format_number(group_summary.get("avg_rpf"))
+    if avg_rpf:
+        parts.append(f"RPF 均值 {avg_rpf}")
+    return "; ".join(parts) if parts else "-"
+
+
+def render_per_record_result_table(bundle: dict[str, Any] | None) -> list[str]:
+    if not isinstance(bundle, dict):
+        return []
+    records = [record for record in (bundle.get("records") or []) if isinstance(record, dict)]
+    group_ids = group_order_from_bundle(bundle)
+    if not records or not group_ids:
+        return []
+    header = ["Record", "Eval", *group_ids]
+    lines = ["## Per-Record Result Table", ""]
+    lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in header) + " |")
+    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    for record in records:
+        groups_by_id = {
+            str(group.get("group_id") or ""): group
+            for group in record.get("groups", []) or []
+            if isinstance(group, dict)
+        }
+        row = [
+            record.get("record_id") or "",
+            record.get("eval_kind") or "",
+            *(format_result_cell(groups_by_id.get(group_id)) for group_id in group_ids),
+        ]
+        lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in row) + " |")
+    average_row = ["Average", "-", *(format_average_cell(bundle, group_id) for group_id in group_ids)]
+    lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in average_row) + " |")
+    lines.append("")
+    return lines
+
+
+def render_markdown_report(report: dict[str, Any], *, input_bundle: dict[str, Any] | None = None) -> str:
     lines = ["# Automated Benchmark Evaluation", ""]
     run_summary = report.get("run_summary") if isinstance(report.get("run_summary"), dict) else {}
     lines.append(f"- Schema version: {report.get('schema_version', '')}")
@@ -408,6 +560,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         if run_summary.get("analysis_status"):
             lines.append(f"- Analysis status: {run_summary.get('analysis_status')}")
     lines.append("")
+    table_lines = render_per_record_result_table(input_bundle)
+    if table_lines:
+        lines.extend(table_lines)
     lines.append("## Cross-Record Patterns")
     patterns = report.get("cross_record_patterns") or []
     if patterns:
@@ -727,7 +882,7 @@ def run_automated_evaluation(
         report_path = analysis_dir / "report.json"
         markdown_path = analysis_dir / "report.md"
         save_json(report_path, report)
-        markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
+        markdown_path.write_text(render_markdown_report(report, input_bundle=bundle), encoding="utf-8")
         final_status = {
             **codex_status,
             "updated_at": utc_timestamp(),
@@ -748,7 +903,7 @@ def run_automated_evaluation(
         report_path = analysis_dir / "report.json"
         markdown_path = analysis_dir / "report.md"
         save_json(report_path, report)
-        markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
+        markdown_path.write_text(render_markdown_report(report, input_bundle=bundle), encoding="utf-8")
         final_status = {
             **preflight_status,
             "codex_candidates": codex_candidates,
@@ -773,7 +928,7 @@ def run_automated_evaluation(
     report_path = analysis_dir / "report.json"
     markdown_path = analysis_dir / "report.md"
     save_json(report_path, report)
-    markdown_path.write_text(render_markdown_report(report), encoding="utf-8")
+    markdown_path.write_text(render_markdown_report(report, input_bundle=bundle), encoding="utf-8")
     final_status = {
         **codex_status,
         "codex_candidates": codex_candidates,

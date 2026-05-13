@@ -85,6 +85,154 @@ def write_minimal_run(output_root: Path) -> None:
     write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_off"]})
 
 
+def record_payload_with_evaluation(
+    *,
+    group_id: str,
+    record_id: str,
+    eval_kind: str,
+    evaluation: dict[str, object],
+    scored: bool = True,
+    evaluable: bool = True,
+    execution_error_kind: str | None = None,
+) -> dict[str, object]:
+    payload = minimal_record_payload(group_id=group_id, record_id=record_id, runner="single_llm", runner_meta={})
+    payload["eval_kind"] = eval_kind
+    payload["evaluation"] = evaluation
+    payload["scored"] = scored
+    payload["evaluable"] = evaluable
+    payload["execution_error_kind"] = execution_error_kind
+    payload["answer_text"] = f"FINAL ANSWER: {group_id}-{record_id}"
+    payload["short_answer_text"] = f"{group_id}-{record_id}"
+    return payload
+
+
+def write_result_table_run(output_root: Path) -> None:
+    results = [
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_on",
+            record_id="r1",
+            eval_kind="chembench_open_ended",
+            evaluation={
+                "eval_kind": "chembench_open_ended",
+                "score": 1.0,
+                "max_score": 1.0,
+                "normalized_score": 1.0,
+                "passed": True,
+                "primary_metric": "judge_accuracy",
+                "primary_metric_direction": "higher_is_better",
+                "details": {},
+            },
+        ),
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_off",
+            record_id="r1",
+            eval_kind="chembench_open_ended",
+            evaluation={
+                "eval_kind": "chembench_open_ended",
+                "score": 0.0,
+                "max_score": 1.0,
+                "normalized_score": 0.0,
+                "passed": False,
+                "primary_metric": "judge_accuracy",
+                "primary_metric_direction": "higher_is_better",
+                "details": {},
+            },
+        ),
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_on",
+            record_id="r2",
+            eval_kind="frontierscience_research",
+            evaluation={
+                "eval_kind": "frontierscience_research",
+                "score": 1.5,
+                "max_score": 2.0,
+                "normalized_score": 0.75,
+                "passed": False,
+                "primary_metric": "rubric_points",
+                "primary_metric_direction": "higher_is_better",
+                "details": {},
+            },
+        ),
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_off",
+            record_id="r2",
+            eval_kind="frontierscience_research",
+            evaluation={
+                "eval_kind": "frontierscience_research",
+                "score": 0.0,
+                "max_score": 2.0,
+                "normalized_score": 0.0,
+                "passed": False,
+                "primary_metric": "execution_error",
+                "primary_metric_direction": "higher_is_better",
+                "details": {},
+            },
+            scored=False,
+            evaluable=False,
+            execution_error_kind="subprocess_timeout_expired",
+        ),
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_on",
+            record_id="r3",
+            eval_kind="superchem_multiple_choice_rpf",
+            evaluation={
+                "eval_kind": "superchem_multiple_choice_rpf",
+                "score": 1.0,
+                "max_score": 1.0,
+                "normalized_score": 1.0,
+                "passed": True,
+                "primary_metric": "answer_accuracy",
+                "primary_metric_direction": "higher_is_better",
+                "details": {"answer_accuracy": 1.0, "rpf": 0.5},
+            },
+        ),
+        record_payload_with_evaluation(
+            group_id="single_llm_skills_off",
+            record_id="r3",
+            eval_kind="superchem_multiple_choice_rpf",
+            evaluation={
+                "eval_kind": "superchem_multiple_choice_rpf",
+                "score": 0.0,
+                "max_score": 1.0,
+                "normalized_score": 0.0,
+                "passed": False,
+                "primary_metric": "answer_accuracy",
+                "primary_metric_direction": "higher_is_better",
+                "details": {"answer_accuracy": 0.0},
+            },
+        ),
+    ]
+    write_json(
+        output_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-05-11T00:00:00+0000",
+            "groups": [{"id": "single_llm_skills_on"}, {"id": "single_llm_skills_off"}],
+            "results": results,
+            "summary": {
+                "group_order": ["single_llm_skills_on", "single_llm_skills_off"],
+                "groups": {
+                    "single_llm_skills_on": {
+                        "count": 3,
+                        "pass_count": 2,
+                        "avg_normalized_score": 0.9166666667,
+                        "avg_answer_accuracy": 1.0,
+                        "avg_rpf": 0.5,
+                    },
+                    "single_llm_skills_off": {
+                        "count": 3,
+                        "pass_count": 0,
+                        "avg_normalized_score": 0.0,
+                        "avg_answer_accuracy": 0.0,
+                        "avg_rpf": None,
+                    },
+                },
+            },
+        },
+    )
+    write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_on", "single_llm_skills_off"]})
+
+
 def test_single_llm_transcript_summary_skips_thinking_and_keeps_visible_evidence(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     write_jsonl(
@@ -350,6 +498,72 @@ def test_run_automated_evaluation_skips_report_when_preflight_fails(tmp_path: Pa
     assert report["run_summary"]["analysis_status"] == "fallback"
     assert "Codex preflight failed" in report["run_summary"]["reason"]
     assert (output_root / "analysis" / "report.md").is_file()
+
+
+def test_markdown_report_includes_deterministic_per_record_result_table(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    write_result_table_run(output_root)
+    codex_bin = make_executable(tmp_path / "codex")
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        last_message_path = Path(command[command.index("--output-last-message") + 1])
+        if command[-1] == "hello":
+            last_message_path.write_text("hello\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout='{"event":"preflight"}\n', stderr="")
+        last_message_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "run_summary": {"record_count": 3},
+                    "per_record_analysis": [{"record_id": "r1"}, {"record_id": "r2"}, {"record_id": "r3"}],
+                    "cross_record_patterns": [],
+                    "architecture_recommendations": [],
+                    "skill_orchestration_recommendations": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout='{"event":"report"}\n', stderr="")
+
+    status = automated_evaluation.run_automated_evaluation(
+        output_root,
+        codex_bin=codex_bin,
+        run_subprocess=fake_run,
+    )
+
+    assert status["status"] == "completed"
+    report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
+    assert "per_record_result_table" not in report
+    markdown = (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
+    assert "## Per-Record Result Table" in markdown
+    assert "| Record | Eval | single_llm_skills_on | single_llm_skills_off |" in markdown
+    assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
+    assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
+    assert "| r3 | superchem_multiple_choice_rpf | 答案正确; RPF 50% | 错误 |" in markdown
+    assert "| Average | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
+
+
+def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    write_result_table_run(output_root)
+
+    def fail_if_called(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"unexpected subprocess call: {command}")
+
+    status = automated_evaluation.run_automated_evaluation(
+        output_root,
+        run_subprocess=fail_if_called,
+        codex_which=lambda _name: None,
+        app_bundle_bin=tmp_path / "missing-codex",
+    )
+
+    assert status["status"] == "failed"
+    markdown = (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
+    assert "## Per-Record Result Table" in markdown
+    assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
+    assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
+    assert "| Average | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
 
 
 def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) -> None:
