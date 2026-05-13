@@ -27,6 +27,12 @@ OPENCLAW_TIMEOUT_SENTINELS = (
     OPENCLAW_RESPONSE_TIMEOUT_TEXT,
     OPENCLAW_IDLE_TIMEOUT_TEXT,
 )
+SKILLS_ON_RETRY_FOCUS_PROMPT = """\
+RETRY FOCUS GUIDANCE:
+The previous skills-enabled benchmark attempt timed out before a visible final answer was emitted. In this retry, reduce tool use and focus on the chemistry reasoning itself.
+Call a tool only if it resolves a decisive uncertainty that cannot be answered from the prompt and your existing chemical reasoning.
+Do not start tool chains to explore the skill tree, read skill docs, inspect files, or debug tool invocation style.
+If the evidence is sufficient or a verification path is uncertain, finalize promptly in the exact required final answer format."""
 HLE_ANSWER_RE = re.compile(r"(?im)^\s*Answer\s*:\s*\S")
 FINAL_MARKER_REQUIRED_EVAL_KINDS = {
     "superchem_multiple_choice_rpf",
@@ -542,6 +548,15 @@ class SingleLLMRunner:
         ]
         return command
 
+    @staticmethod
+    def _retry_focus_prompt_applied(*, attempt_index: int, skills_enabled: bool) -> bool:
+        return bool(skills_enabled and attempt_index > 0)
+
+    def _prompt_for_attempt(self, *, base_prompt: str, attempt_index: int, skills_enabled: bool) -> str:
+        if not self._retry_focus_prompt_applied(attempt_index=attempt_index, skills_enabled=skills_enabled):
+            return base_prompt
+        return base_prompt.rstrip() + "\n\n" + SKILLS_ON_RETRY_FOCUS_PROMPT
+
     def _timeout_failure_result(
         self,
         *,
@@ -655,6 +670,7 @@ class SingleLLMRunner:
         result: RunnerResult,
         retryable: bool,
         retry_reason: str,
+        retry_focus_prompt_applied: bool,
     ) -> dict[str, Any]:
         failure = result.failure
         timeout_exception = result.runner_meta.get("timeout_exception")
@@ -666,6 +682,7 @@ class SingleLLMRunner:
             "failure_code": str(getattr(failure, "code", "") or ""),
             "retryable": retryable,
             "retry_reason": retry_reason,
+            "retry_focus_prompt_applied": retry_focus_prompt_applied,
         }
         if isinstance(timeout_exception, dict):
             entry["exception_type"] = str(timeout_exception.get("exception_type") or "")
@@ -745,13 +762,23 @@ class SingleLLMRunner:
         retry_reason = ""
         total_attempts = self.timeout_retries + 1
         last_result: RunnerResult | None = None
+        skills_enabled = bool(getattr(group, "skills_enabled", True))
         for attempt_index in range(total_attempts):
             session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
+            retry_focus_prompt_applied = self._retry_focus_prompt_applied(
+                attempt_index=attempt_index,
+                skills_enabled=skills_enabled,
+            )
+            attempt_prompt = self._prompt_for_attempt(
+                base_prompt=prompt,
+                attempt_index=attempt_index,
+                skills_enabled=skills_enabled,
+            )
             result = self._run_attempt(
                 record,
                 group,
                 input_bundle=input_bundle,
-                prompt=prompt,
+                prompt=attempt_prompt,
                 session_id=session_id,
                 wrapper_path=wrapper_path,
                 env=env,
@@ -769,6 +796,7 @@ class SingleLLMRunner:
                     result=result,
                     retryable=can_retry,
                     retry_reason=decision.reason,
+                    retry_focus_prompt_applied=retry_focus_prompt_applied,
                 )
             )
             if not can_retry:
