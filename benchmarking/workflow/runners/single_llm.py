@@ -51,6 +51,26 @@ class AgentErrorClassification:
 
 
 @dataclass(frozen=True)
+class ExecutionErrorClassification:
+    code: str
+    message: str
+    layer: str
+    retryable: bool
+    source: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_details(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "layer": self.layer,
+            "retryable": self.retryable,
+            "source": self.source,
+            **dict(self.details),
+        }
+
+
+@dataclass(frozen=True)
 class TimeoutRetryDecision:
     retryable: bool
     reason: str = ""
@@ -61,14 +81,156 @@ def _error_dict(runner_meta: dict[str, Any]) -> dict[str, Any]:
     return error if isinstance(error, dict) else {}
 
 
-def jsonish_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return repr(value)
+SECRET_ASSIGNMENT_RE = re.compile(r"failed to apply resolved secret assignment at (?P<path>[A-Za-z0-9_.-]+)", re.I)
+MISSING_PATH_SEGMENT_RE = re.compile(r"Path segment does not exist at (?P<path>[A-Za-z0-9_.-]+)", re.I)
+
+
+def _excerpt(value: Any, *, limit: int = 1000) -> str:
+    return str(value or "")[:limit]
+
+
+def _classify_retryable_provider_text(text: str) -> tuple[str, str] | None:
+    if not is_timeout_family_text(text):
+        return None
+    lowered = text.lower()
+    timeout_markers = (
+        "timeout",
+        "timed out",
+        "deadline exceeded",
+        "gateway timeout",
+        "etimedout",
+        "esockettimedout",
+        "http 408",
+        "http status 408",
+        "status 408",
+        "http 499",
+        "http status 499",
+        "status 499",
+        "http 504",
+        "http status 504",
+        "status 504",
+    )
+    if any(marker in lowered for marker in timeout_markers):
+        return ("provider_timeout", "provider_timeout")
+    return ("provider_transport_error", "provider_transport")
+
+
+def _classify_nonretryable_provider_text(text: str) -> tuple[str, str] | None:
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("401", "unauthorized", "auth failed", "invalid api key")):
+        return ("provider_auth_error", "provider_auth")
+    if any(marker in lowered for marker in ("billing", "insufficient_quota", "quota exceeded")):
+        return ("provider_quota_error", "provider_quota")
+    if any(marker in lowered for marker in ("rate limit", "ratelimit", "too many requests", "429")):
+        return ("provider_rate_limit_error", "provider_rate_limit")
+    if any(marker in lowered for marker in ("context length", "maximum context", "max context", "context overflow")):
+        return ("provider_context_limit_error", "provider_request")
+    if any(marker in lowered for marker in ("invalid_request_error", "role ordering", "invalid role", "response_format")):
+        return ("provider_request_invalid", "provider_request")
+    return None
+
+
+def classify_subprocess_failure(
+    *,
+    returncode: int | None,
+    stdout: str,
+    stderr: str,
+    session_id: str,
+) -> ExecutionErrorClassification:
+    stdout_text = str(stdout or "")
+    stderr_text = str(stderr or "")
+    diagnostic_text = stderr_text.strip() or stdout_text.strip()
+    source = "stderr" if stderr_text.strip() else "stdout"
+    base_details: dict[str, Any] = {
+        "returncode": returncode,
+        "session_id": session_id,
+        "stdout_excerpt": _excerpt(stdout_text),
+        "stderr_excerpt": _excerpt(stderr_text),
+    }
+    secret_match = SECRET_ASSIGNMENT_RE.search(diagnostic_text)
+    missing_path_match = MISSING_PATH_SEGMENT_RE.search(diagnostic_text)
+    if secret_match:
+        path = secret_match.group("path")
+        details = dict(base_details)
+        details["secret_assignment_path"] = path
+        if missing_path_match:
+            details["missing_path_segment"] = missing_path_match.group("path")
+        return ExecutionErrorClassification(
+            code="openclaw_config_secret_assignment_error",
+            message=f"OpenClaw config failed while applying resolved secret assignment at `{path}`.",
+            layer="openclaw_config",
+            retryable=False,
+            source=source,
+            details=details,
+        )
+    if missing_path_match:
+        path = missing_path_match.group("path")
+        details = dict(base_details)
+        details["missing_path_segment"] = path
+        return ExecutionErrorClassification(
+            code="openclaw_config_missing_path",
+            message=f"OpenClaw config references missing path segment `{path}`.",
+            layer="openclaw_config",
+            retryable=False,
+            source=source,
+            details=details,
+        )
+    lowered = diagnostic_text.lower()
+    if any(marker in lowered for marker in ("failed to load config", "config parse", "invalid config")):
+        return ExecutionErrorClassification(
+            code="openclaw_config_error",
+            message="OpenClaw failed while loading benchmark runtime config.",
+            layer="openclaw_config",
+            retryable=False,
+            source=source,
+            details=base_details,
+        )
+    if any(marker in lowered for marker in ("missing openclaw executable", "command not found")):
+        return ExecutionErrorClassification(
+            code="openclaw_executable_missing",
+            message="OpenClaw executable was not available to the benchmark subprocess.",
+            layer="openclaw_startup",
+            retryable=False,
+            source=source,
+            details=base_details,
+        )
+    provider_retryable = _classify_retryable_provider_text(diagnostic_text)
+    if provider_retryable is not None:
+        code, layer = provider_retryable
+        return ExecutionErrorClassification(
+            code=code,
+            message="OpenClaw provider request failed with a retryable transport/timeout error.",
+            layer=layer,
+            retryable=True,
+            source=source,
+            details=base_details,
+        )
+    provider_nonretryable = _classify_nonretryable_provider_text(diagnostic_text)
+    if provider_nonretryable is not None:
+        code, layer = provider_nonretryable
+        return ExecutionErrorClassification(
+            code=code,
+            message="OpenClaw provider request failed with a non-retryable provider error.",
+            layer=layer,
+            retryable=False,
+            source=source,
+            details=base_details,
+        )
+    return ExecutionErrorClassification(
+        code="openclaw_subprocess_failed",
+        message="Single-LLM OpenClaw subprocess exited before producing a benchmark answer.",
+        layer="runner_subprocess",
+        retryable=False,
+        source=source,
+        details=base_details,
+    )
 
 
 def is_runner_meta_timeout_family(runner_meta: dict[str, Any]) -> bool:
     error = _error_dict(runner_meta)
+    execution_error = runner_meta.get("execution_error")
+    if isinstance(execution_error, dict) and execution_error.get("retryable") is False:
+        return False
     kind = str(error.get("kind") or runner_meta.get("error_kind") or runner_meta.get("kind") or "").strip().lower()
     if kind == "timeout":
         return True
@@ -407,40 +569,75 @@ class SingleLLMRunner:
             ),
         )
 
-    def _exception_timeout_result(
+    def _execution_error_result(
         self,
         *,
-        exc: Exception,
+        classification: ExecutionErrorClassification,
         record: Any,
         group: Any,
         input_bundle: Any,
         session_id: str,
     ) -> RunnerResult:
-        timeout_value = getattr(exc, "timeout", None)
+        details = classification.to_details()
+        runner_meta: dict[str, Any] = {
+            "convergence_policy": self.convergence_policy.to_meta(),
+            "execution_error": dict(details),
+            "error": classification.message,
+            "session_id": session_id,
+        }
+        runner_meta["skill_use_audit"] = build_skill_use_audit(
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            configured_skills=self.configured_skills,
+            runner_meta=runner_meta,
+            final_response_text="",
+            skill_health_summary=self.skill_health_summary,
+        )
+        if input_bundle is not None:
+            runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        return RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw={"execution_error": dict(details)},
+            runner_meta=runner_meta,
+            failure=FailureInfo(
+                code=classification.code,
+                message=classification.message,
+                details=dict(details),
+            ),
+        )
+
+    def _subprocess_timeout_result(
+        self,
+        *,
+        exc: subprocess.TimeoutExpired,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        session_id: str,
+    ) -> RunnerResult:
         stdout = str(getattr(exc, "stdout", None) or getattr(exc, "output", None) or "")
         stderr = str(getattr(exc, "stderr", "") or "")
-        message = "Single-LLM OpenClaw subprocess timed out before producing a benchmark answer."
-        details = {
-            "exception_type": type(exc).__name__,
-            "message": str(exc),
-            "timeout": timeout_value,
-            "stdout_excerpt": stdout[:1000],
-            "stderr_excerpt": stderr[:1000],
-            "session_id": session_id,
-        }
-        runner_meta = {
-            "convergence_policy": self.convergence_policy.to_meta(),
-            "timeout_exception": dict(details),
-            "session_id": session_id,
-        }
-        return self._timeout_failure_result(
+        classification = ExecutionErrorClassification(
+            code="subprocess_timeout_expired",
+            message="Single-LLM runner subprocess exceeded its wall-clock timeout.",
+            layer="runner_subprocess",
+            retryable=True,
+            source="exception",
+            details={
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "timeout": getattr(exc, "timeout", None),
+                "stdout_excerpt": stdout[:1000],
+                "stderr_excerpt": stderr[:1000],
+                "session_id": session_id,
+            },
+        )
+        return self._execution_error_result(
+            classification=classification,
             record=record,
             group=group,
             input_bundle=input_bundle,
-            payload={"exception": dict(details)},
-            runner_meta=runner_meta,
-            message=message,
-            details=details,
+            session_id=session_id,
         )
 
     def _attempt_history_entry(
@@ -454,6 +651,7 @@ class SingleLLMRunner:
     ) -> dict[str, Any]:
         failure = result.failure
         timeout_exception = result.runner_meta.get("timeout_exception")
+        execution_error = result.runner_meta.get("execution_error")
         entry: dict[str, Any] = {
             "attempt": attempt_number,
             "session_id": session_id,
@@ -465,19 +663,36 @@ class SingleLLMRunner:
         if isinstance(timeout_exception, dict):
             entry["exception_type"] = str(timeout_exception.get("exception_type") or "")
             entry["exception_message"] = str(timeout_exception.get("message") or "")[:1000]
+        if isinstance(execution_error, dict):
+            entry["error_layer"] = str(execution_error.get("layer") or "")
+            entry["error_source"] = str(execution_error.get("source") or "")
+            if "exception_type" in execution_error:
+                entry["exception_type"] = str(execution_error.get("exception_type") or "")
+            if "exception_message" in execution_error:
+                entry["exception_message"] = str(execution_error.get("exception_message") or "")[:1000]
         return entry
 
     def _timeout_retry_decision(self, result: RunnerResult) -> TimeoutRetryDecision:
         failure = result.failure
         runner_meta = result.runner_meta or {}
+        details = getattr(failure, "details", {}) if failure is not None else {}
+        execution_error = runner_meta.get("execution_error")
+        if isinstance(execution_error, dict):
+            if execution_error.get("retryable") is True:
+                return TimeoutRetryDecision(True, str(execution_error.get("code") or getattr(failure, "code", "")))
+            if execution_error.get("retryable") is False:
+                return TimeoutRetryDecision(False, "")
+        if isinstance(details, dict):
+            if details.get("retryable") is True:
+                return TimeoutRetryDecision(True, str(details.get("code") or getattr(failure, "code", "")))
+            if details.get("retryable") is False:
+                return TimeoutRetryDecision(False, "")
         if getattr(failure, "code", "") == "agent_response_timeout":
             return TimeoutRetryDecision(True, "agent_response_timeout")
         if is_runner_meta_timeout_family(runner_meta):
             return TimeoutRetryDecision(True, "runner_meta_timeout_family")
-        details = getattr(failure, "details", {}) if failure is not None else {}
-        detail_text = jsonish_text(details)
         message = str(getattr(failure, "message", "") or "")
-        if is_timeout_family_text(message) or is_timeout_family_text(detail_text):
+        if is_timeout_family_text(message):
             return TimeoutRetryDecision(True, "failure_timeout_family")
         return TimeoutRetryDecision(False, "")
 
@@ -586,25 +801,29 @@ class SingleLLMRunner:
         command = self._build_command(session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
         try:
             result = self._run_subprocess(command, env=env, timeout=self.convergence_policy.timeout_seconds + 30)
+            if result.returncode != 0:
+                classification = classify_subprocess_failure(
+                    returncode=result.returncode,
+                    stdout=str(result.stdout or ""),
+                    stderr=str(result.stderr or ""),
+                    session_id=session_id,
+                )
+                return self._execution_error_result(
+                    classification=classification,
+                    record=record,
+                    group=group,
+                    input_bundle=input_bundle,
+                    session_id=session_id,
+                )
             payload = self._parse_json_stdout(result, command)
         except subprocess.TimeoutExpired as exc:
-            return self._exception_timeout_result(
+            return self._subprocess_timeout_result(
                 exc=exc,
                 record=record,
                 group=group,
                 input_bundle=input_bundle,
                 session_id=session_id,
             )
-        except Exception as exc:
-            if is_timeout_family_text(str(exc)):
-                return self._exception_timeout_result(
-                    exc=exc,
-                    record=record,
-                    group=group,
-                    input_bundle=input_bundle,
-                    session_id=session_id,
-                )
-            raise
         result_payload = self._unwrap_agent_payload(payload)
         runner_meta = dict(result_payload.get("meta") or {})
         runner_meta["convergence_policy"] = self.convergence_policy.to_meta()

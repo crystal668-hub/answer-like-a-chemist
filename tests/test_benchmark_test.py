@@ -3553,6 +3553,86 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
 
+    def test_single_llm_runner_classifies_openclaw_config_error_without_timeout_retry(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+            stderr = (
+                "Error: agent: failed to apply resolved secret assignment at "
+                "models.providers.qwen.apiKey (Path segment does not exist at models.providers.qwen.)."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                self.assertIn("--timeout", command)
+                return benchmark_test.subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("openclaw_config_secret_assignment_error", out.failure.code)
+            self.assertEqual("openclaw_config", out.failure.details["layer"])
+            self.assertFalse(out.failure.details["retryable"])
+            self.assertEqual(1, len(calls))
+            self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
+            self.assertEqual("openclaw_config_secret_assignment_error", out.runner_meta["execution_error"]["code"])
+            self.assertEqual("openclaw_config", out.runner_meta["execution_error"]["layer"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_openclaw_subprocess_provider_timeout(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    return benchmark_test.subprocess.CompletedProcess(
+                        command,
+                        1,
+                        stdout="",
+                        stderr="Provider request failed: HTTP 504 gateway timeout",
+                    )
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(2, len(calls))
+            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+            self.assertEqual(
+                "provider_timeout",
+                out.runner_meta["timeout_retry"]["attempt_history"][0]["failure_code"],
+            )
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
     def test_single_llm_runner_retries_http_and_transport_timeout_family(self) -> None:
         retryable_errors = [
             "HTTP 408 request timeout",
