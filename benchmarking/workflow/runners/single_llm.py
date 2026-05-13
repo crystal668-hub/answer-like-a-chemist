@@ -513,6 +513,13 @@ class SingleLLMRunner:
             values.append(values[-1])
         return tuple(values[:max_retries])
 
+    def _wrapper_subprocess_timeout_seconds(self) -> int:
+        return (
+            int(self.convergence_policy.timeout_seconds)
+            + int(self.convergence_policy.finalization_grace_seconds)
+            + 30
+        )
+
     def _build_command(self, *, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
         command = [
             sys.executable,
@@ -800,7 +807,7 @@ class SingleLLMRunner:
     ) -> RunnerResult:
         command = self._build_command(session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
         try:
-            result = self._run_subprocess(command, env=env, timeout=self.convergence_policy.timeout_seconds + 30)
+            result = self._run_subprocess(command, env=env, timeout=self._wrapper_subprocess_timeout_seconds())
             if result.returncode != 0:
                 classification = classify_subprocess_failure(
                     returncode=result.returncode,

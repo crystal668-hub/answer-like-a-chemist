@@ -3766,6 +3766,37 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
 
+    def test_single_llm_runner_subprocess_timeout_covers_finalization_rescue(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            timeouts: list[float | None] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                timeouts.append(timeout)
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                convergence_policy=benchmark_test.ConvergencePolicy(
+                    timeout_seconds=900,
+                    finalization_grace_seconds=90,
+                ),
+            )
+
+            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual([1020], timeouts)
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
     def test_single_llm_runner_classifies_stream_read_error_before_answer_contract(self) -> None:
         original_run_subprocess = benchmark_test.run_subprocess
         original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
