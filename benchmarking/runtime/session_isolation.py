@@ -133,6 +133,19 @@ def entry_matches_requested_session(
     )
 
 
+def entry_matches_requested_session_identity(
+    entry: dict[str, Any],
+    *,
+    requested_session_id: str,
+) -> bool:
+    current_session_id = entry.get("sessionId")
+    session_file = entry.get("sessionFile")
+    session_file_matches_requested = False
+    if isinstance(session_file, str) and session_file.strip():
+        session_file_matches_requested = Path(session_file).name == f"{requested_session_id}.jsonl"
+    return isinstance(current_session_id, str) and current_session_id == requested_session_id and session_file_matches_requested
+
+
 def base_audit(agent_id: str, requested_session_id: str, store_path: Path) -> dict[str, Any]:
     return {
         "requested_session_id": requested_session_id,
@@ -144,6 +157,9 @@ def base_audit(agent_id: str, requested_session_id: str, store_path: Path) -> di
         "postflight_entry_session_file": "",
         "postflight_entry_model_provider": "",
         "postflight_entry_model": "",
+        "requested_model_provider": "",
+        "requested_model": "",
+        "postflight_model_matches_requested": False,
         "session_isolation_ok": False,
     }
 
@@ -200,6 +216,8 @@ def inspect_postflight_session(
     audit = base_audit(agent_id, requested_session_id, store_path)
     store = load_json_object(store_path, label="OpenClaw session store")
     requested_provider, requested_model = requested_model_for_agent(agent_id, config_path=config_path)
+    audit["requested_model_provider"] = requested_provider or ""
+    audit["requested_model"] = requested_model or ""
     for key in main_session_keys_for_agent(agent_id):
         entry = store.get(key)
         if not isinstance(entry, dict):
@@ -212,11 +230,13 @@ def inspect_postflight_session(
         audit["postflight_entry_session_file"] = session_file
         audit["postflight_entry_model_provider"] = model_provider
         audit["postflight_entry_model"] = model
-        audit["session_isolation_ok"] = entry_matches_requested_session(
+        audit["postflight_model_matches_requested"] = (
+            (requested_provider is None or model_provider == requested_provider)
+            and (requested_model is None or model == requested_model)
+        )
+        audit["session_isolation_ok"] = entry_matches_requested_session_identity(
             entry,
             requested_session_id=requested_session_id,
-            requested_provider=requested_provider,
-            requested_model=requested_model,
         )
         return audit
     return audit

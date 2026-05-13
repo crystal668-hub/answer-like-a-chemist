@@ -263,6 +263,39 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("session-a", audit["postflight_entry_session_id"])
             self.assertTrue(audit["postflight_entry_session_file"].endswith("session-a.jsonl"))
 
+    def test_postflight_allows_same_session_with_model_metadata_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root, model="minimax/MiniMax-M2.7")
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(store_path.parent / "session-a.jsonl"),
+                            "modelProvider": "su8",
+                            "model": "gpt-5.4",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            audit = wrapper.inspect_postflight_session(
+                "benchmark-single",
+                "session-a",
+                config_path=config_path,
+            )
+
+            self.assertTrue(audit["session_isolation_ok"])
+            self.assertFalse(audit["postflight_model_matches_requested"])
+            self.assertEqual("minimax", audit["requested_model_provider"])
+            self.assertEqual("MiniMax-M2.7", audit["requested_model"])
+            self.assertEqual("su8", audit["postflight_entry_model_provider"])
+            self.assertEqual("gpt-5.4", audit["postflight_entry_model"])
+
     def test_main_merges_preflight_and_postflight_audit_into_openclaw_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
