@@ -474,6 +474,17 @@ def test_run_automated_evaluation_runs_preflight_before_report_with_model_config
     assert "codex-last-message.txt" in calls[1][calls[1].index("--output-last-message") + 1]
 
 
+def test_automated_evaluation_prompt_requests_chinese_user_facing_content(tmp_path: Path) -> None:
+    prompt = automated_evaluation.automated_evaluation_prompt(
+        tmp_path / "input-bundle.json",
+        tmp_path / "report-schema.json",
+    )
+
+    assert "中文" in prompt
+    assert "保留 JSON 字段名" in prompt
+    assert "最终答案只返回 JSON" in prompt
+
+
 def test_run_automated_evaluation_skips_report_when_preflight_fails(tmp_path: Path) -> None:
     output_root = tmp_path / "run"
     write_minimal_run(output_root)
@@ -536,12 +547,13 @@ def test_markdown_report_includes_deterministic_per_record_result_table(tmp_path
     report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
     assert "per_record_result_table" not in report
     markdown = (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
-    assert "## Per-Record Result Table" in markdown
-    assert "| Record | Eval | single_llm_skills_on | single_llm_skills_off |" in markdown
+    assert "# 自动化 Benchmark 评估" in markdown
+    assert "## 每题结果表" in markdown
+    assert "| 题目 | 评价方式 | single_llm_skills_on | single_llm_skills_off |" in markdown
     assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
     assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
     assert "| r3 | superchem_multiple_choice_rpf | 答案正确; RPF 50% | 错误 |" in markdown
-    assert "| Average | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
+    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
 
 
 def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_path: Path) -> None:
@@ -560,10 +572,10 @@ def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_pat
 
     assert status["status"] == "failed"
     markdown = (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
-    assert "## Per-Record Result Table" in markdown
+    assert "## 每题结果表" in markdown
     assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
     assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
-    assert "| Average | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
+    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
 
 
 def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) -> None:
@@ -605,7 +617,7 @@ def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) 
     assert status["status"] == "completed"
     report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
     assert report["per_record_analysis"][0]["record_id"] == "r1"
-    assert "Automated Benchmark Evaluation" in (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
+    assert "自动化 Benchmark 评估" in (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
     assert (output_root / "analysis" / "input-bundle.json").is_file()
     assert (output_root / "analysis" / "codex-events.jsonl").read_text(encoding="utf-8") == '{"event":"done"}\n'
 
@@ -631,3 +643,7 @@ def test_run_automated_evaluation_falls_back_when_codex_report_is_invalid(tmp_pa
     report = json.loads((output_root / "analysis" / "report.json").read_text(encoding="utf-8"))
     assert report["run_summary"]["analysis_status"] == "fallback"
     assert report["per_record_analysis"][0]["record_id"] == "r1"
+    assert report["per_record_analysis"][0]["standard_answer_delta"].startswith("Codex 分析不可用")
+    markdown = (output_root / "analysis" / "report.md").read_text(encoding="utf-8")
+    assert "## 跨题模式" in markdown
+    assert "- 暂无跨题模式。" in markdown

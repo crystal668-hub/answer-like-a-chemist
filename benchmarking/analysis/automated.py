@@ -336,14 +336,16 @@ def build_input_bundle(output_root: str | Path) -> dict[str, Any]:
 
 def automated_evaluation_prompt(input_bundle_path: Path, report_schema_path: Path) -> str:
     return (
-        "You are performing automated benchmark evaluation and experience extraction for OpenClaw chemistry benchmarks.\n"
-        "Read the JSON input bundle and produce a strict JSON report matching the provided schema.\n"
-        "Analyze every record and compare experiment groups, final answers, scoring details, and trajectory evidence.\n"
-        "Use only the supplied reference answers, evaluator details, and trajectory summaries as evidence.\n"
-        "Do not modify files. Do not run project commands except read-only inspection if necessary.\n\n"
+        "你正在为 OpenClaw chemistry benchmark 执行自动化评估和经验提取。\n"
+        "请读取 JSON input bundle，并产出严格匹配输出 schema 的 JSON report。\n"
+        "默认使用中文撰写所有面向用户阅读的内容，包括摘要、模式、建议、逐题分析、证据说明和推荐项。\n"
+        "保留 JSON 字段名、枚举值、record_id、group_id、metric 名称和文件路径原样，不要翻译结构化字段名。\n"
+        "逐题分析需要比较实验组、最终答案、评分细节和轨迹证据。\n"
+        "只能使用输入中提供的参考答案、评估器细节和轨迹摘要作为证据。\n"
+        "不要修改文件。除非需要只读检查，否则不要运行项目命令。\n\n"
         f"Input bundle: {input_bundle_path}\n"
         f"Output schema: {report_schema_path}\n\n"
-        "Return only JSON for the final answer."
+        "最终答案只返回 JSON。"
     )
 
 
@@ -388,8 +390,8 @@ def fallback_report(bundle: dict[str, Any], *, reason: str) -> dict[str, Any]:
                     for group in groups
                     if isinstance(group, dict)
                 ],
-                "standard_answer_delta": "Codex analysis unavailable; inspect reference_answer and evaluation details in input-bundle.json.",
-                "trajectory_delta": "Codex analysis unavailable; inspect trajectory summaries in input-bundle.json.",
+                "standard_answer_delta": "Codex 分析不可用；请查看 input-bundle.json 中的 reference_answer 和 evaluation 详情。",
+                "trajectory_delta": "Codex 分析不可用；请查看 input-bundle.json 中的 trajectory 摘要。",
                 "recommendations": [],
                 "evidence_refs": [],
             }
@@ -529,8 +531,8 @@ def render_per_record_result_table(bundle: dict[str, Any] | None) -> list[str]:
     group_ids = group_order_from_bundle(bundle)
     if not records or not group_ids:
         return []
-    header = ["Record", "Eval", *group_ids]
-    lines = ["## Per-Record Result Table", ""]
+    header = ["题目", "评价方式", *group_ids]
+    lines = ["## 每题结果表", ""]
     lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in header) + " |")
     lines.append("| " + " | ".join("---" for _ in header) + " |")
     for record in records:
@@ -545,49 +547,49 @@ def render_per_record_result_table(bundle: dict[str, Any] | None) -> list[str]:
             *(format_result_cell(groups_by_id.get(group_id)) for group_id in group_ids),
         ]
         lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in row) + " |")
-    average_row = ["Average", "-", *(format_average_cell(bundle, group_id) for group_id in group_ids)]
+    average_row = ["平均", "-", *(format_average_cell(bundle, group_id) for group_id in group_ids)]
     lines.append("| " + " | ".join(markdown_table_cell(cell) for cell in average_row) + " |")
     lines.append("")
     return lines
 
 
 def render_markdown_report(report: dict[str, Any], *, input_bundle: dict[str, Any] | None = None) -> str:
-    lines = ["# Automated Benchmark Evaluation", ""]
+    lines = ["# 自动化 Benchmark 评估", ""]
     run_summary = report.get("run_summary") if isinstance(report.get("run_summary"), dict) else {}
-    lines.append(f"- Schema version: {report.get('schema_version', '')}")
+    lines.append(f"- Schema 版本: {report.get('schema_version', '')}")
     if run_summary:
-        lines.append(f"- Records: {run_summary.get('record_count', '')}")
+        lines.append(f"- 题目数: {run_summary.get('record_count', '')}")
         if run_summary.get("analysis_status"):
-            lines.append(f"- Analysis status: {run_summary.get('analysis_status')}")
+            lines.append(f"- 分析状态: {run_summary.get('analysis_status')}")
     lines.append("")
     table_lines = render_per_record_result_table(input_bundle)
     if table_lines:
         lines.extend(table_lines)
-    lines.append("## Cross-Record Patterns")
+    lines.append("## 跨题模式")
     patterns = report.get("cross_record_patterns") or []
     if patterns:
         for item in patterns:
             lines.append(f"- {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
     else:
-        lines.append("- No cross-record patterns reported.")
+        lines.append("- 暂无跨题模式。")
     lines.append("")
-    lines.append("## Architecture Recommendations")
+    lines.append("## 架构建议")
     recommendations = report.get("architecture_recommendations") or []
     if recommendations:
         for item in recommendations:
             lines.append(f"- {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
     else:
-        lines.append("- No architecture recommendations reported.")
+        lines.append("- 暂无架构建议。")
     lines.append("")
-    lines.append("## Skill Orchestration Recommendations")
+    lines.append("## Skill 编排建议")
     skill_recommendations = report.get("skill_orchestration_recommendations") or []
     if skill_recommendations:
         for item in skill_recommendations:
             lines.append(f"- {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
     else:
-        lines.append("- No skill orchestration recommendations reported.")
+        lines.append("- 暂无 skill 编排建议。")
     lines.append("")
-    lines.append("## Per-Record Analysis")
+    lines.append("## 逐题分析")
     for record in report.get("per_record_analysis") or []:
         if not isinstance(record, dict):
             continue
@@ -595,10 +597,11 @@ def render_markdown_report(report: dict[str, Any], *, input_bundle: dict[str, An
         for key in ("standard_answer_delta", "trajectory_delta"):
             value = record.get(key)
             if value:
-                lines.append(f"- {key}: {value}")
+                label = "答案差异" if key == "standard_answer_delta" else "轨迹差异"
+                lines.append(f"- {label}: {value}")
         recs = record.get("recommendations") or []
         for item in recs:
-            lines.append(f"- recommendation: {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
+            lines.append(f"- 建议: {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
