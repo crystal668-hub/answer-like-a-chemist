@@ -497,6 +497,65 @@ def format_result_cell(group: dict[str, Any] | None) -> str:
     return normalized if normalized else ("正确" if passed else "错误")
 
 
+def _group_entries(bundle: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for record in bundle.get("records", []) if isinstance(bundle, dict) else []:
+        if not isinstance(record, dict):
+            continue
+        for group in record.get("groups", []) or []:
+            if not isinstance(group, dict):
+                continue
+            if str(group.get("group_id") or "") == group_id:
+                entries.append(group)
+    return entries
+
+
+def _scored_evaluation(group: dict[str, Any]) -> dict[str, Any] | None:
+    status_axes = group.get("status_axes") if isinstance(group.get("status_axes"), dict) else {}
+    if status_axes.get("evaluable") is False or status_axes.get("scored") is False:
+        return None
+    evaluation = group.get("evaluation") if isinstance(group.get("evaluation"), dict) else {}
+    return evaluation if evaluation else None
+
+
+def _average_values(values: list[float]) -> str:
+    if not values:
+        return ""
+    return format_number(sum(values) / len(values))
+
+
+def average_process_score(bundle: dict[str, Any], group_id: str) -> str:
+    values: list[float] = []
+    for group in _group_entries(bundle, group_id):
+        evaluation = _scored_evaluation(group)
+        if not evaluation:
+            continue
+        primary_metric = str(evaluation.get("primary_metric") or "").strip()
+        if primary_metric not in RUBRIC_SCORE_METRICS:
+            continue
+        try:
+            values.append(float(evaluation.get("normalized_score")))
+        except (TypeError, ValueError):
+            continue
+    return _average_values(values)
+
+
+def average_superchem_detail_metric(bundle: dict[str, Any], group_id: str, metric: str) -> str:
+    values: list[float] = []
+    for group in _group_entries(bundle, group_id):
+        evaluation = _scored_evaluation(group)
+        if not evaluation:
+            continue
+        if str(evaluation.get("eval_kind") or "").strip() != SUPER_CHEM_RPF_EVAL_KIND:
+            continue
+        details = evaluation.get("details") if isinstance(evaluation.get("details"), dict) else {}
+        try:
+            values.append(float(details.get(metric)))
+        except (TypeError, ValueError):
+            continue
+    return _average_values(values)
+
+
 def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
     run_summary = bundle.get("run_summary") if isinstance(bundle, dict) else {}
     summary_payload = (run_summary or {}).get("summary") or {}
@@ -515,13 +574,13 @@ def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
         pass_number = 0
     if count_number > 0:
         parts.append(f"正确率 {pass_number}/{count_number} ({format_percent(pass_number / count_number)})")
-    avg_normalized_score = format_number(group_summary.get("avg_normalized_score"))
-    if avg_normalized_score:
-        parts.append(f"平均分 {avg_normalized_score}")
-    avg_answer_accuracy = format_number(group_summary.get("avg_answer_accuracy"))
+    avg_process_score = average_process_score(bundle, group_id)
+    if avg_process_score:
+        parts.append(f"平均分 {avg_process_score}")
+    avg_answer_accuracy = average_superchem_detail_metric(bundle, group_id, "answer_accuracy")
     if avg_answer_accuracy:
         parts.append(f"答案均值 {avg_answer_accuracy}")
-    avg_rpf = format_number(group_summary.get("avg_rpf"))
+    avg_rpf = average_superchem_detail_metric(bundle, group_id, "rpf")
     if avg_rpf:
         parts.append(f"RPF 均值 {avg_rpf}")
     return "; ".join(parts) if parts else "-"

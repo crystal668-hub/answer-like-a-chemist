@@ -233,6 +233,64 @@ def write_result_table_run(output_root: Path) -> None:
     write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_on", "single_llm_skills_off"]})
 
 
+def test_per_record_result_table_average_row_omits_score_for_answer_only_metrics() -> None:
+    bundle = {
+        "run_summary": {
+            "summary": {
+                "group_order": ["single_llm_skills_on"],
+                "groups": {
+                    "single_llm_skills_on": {
+                        "count": 2,
+                        "pass_count": 1,
+                        "avg_normalized_score": 0.5,
+                        "avg_answer_accuracy": 0.5,
+                    }
+                },
+            }
+        },
+        "records": [
+            {
+                "record_id": "r1",
+                "eval_kind": "chembench_open_ended",
+                "groups": [
+                    {
+                        "group_id": "single_llm_skills_on",
+                        "status_axes": {"evaluable": True, "scored": True},
+                        "evaluation": {
+                            "eval_kind": "chembench_open_ended",
+                            "normalized_score": 1.0,
+                            "passed": True,
+                            "primary_metric": "judge_accuracy",
+                        },
+                    }
+                ],
+            },
+            {
+                "record_id": "r2",
+                "eval_kind": "hle_chemistry",
+                "groups": [
+                    {
+                        "group_id": "single_llm_skills_on",
+                        "status_axes": {"evaluable": True, "scored": True},
+                        "evaluation": {
+                            "eval_kind": "hle_chemistry",
+                            "normalized_score": 0.0,
+                            "passed": False,
+                            "primary_metric": "hle_judge_accuracy",
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    markdown = "\n".join(automated_evaluation.render_per_record_result_table(bundle))
+
+    assert "| 平均 | - | 正确率 1/2 (50%) |" in markdown
+    assert "平均分" not in markdown
+    assert "答案均值" not in markdown
+
+
 def test_single_llm_transcript_summary_skips_thinking_and_keeps_visible_evidence(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     write_jsonl(
@@ -557,7 +615,7 @@ def test_markdown_report_includes_deterministic_per_record_result_table(tmp_path
     assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
     assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
     assert "| r3 | superchem_multiple_choice_rpf | 答案正确; RPF 50% | 错误 |" in markdown
-    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
+    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.75; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 答案均值 0 |" in markdown
 
 
 def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_path: Path) -> None:
@@ -579,7 +637,7 @@ def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_pat
     assert "## 每题结果表" in markdown
     assert "| r1 | chembench_open_ended | 正确 | 错误 |" in markdown
     assert "| r2 | frontierscience_research | 1.5/2 (75%) | 执行错误: subprocess_timeout_expired |" in markdown
-    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
+    assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.75; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 答案均值 0 |" in markdown
 
 
 def test_markdown_report_renders_structured_per_record_analysis() -> None:
