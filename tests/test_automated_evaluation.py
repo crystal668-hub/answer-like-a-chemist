@@ -582,6 +582,53 @@ def test_fallback_markdown_report_still_includes_per_record_result_table(tmp_pat
     assert "| 平均 | - | 正确率 2/3 (66.7%); 平均分 0.917; 答案均值 1; RPF 均值 0.5 | 正确率 0/3 (0%); 平均分 0; 答案均值 0 |" in markdown
 
 
+def test_markdown_report_renders_structured_per_record_analysis() -> None:
+    markdown = automated_evaluation.render_markdown_report(
+        {
+            "schema_version": 1,
+            "run_summary": {"record_count": 1},
+            "cross_record_patterns": [],
+            "architecture_recommendations": [],
+            "skill_orchestration_recommendations": [],
+            "per_record_analysis": [
+                {
+                    "record_id": "r1",
+                    "reference_answer": "26",
+                    "summary": "两组均失败，开启 skills 数值更接近但仍错误。",
+                    "group_results": [
+                        {
+                            "group_id": "single_llm_skills_off",
+                            "final_answer": "15",
+                            "score": 0.0,
+                            "passed": False,
+                            "evidence": "遗漏有效异构体。",
+                            "trajectory_evidence": "native_final，无工具调用。",
+                        },
+                        {
+                            "group_id": "single_llm_skills_on",
+                            "final_answer": "19",
+                            "score": 0.0,
+                            "passed": False,
+                            "evidence": "排除了互变异构连接形式。",
+                            "trajectory_evidence": "recovered_candidate，degraded_execution 为 true。",
+                        },
+                    ],
+                    "recommendation": "枚举前先明确 benchmark 计数定义。",
+                }
+            ],
+        }
+    )
+
+    assert "### r1" in markdown
+    assert "- 参考答案: 26" in markdown
+    assert "- 总结: 两组均失败，开启 skills 数值更接近但仍错误。" in markdown
+    assert "- single_llm_skills_off: 答案 15；得分 0；未通过" in markdown
+    assert "证据: 遗漏有效异构体。" in markdown
+    assert "轨迹: native_final，无工具调用。" in markdown
+    assert "- single_llm_skills_on: 答案 19；得分 0；未通过" in markdown
+    assert "- 建议: 枚举前先明确 benchmark 计数定义。" in markdown
+
+
 def test_run_automated_evaluation_writes_report_from_fake_codex(tmp_path: Path) -> None:
     output_root = tmp_path / "run"
     write_minimal_run(output_root)

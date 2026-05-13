@@ -556,6 +556,74 @@ def render_per_record_result_table(bundle: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def format_passed(value: Any) -> str:
+    if value is True:
+        return "通过"
+    if value is False:
+        return "未通过"
+    return ""
+
+
+def append_per_record_analysis_lines(lines: list[str], record: dict[str, Any]) -> None:
+    reference_answer = record.get("reference_answer")
+    if reference_answer not in (None, ""):
+        lines.append(f"- 参考答案: {reference_answer}")
+    summary = record.get("summary")
+    if summary:
+        lines.append(f"- 总结: {summary}")
+    for key in ("standard_answer_delta", "trajectory_delta", "comparison"):
+        value = record.get(key)
+        if not value:
+            continue
+        labels = {
+            "standard_answer_delta": "答案差异",
+            "trajectory_delta": "轨迹差异",
+            "comparison": "对比",
+        }
+        lines.append(f"- {labels[key]}: {value}")
+
+    group_results = record.get("group_results") or []
+    if isinstance(group_results, dict):
+        group_results = [
+            {"group_id": group_id, **payload}
+            for group_id, payload in group_results.items()
+            if isinstance(payload, dict)
+        ]
+    for group in group_results:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "<unknown>")
+        details: list[str] = []
+        final_answer = group.get("final_answer")
+        if final_answer not in (None, ""):
+            details.append(f"答案 {final_answer}")
+        score = group.get("score")
+        if score not in (None, ""):
+            details.append(f"得分 {format_number(score)}")
+        passed = format_passed(group.get("passed"))
+        if passed:
+            details.append(passed)
+        suffix = f" {'；'.join(details)}" if details else ""
+        lines.append(f"- {group_id}:{suffix}")
+        evidence = group.get("evidence") or group.get("evaluator_summary")
+        if evidence:
+            lines.append(f"  - 证据: {evidence}")
+        trajectory = group.get("trajectory_evidence")
+        if trajectory:
+            lines.append(f"  - 轨迹: {trajectory}")
+
+    recommendations: list[Any] = []
+    if record.get("recommendation"):
+        recommendations.append(record.get("recommendation"))
+    recs = record.get("recommendations") or []
+    if isinstance(recs, list):
+        recommendations.extend(recs)
+    elif recs:
+        recommendations.append(recs)
+    for item in recommendations:
+        lines.append(f"- 建议: {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
+
+
 def render_markdown_report(report: dict[str, Any], *, input_bundle: dict[str, Any] | None = None) -> str:
     lines = ["# 自动化 Benchmark 评估", ""]
     run_summary = report.get("run_summary") if isinstance(report.get("run_summary"), dict) else {}
@@ -597,14 +665,7 @@ def render_markdown_report(report: dict[str, Any], *, input_bundle: dict[str, An
         if not isinstance(record, dict):
             continue
         lines.append(f"### {record.get('record_id', '<unknown>')}")
-        for key in ("standard_answer_delta", "trajectory_delta"):
-            value = record.get(key)
-            if value:
-                label = "答案差异" if key == "standard_answer_delta" else "轨迹差异"
-                lines.append(f"- {label}: {value}")
-        recs = record.get("recommendations") or []
-        for item in recs:
-            lines.append(f"- 建议: {item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)}")
+        append_per_record_analysis_lines(lines, record)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
