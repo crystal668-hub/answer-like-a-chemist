@@ -7,7 +7,7 @@ description: Use for local, reproducible chemistry calculations that need determ
 
 ## Overview
 
-`chem-calculator` is a local first-batch chemistry calculation toolbox. It covers common molar-mass, stoichiometry, concentration, Ksp, acid/base, gas-law, thermodynamics, redox, electrochemistry, unit-conversion, and answer-check tasks with structured JSON output.
+`chem-calculator` is a local first-batch chemistry calculation toolbox. It covers common molar-mass, stoichiometry, concentration, Ksp, acid/base, gas-law, thermodynamics, redox, electrochemistry, unit-conversion, and answer-check tasks with structured JSON output. Unit parsing and conversion use Pint through a small chemistry-oriented alias layer; symbolic expression equivalence helpers use SymPy for deterministic formula checks.
 
 ## When to Use
 

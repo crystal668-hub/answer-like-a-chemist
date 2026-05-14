@@ -9,6 +9,9 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable
 
+import pint
+import sympy
+from pint.errors import DimensionalityError, UndefinedUnitError
 
 RESULT_FILENAME = "result.json"
 FARADAY_CONSTANT_C_PER_MOL = 96485.33212
@@ -68,8 +71,19 @@ UNIT_ALIASES = {
     "ampere": "A",
     "amperes": "A",
     "atm": "atm",
-    "c": "C",
-    "degc": "C",
+    "c": "degC",
+    "celsius": "degC",
+    "cm3": "centimeter ** 3",
+    "cm^3": "centimeter ** 3",
+    "cubic centimeter": "centimeter ** 3",
+    "cubic centimeters": "centimeter ** 3",
+    "degc": "degC",
+    "degree celsius": "degC",
+    "degrees celsius": "degC",
+    "dm3": "decimeter ** 3",
+    "dm^3": "decimeter ** 3",
+    "cubic decimeter": "decimeter ** 3",
+    "cubic decimeters": "decimeter ** 3",
     "g": "g",
     "gram": "g",
     "grams": "g",
@@ -82,13 +96,25 @@ UNIT_ALIASES = {
     "kj": "kJ",
     "kj/mol": "kJ/mol",
     "kj/mol/k": "kJ/mol/K",
+    "kj mol^-1": "kJ mol^-1",
+    "kj mol-1": "kJ mol^-1",
+    "kcal/mol": "kcal/mol",
+    "kcal mol^-1": "kcal mol^-1",
+    "kcal mol-1": "kcal mol^-1",
     "l": "L",
     "liter": "L",
     "liters": "L",
     "litre": "L",
     "litres": "L",
-    "m": "mol/L",
     "mg": "mg",
+    "microgram": "microgram",
+    "micrograms": "microgram",
+    "micrometer": "micrometer",
+    "micrometers": "micrometer",
+    "μg": "microgram",
+    "ug": "microgram",
+    "μm": "micrometer",
+    "um": "micrometer",
     "min": "min",
     "minute": "min",
     "minutes": "min",
@@ -97,6 +123,11 @@ UNIT_ALIASES = {
     "mmol/l": "mmol/L",
     "mol": "mol",
     "mol/l": "mol/L",
+    "M": "mol/L",
+    "molar": "mol/L",
+    "nm": "nanometer",
+    "nanometer": "nanometer",
+    "nanometers": "nanometer",
     "pa": "Pa",
     "s": "s",
     "sec": "s",
@@ -106,6 +137,8 @@ UNIT_ALIASES = {
     "kpa": "kPa",
 }
 
+# Kept only as a compact compatibility summary for legacy callers and docs.
+# Unit parsing, dimensionality, and conversion are delegated to Pint.
 LINEAR_UNITS = {
     "A": ("current", 1.0),
     "J": ("energy", 1.0),
@@ -130,6 +163,23 @@ LINEAR_UNITS = {
     "mol/L": ("concentration", 1.0),
     "s": ("time", 1.0),
     "torr": ("pressure", 101325.0 / 760.0),
+}
+
+UNIT_REGISTRY = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
+SYMBOLIC_FUNCTIONS = {
+    "acos": sympy.acos,
+    "asin": sympy.asin,
+    "atan": sympy.atan,
+    "cos": sympy.cos,
+    "exp": sympy.exp,
+    "ln": sympy.log,
+    "log": sympy.log,
+    "sin": sympy.sin,
+    "sqrt": sympy.sqrt,
+    "tan": sympy.tan,
+}
+SYMBOLIC_CONSTANTS = {
+    "pi": sympy.pi,
 }
 
 
@@ -277,47 +327,40 @@ def normalize_unit(unit: str) -> str:
     normalized = str(unit or "").strip()
     if not normalized:
         raise ChemCalcError("unit is required", code="invalid_request")
+    normalized = normalized.replace("µ", "μ")
     alias = UNIT_ALIASES.get(normalized.lower())
     return alias or normalized
 
 
 def unit_dimension(unit: str) -> str:
+    pint_unit = parse_unit(unit)
+    return str(pint_unit.dimensionality)
+
+
+def parse_unit(unit: str) -> pint.Unit:
     canonical = normalize_unit(unit)
-    if canonical == "C":
-        return "temperature"
-    if canonical in LINEAR_UNITS:
-        return LINEAR_UNITS[canonical][0]
-    raise ChemCalcError(f"unsupported unit `{unit}`", code="unsupported_unit", status="partial")
+    try:
+        return UNIT_REGISTRY.Unit(canonical)
+    except UndefinedUnitError as exc:
+        raise ChemCalcError(f"unsupported unit `{unit}`", code="unsupported_unit", status="partial") from exc
+    except Exception as exc:
+        raise ChemCalcError(f"unsupported unit syntax `{unit}`", code="unsupported_unit", status="partial") from exc
 
 
 def convert_value(value: float, from_unit: str, to_unit: str) -> float:
-    origin = normalize_unit(from_unit)
-    target = normalize_unit(to_unit)
-    if origin == target:
-        return float(value)
-    if {origin, target} <= {"C", "K"}:
-        if origin == "C" and target == "K":
-            return float(value) + 273.15
-        if origin == "K" and target == "C":
-            return float(value) - 273.15
-    if origin == "C" or target == "C":
-        raise ChemCalcError(
-            f"unsupported temperature conversion `{from_unit}` -> `{to_unit}`",
-            code="unsupported_unit",
-            status="partial",
-        )
-    if origin not in LINEAR_UNITS or target not in LINEAR_UNITS:
-        raise ChemCalcError(f"unsupported unit `{from_unit}` or `{to_unit}`", code="unsupported_unit", status="partial")
-    origin_dimension, origin_scale = LINEAR_UNITS[origin]
-    target_dimension, target_scale = LINEAR_UNITS[target]
-    if origin_dimension != target_dimension:
+    origin = parse_unit(from_unit)
+    target = parse_unit(to_unit)
+    try:
+        quantity = UNIT_REGISTRY.Quantity(float(value), origin)
+        return float(quantity.to(target).magnitude)
+    except DimensionalityError as exc:
         raise ChemCalcError(
             f"incompatible unit conversion `{from_unit}` -> `{to_unit}`",
             code="incompatible_unit",
             status="partial",
-        )
-    base_value = float(value) * origin_scale
-    return base_value / target_scale
+        ) from exc
+    except UndefinedUnitError as exc:
+        raise ChemCalcError(f"unsupported unit `{from_unit}` or `{to_unit}`", code="unsupported_unit", status="partial") from exc
 
 
 def extract_quantity(raw_value: Any, *, default_unit: str | None = None, field_name: str) -> tuple[float, str]:
@@ -328,6 +371,56 @@ def extract_quantity(raw_value: Any, *, default_unit: str | None = None, field_n
     if default_unit is None:
         raise ChemCalcError(f"`{field_name}` must include a unit", code="invalid_request")
     return as_float(raw_value, field_name), normalize_unit(default_unit)
+
+
+def _symbolic_locals_for_expressions(*expressions: str) -> dict[str, Any]:
+    names: set[str] = set()
+    for expression in expressions:
+        names.update(re.findall(r"\b[A-Za-z_]\w*\b", expression))
+    local_dict: dict[str, Any] = dict(SYMBOLIC_FUNCTIONS)
+    local_dict.update(SYMBOLIC_CONSTANTS)
+    for name in names:
+        if name not in local_dict:
+            local_dict[name] = sympy.Symbol(name)
+    return local_dict
+
+
+def parse_symbolic_expression(expression: str) -> sympy.Expr:
+    text = require_text(expression, "expression")
+    try:
+        return sympy.sympify(text, locals=_symbolic_locals_for_expressions(text))
+    except Exception as exc:
+        raise ChemCalcError(
+            f"unable to parse symbolic expression `{expression}`",
+            code="invalid_expression",
+            status="partial",
+        ) from exc
+
+
+def validate_expression_equivalence(expected_expression: str, candidate_expression: str) -> dict[str, Any]:
+    local_dict = _symbolic_locals_for_expressions(expected_expression, candidate_expression)
+    try:
+        expected = sympy.sympify(require_text(expected_expression, "expected_expression"), locals=local_dict)
+        candidate = sympy.sympify(require_text(candidate_expression, "candidate_expression"), locals=local_dict)
+    except Exception as exc:
+        raise ChemCalcError(
+            "unable to parse symbolic expression for equivalence check",
+            code="invalid_expression",
+            status="partial",
+        ) from exc
+    difference = sympy.simplify(expected - candidate)
+    is_equivalent = bool(difference == 0)
+    return {
+        "is_equivalent": is_equivalent,
+        "expected_expression": str(expected),
+        "candidate_expression": str(candidate),
+        "difference": str(difference),
+        "symbols": sorted(
+            str(value)
+            for key, value in local_dict.items()
+            if key not in SYMBOLIC_FUNCTIONS and key not in SYMBOLIC_CONSTANTS
+        ),
+    }
 
 
 def normalize_species_label(species: str) -> str:

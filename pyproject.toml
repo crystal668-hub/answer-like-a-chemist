@@ -9,6 +9,7 @@ dependencies = [
     "requests==2.33.1",
     "beautifulsoup4==4.14.3",
     "sympy==1.14.0",
+    "pint==0.25.3",
 ]
 
 [project.optional-dependencies]

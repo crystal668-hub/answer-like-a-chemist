@@ -42,6 +42,15 @@ Status semantics:
 - `partial`: some output is usable, but the request hit a documented limitation, ambiguity, unsupported feature, or compatibility warning
 - `error`: no usable result is available for the requested operation
 
+## Shared Unit and Formula Semantics
+
+- Unit parsing, dimensionality checks, and conversions are backed by Pint.
+- `chemcalc_core.normalize_unit()` is an input cleanup and alias layer for common chemistry spellings such as `cm3`, `dm3`, `J/mol/K`, `kJ mol^-1`, `ug`, `microgram`, and Celsius aliases.
+- Pint is the authoritative unit engine. Local unit aliases are compatibility shims, not a standalone unit registry.
+- Incompatible dimensions return structured `partial` payloads with `incompatible_unit`; unrecognized unit syntax returns structured `partial` payloads with `unsupported_unit`.
+- `chemcalc_core.validate_expression_equivalence()` uses SymPy to compare symbolic expressions and returns a structured equivalence payload. Parse failures raise a structured `invalid_expression` `ChemCalcError`.
+- SymPy helpers are internal deterministic checks for scripts and tests. They do not add a new end-user CLI operation in this first phase.
+
 ## Supported First-Batch Operations
 
 ### `molar_mass.py`
@@ -133,7 +142,7 @@ Supported operations:
 Supported operation:
 - `convert`
 
-Supports the local chemistry-first unit set used by the first-batch solvers, including temperature, pressure, mass, volume, amount, concentration, time, current, and basic thermo energy/entropy units.
+Uses Pint through the shared alias layer to support standard units and common chemistry forms, including temperature, pressure, mass, volume, amount, concentration, time, current, length, energy, molar energy, and molar entropy units.
 
 ### `answer_check.py`
 

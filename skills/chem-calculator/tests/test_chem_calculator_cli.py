@@ -218,6 +218,118 @@ class ThermoTests(unittest.TestCase):
         self.assertAlmostEqual(payload["primary_result"]["delta_g_kj_per_mol"], -10.0, places=6)
 
 
+class UnitConversionTests(unittest.TestCase):
+    def run_unit_conversion(self, value: float, from_unit: str, to_unit: str) -> dict[str, object]:
+        with tempfile.TemporaryDirectory(prefix="chem-calculator-test-") as temp_dir_name:
+            root = Path(temp_dir_name)
+            request_path = root / "request.json"
+            request_path.write_text(
+                json.dumps(
+                    {
+                        "operation": "convert",
+                        "value": value,
+                        "from_unit": from_unit,
+                        "to_unit": to_unit,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_dir = root / "out"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "unit_convert.py"),
+                    "--request-json",
+                    str(request_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--json",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return json.loads(completed.stdout)
+
+    def test_pint_backed_unit_conversion_supports_chemistry_units(self) -> None:
+        cases = [
+            (7.585e-6, "g", "microgram", 7.585),
+            (1000.0, "cm3", "dm3", 1.0),
+            (1.5, "kJ mol^-1", "J/mol", 1500.0),
+            (2.0, "kcal/mol", "kJ/mol", 8.368),
+            (2500.0, "nm", "micrometer", 2.5),
+            (1.0, "m", "cm", 100.0),
+            (1.0, "M", "mmol/L", 1000.0),
+        ]
+        for value, from_unit, to_unit, expected in cases:
+            with self.subTest(from_unit=from_unit, to_unit=to_unit):
+                payload = self.run_unit_conversion(value, from_unit, to_unit)
+                self.assertEqual(payload["status"], "success")
+                self.assertAlmostEqual(payload["primary_result"]["value"], expected, places=6)
+
+    def test_incompatible_unit_conversion_returns_structured_partial(self) -> None:
+        payload = self.run_unit_conversion(1.0, "g", "L")
+        self.assertEqual(payload["status"], "partial")
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(payload["warnings"][0]["code"], "incompatible_unit")
+
+    def test_unsupported_unit_conversion_returns_structured_partial(self) -> None:
+        payload = self.run_unit_conversion(1.0, "bananas", "g")
+        self.assertEqual(payload["status"], "partial")
+        self.assertEqual(payload["errors"], [])
+        self.assertEqual(payload["warnings"][0]["code"], "unsupported_unit")
+
+
+class SymbolicExpressionTests(unittest.TestCase):
+    def test_sympy_expression_equivalence_accepts_algebraically_equal_forms(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from chemcalc_core import validate_expression_equivalence
+
+        result = validate_expression_equivalence(
+            "1/Ks + Js*S**2",
+            "(1 + Ks*Js*S**2)/Ks",
+        )
+
+        self.assertTrue(result["is_equivalent"])
+
+    def test_sympy_expression_equivalence_rejects_wrong_substrate_dependence(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from chemcalc_core import validate_expression_equivalence
+
+        result = validate_expression_equivalence(
+            "1/Ks + Js*S**2",
+            "(1 + Ks*Js*S**2)/(Ks*S)",
+        )
+
+        self.assertFalse(result["is_equivalent"])
+        self.assertNotEqual(result["difference"], "0")
+
+    def test_sympy_expression_parse_error_is_structured(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from chemcalc_core import ChemCalcError, validate_expression_equivalence
+
+        with self.assertRaises(ChemCalcError) as context:
+            validate_expression_equivalence("1/Ks +", "1/Ks")
+
+        self.assertEqual(context.exception.code, "invalid_expression")
+
+    def test_sympy_expression_equivalence_handles_common_science_variable_names(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from chemcalc_core import validate_expression_equivalence
+
+        result = validate_expression_equivalence("E + N*S", "N*S + E")
+
+        self.assertTrue(result["is_equivalent"])
+
+    def test_sympy_expression_equivalence_preserves_common_math_functions(self) -> None:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from chemcalc_core import validate_expression_equivalence
+
+        result = validate_expression_equivalence("log(K)", "ln(K)")
+
+        self.assertTrue(result["is_equivalent"])
+
+
 class RedoxTests(unittest.TestCase):
     def test_oxidation_states(self) -> None:
         payload, _ = run_skill("redox_balance.py", "redox_oxidation_states.json")
