@@ -112,7 +112,7 @@ def build_single_llm_prompt(
         instructions.extend(
             [
                 f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.",
-                "Follow the Benchmark Coverage Checklist SOP in `act-like-a-chemist` to plan coverage, choose tools, and mark unresolved gaps.",
+                "Follow the Coverage Checklist SOP in `act-like-a-chemist` to plan coverage, choose tools, and mark unresolved gaps.",
                 "When coverage is sufficient or blocked, produce the requested final answer format immediately.",
             ]
         )

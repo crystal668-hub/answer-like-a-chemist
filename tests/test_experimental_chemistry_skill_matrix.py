@@ -175,7 +175,8 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 
     assert "Skill capability tree:" in prompt
     assert "Read `act-like-a-chemist` first" in prompt
-    assert "Benchmark Coverage Checklist" in prompt
+    assert "Coverage Checklist" in prompt
+    assert "Benchmark Coverage Checklist" not in prompt
     assert "materials-crystals" in prompt
     assert "paper-pipeline" in prompt
     assert "Organic mechanism SOP" not in prompt
@@ -191,10 +192,15 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
     assert "benchmark-solving-protocol" not in prompt
 
 
-def test_act_like_a_chemist_defines_benchmark_coverage_checklist_contract() -> None:
+def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     text = (SKILLS_ROOT / "act-like-a-chemist" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "## Benchmark Coverage Checklist" in text
+    assert "## Coverage Checklist" in text
+    assert "## Benchmark Coverage Checklist" not in text
+    assert "Coverage Checklist" in text
+    assert "Standard Answering Flow" in text
+    assert "provider skills needed to close concrete `todo` items" in text
+    assert "coverage is sufficient or blocked" in text
     assert "`todo`" in text
     assert "`done`" in text
     assert "`blocked`" in text

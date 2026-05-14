@@ -18,20 +18,21 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 ## Standard Answering Flow
 
 1. Identify the task type, answer format, structures, conditions, images, data tables, and external-source requirements.
-2. Write a compact fact ledger for the important claims:
+2. Write a compact Coverage Checklist using the relevant task template below. Use `todo` for unresolved evidence gaps, `done` for gaps already covered by prompt evidence or derivation, and `blocked` for gaps that cannot be resolved after bounded verification.
+3. Write a compact fact ledger for the important claims:
    - `given`: directly stated by the prompt or attached material.
    - `derived`: obtained by calculation, conservation, or mechanism reasoning.
    - `tool-verified`: checked with a local skill or tool.
    - `source-supported`: checked against a retrieved paper, database, or provided source.
    - `assumption`: necessary but unverified; mark the risk.
-3. Choose only the provider skills needed for uncertain or high-impact subclaims.
-4. Solve step by step, checking conservation, units, structures, and source facts before committing to the final answer.
-5. Before writing the final answer, run a final consistency review against the prompt and the visible reasoning: confirm the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
-6. End in the exact requested format while preserving the visible checkpoints that justify it.
+4. Choose only the provider skills needed to close concrete `todo` items for uncertain or high-impact subclaims. Before each tool call, name the checklist gap it should close and the expected output shape.
+5. Solve step by step, checking conservation, units, structures, and source facts. Mark an item `done` only when prompt evidence, derivation, source evidence, or tool output actually supports it.
+6. When coverage is sufficient or blocked, stop starting new tool paths and run a final consistency review: confirm the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
+7. End in the exact requested format while preserving the visible checkpoints that justify it.
 
-## Benchmark Coverage Checklist
+## Coverage Checklist
 
-For benchmark runs, start visible work by writing a compact coverage checklist. Use only these states:
+For chemistry questions, start visible work by writing a compact coverage checklist. Use only these states:
 
 - `todo`: a coverage gap that must be filled before a reliable answer.
 - `done`: a gap already satisfied by prompt evidence, derivation, source evidence, or tool output.
@@ -115,7 +116,7 @@ For organic mechanism, synthesis, product, or intermediate questions:
 - For open-ended tasks, finish with the exact final-answer format requested by the prompt.
 - Keep tool exploration proportionate to the time budget; stop starting new tool paths when time is nearly exhausted.
 
-## Benchmark Visible Trace Contract
+## Visible Trace Contract
 
 - Multiple-choice: show option checks or grouped option eliminations, name the decisive structure/mechanism/evidence distinction, then finish with `FINAL ANSWER: <letters>`.
 - Numeric: show the governing formula, unit conversions, substituted values, important intermediate numbers, rounding choice, and final answer line.
