@@ -294,11 +294,19 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertTrue(tools_md.is_file())
             tools_text = tools_md.read_text(encoding="utf-8")
             self.assertIn("Benchmark-managed TOOLS.md", tools_text)
+            self.assertIn('write {"path": "REQUEST_JSON_PATH", "content": "REQUEST_JSON_STRING"}', tools_text)
             self.assertIn(
-                'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py',
+                'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
+                '--workspace-root /Users/xutao/.openclaw/workspace --execution-cwd \\"$PWD\\" '
+                '--script SCRIPT_PATH -- --request-json REQUEST_JSON_PATH --output-dir OUTPUT_DIR --json"}',
                 tools_text,
             )
-            self.assertIn("--execution-cwd \\\"$PWD\\\"", tools_text)
+            self.assertIn("REQUEST_JSON_PATH: an absolute or workspace-relative path", tools_text)
+            self.assertIn("REQUEST_JSON_STRING: valid compact JSON", tools_text)
+            self.assertIn("SCRIPT_PATH: a real path like skills/<skill>/scripts/<script>.py", tools_text)
+            self.assertIn("OUTPUT_DIR: a writable output directory", tools_text)
+            self.assertNotIn("-- ...", tools_text)
+            self.assertNotIn("Common scripts", tools_text)
             self.assertIn("tool name must be exactly `exec`", tools_text)
             self.assertIn("`python3`", tools_text)
             self.assertIn("`script`", tools_text)
@@ -307,6 +315,9 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertIn("`system-event-scheduler`", tools_text)
             self.assertIn("`exec {}`", tools_text)
             self.assertIn("direct `python skills/...", tools_text)
+            self.assertIn("pipes", tools_text)
+            self.assertIn("inline Python", tools_text)
+            self.assertIn("mark it blocked", tools_text)
             self.assertFalse((root / "benchmark-runtime" / "benchmark-judge" / "TOOLS.md").exists())
 
     def test_build_run_scoped_config_payload_does_not_write_skill_exec_tools_md_for_skills_off(self) -> None:

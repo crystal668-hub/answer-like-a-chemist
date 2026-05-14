@@ -99,30 +99,35 @@ TIMEOUT_FAMILY_EXCLUSION_PATTERNS = (
 )
 TOOL_RESULT_ERROR_PATTERNS = (
     "enoent",
+    "no such file or directory",
     '"status": "error"',
     "'status': 'error'",
+    '"available": false',
+    "'available': false",
+    '"error_kind"',
+    "'error_kind'",
     '"error":',
     "'error':",
-    "usage:",
     "traceback",
     "modulenotfounderror",
     "no module named",
+    "command exited with code",
+    "web fetch failed",
+    "duckduckgo returned",
+    "exec preflight:",
+)
+REQUEST_SHAPE_ERROR_PATTERNS = (
+    "exec preflight: complex interpreter invocation detected",
     "unrecognized arguments",
     "the following arguments are required",
     "required: --request-json",
     "missing_request_json",
-    "invalid_molecule",
-    "request json",
-)
-REQUEST_SHAPE_ERROR_PATTERNS = (
-    "usage:",
-    "--request-json",
-    "missing_request_json",
-    "invalid_molecule",
-    "unrecognized arguments",
-    "the following arguments are required",
-    "request json",
+    "missing required request",
+    "missing required field",
     "malformed json",
+    "invalid json",
+    "invalid_request",
+    "invalid_molecule",
     "invalid input",
 )
 MISSING_SKILL_DOC_PATTERNS = (
@@ -207,12 +212,13 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
                         tool_names.append(name)
         elif message.get("role") == "toolResult":
             tool_text = _text_from_content(message.get("content"))
+            tool_name = str(message.get("toolName") or "")
             normalized = tool_text.lower()
             if any(pattern in normalized for pattern in MISSING_SKILL_DOC_PATTERNS):
                 missing_skill_doc_read_count += 1
-            if _looks_like_tool_result_error(normalized):
+            if _looks_like_tool_result_error(normalized, tool_name=tool_name):
                 tool_result_error_count += 1
-            if _looks_like_request_shape_error(normalized):
+            if _looks_like_request_shape_error(normalized, tool_name=tool_name):
                 request_shape_error_count += 1
     latest_prompt_error = prompt_errors[-1] if prompt_errors else ""
     return {
@@ -230,14 +236,57 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     }
 
 
-def _looks_like_tool_result_error(normalized_text: str) -> bool:
+def _looks_like_tool_result_error(normalized_text: str, *, tool_name: str = "") -> bool:
     candidate = str(normalized_text or "")
+    if not candidate:
+        return False
+    if str(tool_name or "").strip().lower() == "read":
+        return any(
+            pattern in candidate
+            for pattern in (
+                "enoent",
+                "no such file or directory",
+                '"status": "error"',
+                "'status': 'error'",
+                '"available": false',
+                "'available': false",
+                '"error":',
+                "'error':",
+            )
+        )
+    if _looks_like_cli_usage_error(candidate):
+        return True
     return any(pattern in candidate for pattern in TOOL_RESULT_ERROR_PATTERNS)
 
 
-def _looks_like_request_shape_error(normalized_text: str) -> bool:
+def _looks_like_request_shape_error(normalized_text: str, *, tool_name: str = "") -> bool:
     candidate = str(normalized_text or "")
+    if not candidate:
+        return False
+    if str(tool_name or "").strip().lower() == "read":
+        return False
+    if _looks_like_cli_usage_error(candidate):
+        return True
+    if "request json" in candidate and any(
+        marker in candidate for marker in ("missing", "invalid", "malformed", "required")
+    ):
+        return True
     return any(pattern in candidate for pattern in REQUEST_SHAPE_ERROR_PATTERNS)
+
+
+def _looks_like_cli_usage_error(normalized_text: str) -> bool:
+    candidate = str(normalized_text or "")
+    usage_markers = (
+        "error:",
+        "unrecognized arguments",
+        "the following arguments are required",
+        "required:",
+    )
+    required_arg_markers = ("--request-json", "--output-dir")
+    return "usage:" in candidate and (
+        any(marker in candidate for marker in required_arg_markers)
+        or any(marker in candidate for marker in usage_markers)
+    )
 
 
 def is_timeout_family_text(text: Any) -> bool:

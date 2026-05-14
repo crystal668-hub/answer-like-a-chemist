@@ -15,9 +15,13 @@ def render_single_agent_skill_tools_md() -> str:
         'python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
         '--workspace-root /Users/xutao/.openclaw/workspace '
         '--execution-cwd "$PWD" '
-        "--script skills/<skill>/scripts/<script>.py -- ..."
+        "--script SCRIPT_PATH -- "
+        "--request-json REQUEST_JSON_PATH "
+        "--output-dir OUTPUT_DIR "
+        "--json"
     )
-    run_skill_exec_example = f"exec {json.dumps({'command': run_skill_command})}"
+    request_write_template = 'write {"path": "REQUEST_JSON_PATH", "content": "REQUEST_JSON_STRING"}'
+    run_skill_exec_template = f"exec {json.dumps({'command': run_skill_command})}"
     return "\n".join(
         [
             "# Benchmark-managed TOOLS.md",
@@ -26,15 +30,26 @@ def render_single_agent_skill_tools_md() -> str:
             "",
             "## Local Skill Script Execution",
             "",
-            "When you want to execute a local script, use this exact OpenClaw tool-call form:",
+            "When you want to execute a local skill script, use this two-step OpenClaw tool-call pattern.",
             "",
-            f"`{run_skill_exec_example}`",
+            "Step 1: create the request JSON file.",
+            "",
+            f"`{request_write_template}`",
+            "",
+            "Step 2: run the selected skill script through the canonical wrapper.",
+            "",
+            f"`{run_skill_exec_template}`",
+            "",
+            "Replace every uppercase placeholder before running:",
+            "",
+            "- REQUEST_JSON_PATH: an absolute or workspace-relative path to the request file you wrote.",
+            "- REQUEST_JSON_STRING: valid compact JSON for the selected script contract.",
+            "- SCRIPT_PATH: a real path like skills/<skill>/scripts/<script>.py, chosen from the skill docs or scripts directory.",
+            "- OUTPUT_DIR: a writable output directory for this call.",
+            "",
+            "Do not execute the template with placeholders still present.",
             "",
             "The tool name must be exactly `exec`; the JSON object after it must contain `command`.",
-            "",
-            "Positive example:",
-            "",
-            f"`{run_skill_exec_example}`",
             "",
             "Negative examples:",
             "",
@@ -42,9 +57,11 @@ def render_single_agent_skill_tools_md() -> str:
             "- `script`, `cmd`, or `command` are invalid tool names.",
             "- `exec {}` is invalid because the required `command` field is missing.",
             "- direct `python skills/...` bypasses the canonical wrapper.",
+            "- pipes, redirects, inline Python, `head`, `tail`, and temporary runner scripts are invalid for skill execution.",
             "- `bash`, `reasoning`, and `system-event-scheduler` are invalid tool names.",
             "",
             "Do not search for alternate runners or call skill scripts directly with `python` or `python3`.",
+            "If a verification target gets two usage/request-shape/tool errors, mark it blocked and continue.",
             "",
         ]
     )

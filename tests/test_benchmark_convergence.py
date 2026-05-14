@@ -155,6 +155,146 @@ class BenchmarkConvergenceTests(unittest.TestCase):
         self.assertEqual(2, summary["tool_result_error_count"])
         self.assertEqual(1, summary["request_shape_error_count"])
 
+    def test_transcript_summary_ignores_request_contract_text_from_read_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "toolResult",
+                            "toolName": "read",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        "# RDKit Skill Contracts\n"
+                                        "Every script supports --request-json REQUEST_JSON "
+                                        "--output-dir OUTPUT_DIR --json.\n"
+                                        "Failure modes include malformed JSON request and invalid input."
+                                    ),
+                                }
+                            ],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_transcript_convergence(transcript)
+
+        self.assertEqual(0, summary["tool_result_error_count"])
+        self.assertEqual(0, summary["request_shape_error_count"])
+
+    def test_transcript_summary_classifies_real_tool_errors_by_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "exec",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": (
+                                                "usage: descriptors.py [-h] --request-json REQUEST_JSON "
+                                                "--output-dir OUTPUT_DIR\n"
+                                                "descriptors.py: error: the following arguments are required: "
+                                                "--request-json, --output-dir"
+                                            ),
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "exec",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                {
+                                                    "status": "error",
+                                                    "tool": "exec",
+                                                    "error": (
+                                                        "exec preflight: complex interpreter invocation detected; "
+                                                        "refusing to run without script preflight validation."
+                                                    ),
+                                                }
+                                            ),
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "web_fetch",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                {
+                                                    "status": "error",
+                                                    "tool": "web_fetch",
+                                                    "error": "Web fetch failed (403): forbidden",
+                                                }
+                                            ),
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "message",
+                                "message": {
+                                    "role": "toolResult",
+                                    "toolName": "exec",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": json.dumps(
+                                                {
+                                                    "status": "error",
+                                                    "errors": [
+                                                        {
+                                                            "code": "invalid_request",
+                                                            "message": "`operation` is required",
+                                                        }
+                                                    ],
+                                                }
+                                            ),
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_transcript_convergence(transcript)
+
+        self.assertEqual(4, summary["tool_result_error_count"])
+        self.assertEqual(3, summary["request_shape_error_count"])
+
     def test_transcript_summary_detects_timeout_prompt_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             transcript = Path(tmpdir) / "session.jsonl"
