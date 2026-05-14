@@ -29,6 +29,18 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert benchmarking_cli.EXPERIMENT_GROUPS["chemqa_skills_on"].runner == "chemqa"
 
 
+def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:
+    monkeypatch.setattr(
+        benchmarking_cli.sys,
+        "argv",
+        ["benchmark_test.py", "--no-timeout"],
+    )
+
+    args = benchmarking_cli.parse_args()
+
+    assert args.no_timeout is True
+
+
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
     record = benchmarking_cli.BenchmarkRecord(
         record_id="record-1",
@@ -69,6 +81,7 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
             (),
             {
                 "single_timeout": 30,
+                "no_timeout": False,
                 "chemqa_timeout": 30,
                 "finalization_grace_seconds": 5,
                 "max_unchanged_status_polls": 1,
@@ -248,6 +261,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             (),
             {
                 "single_timeout": 30,
+                "no_timeout": False,
                 "chemqa_timeout": 30,
                 "finalization_grace_seconds": 5,
                 "max_unchanged_status_polls": 1,
@@ -314,6 +328,9 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     assert manifest["automated_evaluation"]["status"] == "launched"
     assert manifest["groups"]["single_llm_skills_off"]["single_agent_thinking"] == "medium"
     assert manifest["judge"]["thinking"] == "minimal"
+    assert manifest["timeout_mode"] == "bounded"
+    results = benchmarking_cli.json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
+    assert results["timeout_mode"] == "bounded"
 
 
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
@@ -354,6 +371,7 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             (),
             {
                 "single_timeout": 30,
+                "no_timeout": False,
                 "chemqa_timeout": 30,
                 "finalization_grace_seconds": 5,
                 "max_unchanged_status_polls": 1,

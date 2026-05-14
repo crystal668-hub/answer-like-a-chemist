@@ -391,6 +391,11 @@ def parse_args() -> argparse.Namespace:
         help="单一 LLM timeout-family 失败后的 fresh-session 最大重试次数，默认 3",
     )
     parser.add_argument(
+        "--no-timeout",
+        action="store_true",
+        help="取消单题作答时间上限，让模型自由探索，但保留进程级兜底安全阀",
+    )
+    parser.add_argument(
         "--single-timeout-retry-backoff-seconds",
         default="5,15,45",
         help="单一 LLM timeout 重试前等待秒数，逗号分隔，默认 5,15,45",
@@ -1137,6 +1142,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
         sleep_fn=time.sleep,
         benchmark_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
+        no_timeout: bool = False,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -1149,6 +1155,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
             timeout_retries=timeout_retries,
             timeout_retry_backoff_seconds=timeout_retry_backoff_seconds,
             sleep_fn=sleep_fn,
+            no_timeout=no_timeout,
             run_subprocess=run_subprocess,
             parse_json_stdout=parse_json_stdout,
             unwrap_agent_payload=unwrap_agent_payload,
@@ -1748,6 +1755,7 @@ def run_group(
     single_timeout_retries: int = 3,
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
+    no_timeout: bool = False,
 ) -> list[GroupRecordResult]:
     try:
         return _orchestration.run_group(
@@ -1771,6 +1779,7 @@ def run_group(
             single_timeout_retries=single_timeout_retries,
             single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
             single_agent_thinking=single_agent_thinking,
+            no_timeout=no_timeout,
             build_runner_fn=build_runner,
             evaluate_answer_fn=evaluate_answer,
             build_error_group_record_result_fn=build_error_group_record_result,
@@ -1823,6 +1832,7 @@ def main() -> int:
         str(getattr(args, "single_timeout_retry_backoff_seconds", "5,15,45")),
         max_retries=single_timeout_retries,
     )
+    timeout_mode = "no_timeout" if bool(getattr(args, "no_timeout", False)) else "bounded"
     single_convergence_policy = ConvergencePolicy(
         timeout_seconds=args.single_timeout,
         finalization_grace_seconds=args.finalization_grace_seconds,
@@ -1955,6 +1965,7 @@ def main() -> int:
                         single_timeout_retries=single_timeout_retries,
                         single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
                         single_agent_thinking=args.single_agent_thinking,
+                        no_timeout=bool(getattr(args, "no_timeout", False)),
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                     )
@@ -2026,6 +2037,7 @@ def main() -> int:
             "max_retries": single_timeout_retries,
             "backoff_seconds": list(single_timeout_retry_backoff_seconds),
         },
+        "timeout_mode": timeout_mode,
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
             "enabled": args.random_count_per_subset is not None,
@@ -2076,6 +2088,7 @@ def main() -> int:
             "max_retries": single_timeout_retries,
             "backoff_seconds": list(single_timeout_retry_backoff_seconds),
         },
+        "timeout_mode": timeout_mode,
         "groups": {
             group_id: {
                 "group": asdict(EXPERIMENT_GROUPS[group_id]),
@@ -2091,6 +2104,7 @@ def main() -> int:
                 "single_agent_thinking": (
                     args.single_agent_thinking if EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None
                 ),
+                "no_timeout": bool(getattr(args, "no_timeout", False)) if EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None,
                 "chemqa_model_profile": args.chemqa_model_profile if EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
             }
             for group_id in group_ids

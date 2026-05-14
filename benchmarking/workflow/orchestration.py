@@ -79,6 +79,7 @@ def run_group(
     single_timeout_retries: int = 3,
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str,
+    no_timeout: bool = False,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
     try:
@@ -109,6 +110,7 @@ def run_group(
                 timeout_retries=single_timeout_retries,
                 timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
                 benchmark_agent_thinking=single_agent_thinking,
+                no_timeout=no_timeout,
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"

@@ -27,6 +27,7 @@ OPENCLAW_TIMEOUT_SENTINELS = (
     OPENCLAW_RESPONSE_TIMEOUT_TEXT,
     OPENCLAW_IDLE_TIMEOUT_TEXT,
 )
+NO_TIMEOUT_SUBPROCESS_GUARD_SECONDS = 24 * 60 * 60
 SKILLS_ON_RETRY_FOCUS_PROMPT = """\
 RETRY FOCUS GUIDANCE:
 The previous skills-enabled benchmark attempt timed out before a visible final answer was emitted. In this retry, reduce tool use and focus on the chemistry reasoning itself.
@@ -480,6 +481,7 @@ class SingleLLMRunner:
         timeout_retries: int = 3,
         timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
         sleep_fn: Callable[[float], None] = time.sleep,
+        no_timeout: bool = False,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
@@ -498,6 +500,7 @@ class SingleLLMRunner:
         self._benchmark_agent_thinking = benchmark_agent_thinking
         self.skill_health_summary = dict(skill_health_summary or {})
         self.timeout_retries = max(0, int(timeout_retries))
+        self.no_timeout = bool(no_timeout)
         self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
             timeout_retry_backoff_seconds,
             max_retries=self.timeout_retries,
@@ -520,11 +523,16 @@ class SingleLLMRunner:
         return tuple(values[:max_retries])
 
     def _wrapper_subprocess_timeout_seconds(self) -> int:
+        if self.no_timeout:
+            return NO_TIMEOUT_SUBPROCESS_GUARD_SECONDS
         return (
             int(self.convergence_policy.timeout_seconds)
             + int(self.convergence_policy.finalization_grace_seconds)
             + 30
         )
+
+    def _timeout_mode(self) -> str:
+        return "no_timeout" if self.no_timeout else "bounded"
 
     def _build_command(self, *, record: Any, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
         command = [
@@ -540,14 +548,17 @@ class SingleLLMRunner:
             prompt,
             "--thinking",
             self._benchmark_agent_thinking,
-            "--timeout",
-            str(self.convergence_policy.timeout_seconds),
             "--finalization-grace-seconds",
             str(self.convergence_policy.finalization_grace_seconds),
             "--eval-kind",
             str(getattr(record, "eval_kind", "") or ""),
             "--json",
         ]
+        if not self.no_timeout:
+            command[command.index("--finalization-grace-seconds"):command.index("--finalization-grace-seconds")] = [
+                "--timeout",
+                str(self.convergence_policy.timeout_seconds),
+            ]
         return command
 
     @staticmethod
@@ -608,6 +619,7 @@ class SingleLLMRunner:
             "execution_error": dict(details),
             "error": classification.message,
             "session_id": session_id,
+            "timeout_mode": self._timeout_mode(),
         }
         runner_meta["skill_use_audit"] = build_skill_use_audit(
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
@@ -753,7 +765,7 @@ class SingleLLMRunner:
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             input_bundle=input_bundle,
             available_skills=set(self.configured_skills),
-            time_budget_seconds=self.convergence_policy.timeout_seconds,
+            time_budget_seconds=None if self.no_timeout else self.convergence_policy.timeout_seconds,
         )
         initial_session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
         wrapper_path = Path(__file__).resolve().parents[2] / "runtime" / "single_llm_openclaw_wrapper.py"
@@ -864,6 +876,7 @@ class SingleLLMRunner:
         result_payload = self._unwrap_agent_payload(payload)
         runner_meta = dict(result_payload.get("meta") or {})
         runner_meta["convergence_policy"] = self.convergence_policy.to_meta()
+        runner_meta["timeout_mode"] = self._timeout_mode()
         stdout_diagnostics = runner_meta.get("stdout_diagnostics")
         if isinstance(stdout_diagnostics, dict) and stdout_diagnostics.get("schema_valid") is False:
             message = (
