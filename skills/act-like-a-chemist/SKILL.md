@@ -26,7 +26,8 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
    - `assumption`: necessary but unverified; mark the risk.
 3. Choose only the provider skills needed for uncertain or high-impact subclaims.
 4. Solve step by step, checking conservation, units, structures, and source facts before committing to the final answer.
-5. End in the exact requested format while preserving the visible checkpoints that justify it.
+5. Before writing the final answer, run a final consistency review against the prompt and the visible reasoning: confirm the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
+6. End in the exact requested format while preserving the visible checkpoints that justify it.
 
 ## Benchmark Coverage Checklist
 
