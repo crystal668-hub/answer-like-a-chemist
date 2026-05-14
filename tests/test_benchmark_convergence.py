@@ -9,6 +9,7 @@ from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
     is_complete_benchmark_answer,
+    is_complete_rescue_answer,
     summarize_transcript_convergence,
 )
 
@@ -282,6 +283,40 @@ class BenchmarkConvergenceTests(unittest.TestCase):
 
     def test_empty_markdown_final_answer_marker_is_not_complete(self) -> None:
         self.assertFalse(is_complete_benchmark_answer("Reasoning\n**FINAL ANSWER:**"))
+
+    def test_rescue_accepts_next_line_final_answer_for_research_only(self) -> None:
+        text = "Visible derivation.\n**FINAL ANSWER:**\nA=11.3, B=100.0, C=7.9"
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+        self.assertFalse(is_complete_rescue_answer(text, eval_kind="superchem_multiple_choice_rpf"))
+
+    def test_rescue_accepts_research_final_answer_heading(self) -> None:
+        text = "Visible derivation.\n\n## FINAL ANSWER\nThe supported research answer covers the protocol and SAR."
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_rescue_accepts_research_conclusion_section(self) -> None:
+        text = (
+            "## Visible Derivation\n"
+            "Evidence and calculations are summarized above.\n\n"
+            "## Conclusion\n"
+            "The supported conclusion is that the nitro analogue is favored because the "
+            "substituent electronics and binding-site complementarity both improve activity."
+        )
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_rescue_rejects_empty_or_process_only_research_markers(self) -> None:
+        self.assertFalse(is_complete_rescue_answer("Reasoning\nFINAL ANSWER:\n\n", eval_kind="frontierscience_research"))
+        self.assertFalse(
+            is_complete_rescue_answer(
+                "FINAL ANSWER:\n\n## References\n1. Source paper\n\n**Coverage checklist:**\n- done: evidence",
+                eval_kind="frontierscience_research",
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -11,8 +11,29 @@ FINAL_ANSWER_LINE_RE = re.compile(
     r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
     re.IGNORECASE,
 )
+RESCUE_FINAL_ANSWER_MARKER_ONLY_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*FINAL\s+ANSWER\s*(?:[:：-]\s*)?(?:\*\*)?\s*$",
+    re.IGNORECASE,
+)
+RESCUE_RESEARCH_SECTION_MARKER_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*"
+    r"(?P<marker>FINAL\s+ANSWER|FINAL\s+SYNTHESIS|FINAL\s+CONCLUSION|SUPPORTED\s+CONCLUSION|CONCLUSION)"
+    r"\s*(?:[:：-]\s*)?(?:\*\*)?\s*(?P<answer>.*)$",
+    re.IGNORECASE,
+)
 HLE_ANSWER_RE = re.compile(r"(?ims)^\s*Explanation\s*:.+^\s*Answer\s*:.+^\s*Confidence\s*:\s*\S+")
 MARKDOWN_BOLD_MARKER = "**"
+FRONTIERSCIENCE_RESEARCH_EVAL_KIND = "frontierscience_research"
+RESEARCH_RESCUE_PROCESS_ONLY_HEADINGS = (
+    "reference",
+    "references",
+    "coverage checklist",
+    "coverage verification",
+    "evidence ledger",
+    "checks",
+    "visible derivation",
+    "visible derivation and checks",
+)
 TIMEOUT_FAMILY_HTTP_STATUS_RE = re.compile(
     r"(?:\bhttp(?:\s+status)?\s*(?:408|499|500|502|503|504)\b)"
     r"|(?:\bstatus\s*(?:408|499|500|502|503|504)\b)"
@@ -267,6 +288,87 @@ def has_final_answer_marker(text: str) -> bool:
 def is_complete_benchmark_answer(text: str) -> bool:
     candidate = str(text or "").strip()
     return bool(has_final_answer_marker(candidate) or HLE_ANSWER_RE.search(candidate))
+
+
+def _strip_markdown_heading(line: str) -> str:
+    candidate = str(line or "").strip()
+    candidate = re.sub(r"^\s*#{1,6}\s*", "", candidate).strip()
+    if candidate.startswith(MARKDOWN_BOLD_MARKER) and candidate.endswith(MARKDOWN_BOLD_MARKER):
+        candidate = candidate[len(MARKDOWN_BOLD_MARKER) : -len(MARKDOWN_BOLD_MARKER)].strip()
+    return candidate.strip()
+
+
+def _strip_common_markdown(line: str) -> str:
+    candidate = _strip_markdown_heading(line)
+    while candidate.startswith(MARKDOWN_BOLD_MARKER):
+        candidate = candidate[len(MARKDOWN_BOLD_MARKER) :].strip()
+    while candidate.endswith(MARKDOWN_BOLD_MARKER):
+        candidate = candidate[: -len(MARKDOWN_BOLD_MARKER)].strip()
+    return candidate.strip()
+
+
+def _is_markdown_divider(line: str) -> bool:
+    candidate = str(line or "").strip()
+    if not candidate:
+        return True
+    if re.fullmatch(r"[-*_]{3,}", candidate):
+        return True
+    if re.fullmatch(r"\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?", candidate):
+        return True
+    return False
+
+
+def _is_process_only_research_heading(line: str) -> bool:
+    candidate = _strip_common_markdown(line).strip(" :：-").lower()
+    if not candidate:
+        return True
+    return any(candidate == heading or candidate.startswith(f"{heading}:") for heading in RESEARCH_RESCUE_PROCESS_ONLY_HEADINGS)
+
+
+def _has_substantive_rescue_answer_text(text: str) -> bool:
+    candidate = re.sub(r"\s+", " ", str(text or "")).strip()
+    return len(candidate) >= 12 and bool(re.search(r"[A-Za-z0-9]", candidate))
+
+
+def _research_rescue_block_after_marker_is_complete(lines: list[str], marker_index: int) -> bool:
+    meaningful: list[str] = []
+    for line in lines[marker_index + 1 :]:
+        stripped = str(line or "").strip()
+        if not stripped or _is_markdown_divider(stripped):
+            continue
+        if not meaningful and _is_process_only_research_heading(stripped):
+            return False
+        meaningful.append(stripped)
+    if not meaningful:
+        return False
+    return _has_substantive_rescue_answer_text("\n".join(meaningful))
+
+
+def _is_complete_frontierscience_research_rescue_answer(text: str) -> bool:
+    lines = str(text or "").splitlines()
+    for index, line in enumerate(lines):
+        if RESCUE_FINAL_ANSWER_MARKER_ONLY_RE.match(line):
+            if _research_rescue_block_after_marker_is_complete(lines, index):
+                return True
+            continue
+        match = RESCUE_RESEARCH_SECTION_MARKER_RE.match(line)
+        if not match:
+            continue
+        inline_answer = _strip_common_markdown(str(match.group("answer") or ""))
+        if _has_substantive_rescue_answer_text(inline_answer):
+            return True
+        if _research_rescue_block_after_marker_is_complete(lines, index):
+            return True
+    return False
+
+
+def is_complete_rescue_answer(text: str, *, eval_kind: str = "") -> bool:
+    candidate = str(text or "").strip()
+    if is_complete_benchmark_answer(candidate):
+        return True
+    if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
+        return False
+    return _is_complete_frontierscience_research_rescue_answer(candidate)
 
 
 def extract_latest_complete_answer_from_transcript(transcript_path: Path) -> str:

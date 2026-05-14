@@ -18,6 +18,7 @@ from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
     is_complete_benchmark_answer,
+    is_complete_rescue_answer,
     summarize_transcript_convergence,
 )
 from benchmarking.runtime.session_isolation import (
@@ -56,7 +57,8 @@ Converge on a complete final answer in the required format.
 Do not start new tool chains or skill exploration unless one short decisive check is clearly necessary."""
 FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
 Do not call tools or inspect files. Use only the reasoning already present in this session.
-Provide a brief but complete visible derivation and checks, then end with exactly one final answer line in the required format from the benchmark prompt.
+Provide a brief but complete visible derivation and checks, then provide the final answer in the required format from the benchmark prompt.
+For FrontierScience research-track tasks, provide a complete structured research answer and use a clear final/conclusion marker if the original prompt did not require a short final-answer line.
 For multiple-choice questions, use: FINAL ANSWER: <option letters>"""
 
 
@@ -69,6 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--thinking", help="Forward OpenClaw thinking override.")
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw timeout override in seconds.")
     parser.add_argument("--finalization-grace-seconds", type=int, default=90)
+    parser.add_argument("--eval-kind", default="", help="Benchmark eval kind for rescue-only answer recovery.")
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output and attach isolation audit.")
     return parser.parse_args()
 
@@ -277,7 +280,7 @@ def _try_finalization_rescue(
 
     rescue_payload = parse_openclaw_json_output((result.stdout or "").strip() or (result.stderr or "").strip())
     rescue_text = _rescue_output_text(rescue_payload)
-    if not is_complete_benchmark_answer(rescue_text):
+    if not is_complete_rescue_answer(rescue_text, eval_kind=str(getattr(args, "eval_kind", "") or "")):
         _merge_convergence(
             target,
             {

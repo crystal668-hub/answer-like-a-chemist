@@ -2977,6 +2977,8 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("high", command[command.index("--thinking") + 1])
             self.assertIn("--agent", command)
             self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
+            self.assertIn("--eval-kind", command)
+            self.assertEqual("chembench_open_ended", command[command.index("--eval-kind") + 1])
             audit = out.runner_meta["skill_use_audit"]
             self.assertEqual(2, audit["available_skill_count"])
             self.assertTrue(audit["skill_tool_executed"])
@@ -3834,6 +3836,74 @@ Points: 0.5, Item: Second criterion
             assert out.recovery is not None
             self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
             self.assertEqual("single-llm-finalization-rescue", out.runner_meta["recovery_mode"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_research_wide_rescue_as_recovered(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [
+                                    {
+                                        "text": (
+                                            "## FINAL ANSWER\n"
+                                            "The rescue answer covers the research protocol, evidence, and conclusion."
+                                        )
+                                    }
+                                ],
+                                "meta": {
+                                    "stopReason": "error",
+                                    "completion": {"finishReason": "error"},
+                                    "convergence": {
+                                        "agent_error_payload_detected": True,
+                                        "agent_error_kind": "agent_stream_read_error",
+                                        "finalization_rescue_attempted": True,
+                                        "finalization_rescue_succeeded": True,
+                                        "recovery_source": "single-llm-finalization-rescue",
+                                    },
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="research-demo",
+                dataset="frontierscience",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="frontierscience_research",
+                prompt="Explain the research result.",
+                reference_answer="rubric",
+                payload={"track": "research"},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertIn("## FINAL ANSWER", out.answer.full_response_text)
+            assert out.recovery is not None
+            self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle

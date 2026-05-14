@@ -526,7 +526,7 @@ class SingleLLMRunner:
             + 30
         )
 
-    def _build_command(self, *, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
+    def _build_command(self, *, record: Any, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
         command = [
             sys.executable,
             str(wrapper_path),
@@ -544,6 +544,8 @@ class SingleLLMRunner:
             str(self.convergence_policy.timeout_seconds),
             "--finalization-grace-seconds",
             str(self.convergence_policy.finalization_grace_seconds),
+            "--eval-kind",
+            str(getattr(record, "eval_kind", "") or ""),
             "--json",
         ]
         return command
@@ -833,7 +835,7 @@ class SingleLLMRunner:
         wrapper_path: Path,
         env: dict[str, str],
     ) -> RunnerResult:
-        command = self._build_command(session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
+        command = self._build_command(record=record, session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
         try:
             result = self._run_subprocess(command, env=env, timeout=self._wrapper_subprocess_timeout_seconds())
             if result.returncode != 0:
