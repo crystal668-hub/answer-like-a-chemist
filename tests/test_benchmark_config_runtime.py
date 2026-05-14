@@ -11,6 +11,7 @@ from benchmarking.runtime.provisioning import (
     provision_slot_workspace,
 )
 from benchmarking.runtime.config_pool import (
+    ConfigPool,
     RuntimeConfigContext,
     RuntimeConfigError,
     build_run_scoped_config_payload,
@@ -459,6 +460,55 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                     single_agent_model="qwen3.5-plus",
                     judge_model="su8/gpt-5.4",
                 )
+
+    def test_config_pool_falls_back_to_openai_gpt_55(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            base_config = root / "openclaw.json"
+            base_config.write_text(
+                json.dumps(
+                    {
+                        "agents": {"list": []},
+                        "tools": {"web": {"search": {"enabled": False}}},
+                        "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            context = RuntimeConfigContext(
+                baseline_workspace_root=root / "benchmark-runtime",
+                chemqa_workspace_roots={},
+                agents_root=root / "agents",
+                judge_agent_id="benchmark-judge",
+                chemqa_slot_sets={},
+                experiment_specs={
+                    "single_llm_skills_on": ExperimentSpec(
+                        id="single_llm_skills_on",
+                        label="Single LLM with skills",
+                        runner_kind="single_llm",
+                        websearch_enabled=True,
+                        skills_enabled=True,
+                        single_agent_id="benchmark-single-skills-on",
+                    )
+                },
+                load_slot_agents_template=lambda: "# slot template\n",
+                benchmark_skills_root=root / "workspace" / "skills",
+            )
+            group = RuntimeConfigGroup(
+                id="single_llm_skills_on",
+                label="Single LLM with skills",
+                runner="single_llm",
+                websearch=True,
+                skills_enabled=True,
+            )
+
+            pool = ConfigPool(base_config_path=base_config, output_root=root / "runs", context=context)
+            config_path = pool.config_for_group(group)
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+            agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+            self.assertEqual("openai/gpt-5.5", agents["benchmark-single-skills-on"]["model"])
+            self.assertEqual("openai/gpt-5.5", agents["benchmark-judge"]["model"])
 
 
 if __name__ == "__main__":

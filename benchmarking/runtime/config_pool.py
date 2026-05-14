@@ -237,8 +237,8 @@ class ConfigPool:
         self._config_dir.mkdir(parents=True, exist_ok=True)
         self._group_paths: dict[str, Path] = {}
         self._judge_path: Path | None = None
-        discovered_single = self._discover_agent_model("debate-1") or "su8/gpt-5.4"
-        discovered_judge = self._discover_agent_model("debate-coordinator") or "su8/gpt-5.4"
+        discovered_single = self._discover_agent_model("debate-1") or "openai/gpt-5.5"
+        discovered_judge = self._discover_agent_model("debate-coordinator") or "openai/gpt-5.5"
         self._single_agent_model = str(single_agent_model or discovered_single).strip() or discovered_single
         self._judge_model = str(judge_model or discovered_judge).strip() or discovered_judge
         self._single_agent_id_override = single_agent_id_override

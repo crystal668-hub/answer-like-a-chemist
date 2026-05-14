@@ -1080,6 +1080,9 @@ Points: 0.5, Item: Second criterion
         self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
         self.assertIn(str(benchmark_test.runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
 
+    def test_default_judge_model_uses_openai_gpt_55(self) -> None:
+        self.assertEqual("openai/gpt-5.5", benchmark_test.DEFAULT_JUDGE_MODEL)
+
     def test_build_run_scoped_config_payload_disables_single_llm_skills_off(self) -> None:
         base = {
             "agents": {"list": []},

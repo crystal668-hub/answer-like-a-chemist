@@ -127,7 +127,7 @@ DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
 DEFAULT_SINGLE_AGENT = "benchmark-single-skills-off"
 DEFAULT_SINGLE_AGENT_MODEL = "qwen3.5-plus"
 DEFAULT_JUDGE_AGENT = "benchmark-judge"
-DEFAULT_JUDGE_MODEL = "su8/gpt-5.4"
+DEFAULT_JUDGE_MODEL = "openai/gpt-5.5"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
 THINKING_LEVEL_CHOICES = ("off", "minimal", "low", "medium", "high", "xhigh")
@@ -375,7 +375,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge-model",
         default=DEFAULT_JUDGE_MODEL,
-        help="judge runtime model，默认锁定为 su8/gpt-5.4",
+        help="judge runtime model，默认锁定为 openai/gpt-5.5",
     )
     parser.add_argument(
         "--judge-agent-thinking",
