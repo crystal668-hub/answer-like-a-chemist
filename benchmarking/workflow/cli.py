@@ -130,6 +130,9 @@ DEFAULT_JUDGE_AGENT = "benchmark-judge"
 DEFAULT_JUDGE_MODEL = "su8/gpt-5.4"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
+THINKING_LEVEL_CHOICES = ("off", "minimal", "low", "medium", "high", "xhigh")
+DEFAULT_SINGLE_AGENT_THINKING = "high"
+DEFAULT_JUDGE_AGENT_THINKING = "high"
 BASELINE_WORKSPACE_ROOT = runtime_paths.benchmark_runtime_root
 BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
 CHEMQA_SLOT_SETS = {
@@ -140,7 +143,6 @@ BASELINE_AGENT_IDS = {
     "single_llm_skills_off": "benchmark-single-skills-off",
 }
 JUDGE_AGENT_ID = "benchmark-judge"
-BENCHMARK_AGENT_THINKING = "high"
 CHEMQA_WORKSPACE_ROOTS = {
     "A": BASELINE_WORKSPACE_ROOT / "chemqa_skills_on",
 }
@@ -359,6 +361,12 @@ def parse_args() -> argparse.Namespace:
         help="单一 LLM baseline runtime model，默认锁定为 qwen3.5-plus",
     )
     parser.add_argument(
+        "--single-agent-thinking",
+        default=DEFAULT_SINGLE_AGENT_THINKING,
+        choices=THINKING_LEVEL_CHOICES,
+        help="单一 LLM baseline OpenClaw thinking level，默认 high",
+    )
+    parser.add_argument(
         "--chemqa-model-profile",
         default=DEFAULT_CHEMQA_MODEL_PROFILE,
         help="ChemQA fixed-lane review 所用 model profile，默认使用当前 benchmark 固定 profile",
@@ -368,6 +376,12 @@ def parse_args() -> argparse.Namespace:
         "--judge-model",
         default=DEFAULT_JUDGE_MODEL,
         help="judge runtime model，默认锁定为 su8/gpt-5.4",
+    )
+    parser.add_argument(
+        "--judge-agent-thinking",
+        default=DEFAULT_JUDGE_AGENT_THINKING,
+        choices=THINKING_LEVEL_CHOICES,
+        help="judge OpenClaw thinking level，默认 high",
     )
     parser.add_argument("--single-timeout", type=int, default=900, help="单一 LLM 每题超时秒数")
     parser.add_argument(
@@ -1049,10 +1063,12 @@ class JudgeClient:
         judge_agent: str,
         timeout_seconds: int,
         config_path: Path,
+        thinking: str = DEFAULT_JUDGE_AGENT_THINKING,
     ) -> None:
         self.judge_agent = judge_agent
         self.timeout_seconds = timeout_seconds
         self.config_path = config_path
+        self.thinking = thinking
         self._lock = threading.Lock()
 
     def evaluate_json(self, prompt: str) -> dict[str, Any]:
@@ -1068,7 +1084,7 @@ class JudgeClient:
             "--message",
             prompt,
             "--thinking",
-            BENCHMARK_AGENT_THINKING,
+            self.thinking,
             "--timeout",
             str(self.timeout_seconds),
             "--json",
@@ -1120,6 +1136,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         timeout_retries: int = 3,
         timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
         sleep_fn=time.sleep,
+        benchmark_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -1140,7 +1157,7 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
             ensure_runtime_bundle=ensure_runtime_bundle,
             build_single_llm_prompt=build_single_llm_prompt,
             slugify=slugify,
-            benchmark_agent_thinking=BENCHMARK_AGENT_THINKING,
+            benchmark_agent_thinking=benchmark_agent_thinking,
         )
 
 
@@ -1201,7 +1218,6 @@ class ChemQARunner(_BenchmarkingChemQARunner):
             normalize_space=normalize_space,
             benchmark_error_factory=BenchmarkError,
             cleanup_error_factory=CleanupFatalError,
-            benchmark_agent_thinking=BENCHMARK_AGENT_THINKING,
             convergence_policy=convergence_policy,
         )
 
@@ -1731,6 +1747,7 @@ def run_group(
     skill_health_summary: dict[str, Any] | None = None,
     single_timeout_retries: int = 3,
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
+    single_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
 ) -> list[GroupRecordResult]:
     try:
         return _orchestration.run_group(
@@ -1753,6 +1770,7 @@ def run_group(
             skill_health_summary=skill_health_summary,
             single_timeout_retries=single_timeout_retries,
             single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
+            single_agent_thinking=single_agent_thinking,
             build_runner_fn=build_runner,
             evaluate_answer_fn=evaluate_answer,
             build_error_group_record_result_fn=build_error_group_record_result,
@@ -1878,6 +1896,7 @@ def main() -> int:
         judge_agent=args.judge_agent,
         timeout_seconds=args.judge_timeout,
         config_path=config_pool.judge_config_path(),
+        thinking=args.judge_agent_thinking,
     )
     group_waves = build_group_waves(group_ids, max_concurrent_groups=args.max_concurrent_groups)
 
@@ -1935,6 +1954,7 @@ def main() -> int:
                         chemqa_convergence_policy=chemqa_convergence_policy,
                         single_timeout_retries=single_timeout_retries,
                         single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
+                        single_agent_thinking=args.single_agent_thinking,
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                     )
@@ -2068,6 +2088,9 @@ def main() -> int:
                     else None
                 ),
                 "single_agent_model": args.single_agent_model,
+                "single_agent_thinking": (
+                    args.single_agent_thinking if EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None
+                ),
                 "chemqa_model_profile": args.chemqa_model_profile if EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
             }
             for group_id in group_ids
@@ -2075,6 +2098,7 @@ def main() -> int:
         "judge": {
             "agent": args.judge_agent,
             "model": args.judge_model,
+            "thinking": args.judge_agent_thinking,
             "config_path": str(config_pool.judge_config_path()),
         },
     }

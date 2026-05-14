@@ -78,6 +78,7 @@ def run_group(
     skill_health_summary: dict[str, Any] | None = None,
     single_timeout_retries: int = 3,
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
+    single_agent_thinking: str,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
     try:
@@ -107,6 +108,7 @@ def run_group(
                 convergence_policy=single_convergence_policy or ConvergencePolicy(timeout_seconds=single_timeout),
                 timeout_retries=single_timeout_retries,
                 timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
+                benchmark_agent_thinking=single_agent_thinking,
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"

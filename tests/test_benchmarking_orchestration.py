@@ -121,6 +121,7 @@ class OrchestrationTests(unittest.TestCase):
                 classify_subset_fn=lambda _record: "chembench",
                 save_json_fn=lambda path, payload: (saved.append(path), path.parent.mkdir(parents=True, exist_ok=True), path.write_text(str(payload), encoding="utf-8")),
                 slugify_fn=lambda value, **_kwargs: str(value),
+                single_agent_thinking="minimal",
             )
 
         self.assertEqual(1, len(results))
@@ -129,6 +130,7 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual("FINAL ANSWER: A", entry.answer_text)
         self.assertEqual("demo-run", entry.runner_meta["run_id"])
         self.assertIn("configured_skills", calls["build_runner_kwargs"])
+        self.assertEqual("minimal", calls["build_runner_kwargs"]["benchmark_agent_thinking"])
         self.assertEqual("r1.json", saved[0].name)
 
     def test_run_group_preserves_runner_diagnostics_when_evaluator_raises(self) -> None:
@@ -217,6 +219,7 @@ class OrchestrationTests(unittest.TestCase):
                     path.write_text(str(payload), encoding="utf-8"),
                 ),
                 slugify_fn=lambda value, **_kwargs: str(value),
+                single_agent_thinking="minimal",
             )
 
         self.assertEqual(1, len(results))

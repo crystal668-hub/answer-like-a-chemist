@@ -88,7 +88,9 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
                 "output_dir": str(tmp_path / "out-parent"),
                 "openclaw_config": str(tmp_path / "openclaw.json"),
                 "single_agent_model": "openai/gpt-5.4",
+                "single_agent_thinking": "high",
                 "judge_model": "openai/gpt-5.4",
+                "judge_agent_thinking": "high",
                 "single_agent_id_override": None,
                 "judge_agent": "benchmark-judge",
                 "judge_timeout": 30,
@@ -265,7 +267,9 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
                 "output_dir": str(tmp_path / "out-parent"),
                 "openclaw_config": str(tmp_path / "openclaw.json"),
                 "single_agent_model": "openai/gpt-5.4",
+                "single_agent_thinking": "medium",
                 "judge_model": "openai/gpt-5.4",
+                "judge_agent_thinking": "minimal",
                 "single_agent_id_override": None,
                 "judge_agent": "benchmark-judge",
                 "judge_timeout": 30,
@@ -308,6 +312,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     assert launched == [tmp_path / "out"]
     manifest = benchmarking_cli.json.loads((tmp_path / "out" / "runtime-manifest.json").read_text(encoding="utf-8"))
     assert manifest["automated_evaluation"]["status"] == "launched"
+    assert manifest["groups"]["single_llm_skills_off"]["single_agent_thinking"] == "medium"
+    assert manifest["judge"]["thinking"] == "minimal"
 
 
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
@@ -367,7 +373,9 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
                 "output_dir": str(tmp_path / "out-parent"),
                 "openclaw_config": str(tmp_path / "openclaw.json"),
                 "single_agent_model": "openai/gpt-5.4",
+                "single_agent_thinking": "high",
                 "judge_model": "openai/gpt-5.4",
+                "judge_agent_thinking": "high",
                 "single_agent_id_override": None,
                 "judge_agent": "benchmark-judge",
                 "judge_timeout": 30,

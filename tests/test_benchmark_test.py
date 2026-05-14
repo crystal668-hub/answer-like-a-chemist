@@ -448,6 +448,31 @@ print(json.dumps({{
         self.assertEqual(2, args.single_timeout_retries)
         self.assertEqual("1,3", args.single_timeout_retry_backoff_seconds)
 
+    def test_parse_args_accepts_thinking_overrides_and_rejects_invalid_values(self) -> None:
+        with mock.patch.object(sys, "argv", ["benchmark_test.py"]):
+            args = benchmark_test.parse_args()
+        self.assertEqual("high", args.single_agent_thinking)
+        self.assertEqual("high", args.judge_agent_thinking)
+
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "benchmark_test.py",
+                "--single-agent-thinking",
+                "medium",
+                "--judge-agent-thinking",
+                "minimal",
+            ],
+        ):
+            args = benchmark_test.parse_args()
+        self.assertEqual("medium", args.single_agent_thinking)
+        self.assertEqual("minimal", args.judge_agent_thinking)
+
+        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--single-agent-thinking", "extreme"]):
+            with self.assertRaises(SystemExit):
+                benchmark_test.parse_args()
+
     def test_parse_args_accepts_subsets_filter(self) -> None:
         with mock.patch.object(
             sys,
@@ -2647,7 +2672,7 @@ Points: 0.5, Item: Second criterion
         self.assertTrue(result.evaluable)
         self.assertTrue(result.scored)
 
-    def test_judge_client_invokes_openclaw_with_high_thinking(self) -> None:
+    def test_judge_client_invokes_openclaw_with_configured_thinking(self) -> None:
         captured: dict[str, object] = {}
         original_run_subprocess = benchmark_test.run_subprocess
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2705,13 +2730,14 @@ Points: 0.5, Item: Second criterion
                     judge_agent="benchmark-judge",
                     timeout_seconds=30,
                     config_path=config_path,
+                    thinking="minimal",
                 )
                 payload = client.evaluate_json("score this")
                 self.assertEqual([], payload["items"])
                 command = captured["command"]
                 assert isinstance(command, list)
                 self.assertIn("--thinking", command)
-                self.assertEqual("high", command[command.index("--thinking") + 1])
+                self.assertEqual("minimal", command[command.index("--thinking") + 1])
             finally:
                 benchmark_test.run_subprocess = original_run_subprocess
 
@@ -2915,7 +2941,7 @@ Points: 0.5, Item: Second criterion
             finally:
                 benchmark_test.run_subprocess = original_run_subprocess
 
-    def test_single_llm_runner_invokes_wrapper_with_high_thinking(self) -> None:
+    def test_single_llm_runner_invokes_wrapper_with_configured_thinking(self) -> None:
         captured: dict[str, object] = {}
         original_run_subprocess = benchmark_test.run_subprocess
         original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
@@ -2957,6 +2983,7 @@ Points: 0.5, Item: Second criterion
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
                 configured_skills=("chem-calculator", "paper-retrieval"),
+                benchmark_agent_thinking="medium",
             )
             record = benchmark_test.BenchmarkRecord(
                 record_id="demo",
@@ -2974,7 +3001,7 @@ Points: 0.5, Item: Second criterion
             self.assertNotEqual("openclaw", command[0])
             self.assertTrue(any(str(part).endswith("single_llm_openclaw_wrapper.py") for part in command))
             self.assertIn("--thinking", command)
-            self.assertEqual("high", command[command.index("--thinking") + 1])
+            self.assertEqual("medium", command[command.index("--thinking") + 1])
             self.assertIn("--agent", command)
             self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
             self.assertIn("--eval-kind", command)
@@ -5275,11 +5302,13 @@ Points: 0.5, Item: Second criterion
                     chemqa_model_profile="unused",
                     review_rounds=None,
                     rebuttal_rounds=None,
+                    single_agent_thinking="low",
                     single_timeout_retries=2,
                     single_timeout_retry_backoff_seconds=(1, 3),
                 )
 
             self.assertEqual(1, len(results))
+            self.assertEqual("low", captured["benchmark_agent_thinking"])
             self.assertEqual(2, captured["timeout_retries"])
             self.assertEqual((1, 3), captured["timeout_retry_backoff_seconds"])
         finally:
