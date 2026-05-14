@@ -168,6 +168,7 @@ def test_run_web_search_preflight_retries_transient_fetch_failure(tmp_path: Path
     )
     transcripts = [failed_transcript, successful_transcript]
     commands: list[list[str]] = []
+    sleep_calls: list[float] = []
 
     def fake_run(command, *, env=None, cwd=None, timeout=None, text=None, capture_output=None, check=None):
         commands.append(list(command))
@@ -204,16 +205,140 @@ def test_run_web_search_preflight_retries_transient_fetch_failure(tmp_path: Path
         timeout_seconds=30,
         base_env={},
         system_proxy_text="",
+        sleep_func=sleep_calls.append,
     )
 
     assert report["available"] is True
     assert report["result_count"] == 1
     assert len(commands) == 2
+    assert sleep_calls == [5.0]
     assert report["attempt"] == 2
     assert report["max_attempts"] == 3
     assert len(report["attempts"]) == 2
     assert report["attempts"][0]["available"] is False
     assert report["attempts"][0]["error"] == "fetch failed"
+    assert report["attempts"][0]["next_retry_delay_seconds"] == 5.0
     assert report["attempts"][1]["available"] is True
+    assert "next_retry_delay_seconds" not in report["attempts"][1]
     assert commands[0] != commands[1]
+    json.dumps(report)
+
+
+def test_run_web_search_preflight_uses_exponential_backoff_for_three_failures(tmp_path: Path) -> None:
+    transcripts = []
+    for index in range(3):
+        transcript = tmp_path / f"failed-{index}.jsonl"
+        write_transcript(
+            transcript,
+            {
+                "status": "error",
+                "tool": "web_search",
+                "error": f"fetch failed {index}",
+            },
+        )
+        transcripts.append(transcript)
+
+    commands: list[list[str]] = []
+    sleep_calls: list[float] = []
+
+    def fake_run(command, *, env=None, cwd=None, timeout=None, text=None, capture_output=None, check=None):
+        commands.append(list(command))
+        transcript = transcripts[len(commands) - 1]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "result": {
+                        "payloads": [{"text": "web_search health check"}],
+                        "meta": {
+                            "convergence": {
+                                "transcript_path": str(transcript),
+                            },
+                            "toolSummary": {
+                                "calls": 1,
+                                "tools": ["web_search"],
+                                "failures": 1,
+                            },
+                        },
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    report = run_web_search_preflight(
+        agent_id="benchmark-single-skills-on",
+        config_path=tmp_path / "openclaw.json",
+        current_python_path="/venv/bin/python",
+        run_subprocess=fake_run,
+        timeout_seconds=30,
+        base_env={},
+        system_proxy_text="",
+        sleep_func=sleep_calls.append,
+    )
+
+    assert report["available"] is False
+    assert len(commands) == 3
+    assert sleep_calls == [5.0, 10.0]
+    assert report["attempt"] == 3
+    assert report["max_attempts"] == 3
+    assert len(report["attempts"]) == 3
+    assert report["attempts"][0]["next_retry_delay_seconds"] == 5.0
+    assert report["attempts"][1]["next_retry_delay_seconds"] == 10.0
+    assert "next_retry_delay_seconds" not in report["attempts"][2]
+    json.dumps(report)
+
+
+def test_run_web_search_preflight_does_not_sleep_after_first_success(tmp_path: Path) -> None:
+    transcript = tmp_path / "successful.jsonl"
+    write_transcript(
+        transcript,
+        {
+            "provider": "duckduckgo",
+            "count": 1,
+            "results": [{"title": "API Overview - OpenAlex Developers"}],
+        },
+    )
+    sleep_calls: list[float] = []
+
+    def fake_run(command, *, env=None, cwd=None, timeout=None, text=None, capture_output=None, check=None):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "result": {
+                        "payloads": [{"text": "web_search health check"}],
+                        "meta": {
+                            "convergence": {
+                                "transcript_path": str(transcript),
+                            },
+                            "toolSummary": {
+                                "calls": 1,
+                                "tools": ["web_search"],
+                                "failures": 0,
+                            },
+                        },
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    report = run_web_search_preflight(
+        agent_id="benchmark-single-skills-on",
+        config_path=tmp_path / "openclaw.json",
+        current_python_path="/venv/bin/python",
+        run_subprocess=fake_run,
+        timeout_seconds=30,
+        base_env={},
+        system_proxy_text="",
+        sleep_func=sleep_calls.append,
+    )
+
+    assert report["available"] is True
+    assert report["attempt"] == 1
+    assert sleep_calls == []
+    assert "next_retry_delay_seconds" not in report["attempts"][0]
     json.dumps(report)

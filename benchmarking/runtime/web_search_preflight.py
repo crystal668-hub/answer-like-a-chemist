@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -11,8 +12,10 @@ from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, pro
 
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
+SleepFunc = Callable[[float], None]
 PREFLIGHT_QUERY = "OpenAlex scholarly works API"
 DEFAULT_PREFLIGHT_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = (5.0, 10.0)
 
 
 def _wrapper_path() -> Path:
@@ -65,6 +68,13 @@ def _clean_external_text(text: str) -> str:
 
 def _attempt_snapshot(report: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in report.items() if key != "attempts"}
+
+
+def _next_retry_delay(attempt: int, retry_backoff_seconds: tuple[float, ...]) -> float:
+    if not retry_backoff_seconds:
+        return 0.0
+    index = min(max(attempt, 1) - 1, len(retry_backoff_seconds) - 1)
+    return max(0.0, float(retry_backoff_seconds[index]))
 
 
 def evaluate_web_search_transcript(transcript_path: Path) -> dict[str, Any]:
@@ -136,6 +146,8 @@ def run_web_search_preflight(
     base_env: Mapping[str, str] | None = None,
     system_proxy_text: str | None = None,
     max_attempts: int = DEFAULT_PREFLIGHT_ATTEMPTS,
+    retry_backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS,
+    sleep_func: SleepFunc = time.sleep,
 ) -> dict[str, Any]:
     max_attempts = max(1, int(max_attempts))
     env = build_openclaw_subprocess_env(
@@ -193,7 +205,13 @@ def run_web_search_preflight(
                 "error": str(exc),
                 "proxy_env": proxy_environment_report(env),
             }
-            attempts.append(_attempt_snapshot(report))
+            if attempt < max_attempts:
+                delay_seconds = _next_retry_delay(attempt, retry_backoff_seconds)
+                report["next_retry_delay_seconds"] = delay_seconds
+                attempts.append(_attempt_snapshot(report))
+                sleep_func(delay_seconds)
+            else:
+                attempts.append(_attempt_snapshot(report))
             continue
 
         report: dict[str, Any] = {
@@ -212,7 +230,13 @@ def run_web_search_preflight(
                     "error": (completed.stderr or completed.stdout or "web_search preflight command failed").strip()[:2000],
                 }
             )
-            attempts.append(_attempt_snapshot(report))
+            if attempt < max_attempts:
+                delay_seconds = _next_retry_delay(attempt, retry_backoff_seconds)
+                report["next_retry_delay_seconds"] = delay_seconds
+                attempts.append(_attempt_snapshot(report))
+                sleep_func(delay_seconds)
+            else:
+                attempts.append(_attempt_snapshot(report))
             continue
 
         payload = _parse_jsonish(completed.stdout or completed.stderr)
@@ -231,6 +255,11 @@ def run_web_search_preflight(
         if report.get("available") is True:
             report["attempts"] = attempts
             return report
+        if attempt < max_attempts:
+            delay_seconds = _next_retry_delay(attempt, retry_backoff_seconds)
+            report["next_retry_delay_seconds"] = delay_seconds
+            attempts[-1] = _attempt_snapshot(report)
+            sleep_func(delay_seconds)
 
     final_report = dict(attempts[-1]) if attempts else {
         "available": False,
