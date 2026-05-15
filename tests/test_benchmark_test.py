@@ -99,7 +99,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
             list(benchmark_test.EXPERIMENT_GROUPS),
         )
-        self.assertTrue(all(group.websearch for group in benchmark_test.EXPERIMENT_GROUPS.values()))
+        self.assertTrue(all(not group.websearch for group in benchmark_test.EXPERIMENT_GROUPS.values()))
+        self.assertTrue(all(not spec.websearch_enabled for spec in benchmark_test.EXPERIMENT_SPECS.values()))
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
         self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
@@ -409,7 +410,7 @@ print(json.dumps({{
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
 
-    def test_parse_args_accepts_convergence_policy_flags(self) -> None:
+    def test_parse_args_accepts_convergence_policy_flags_and_rejects_finalization_grace_flag(self) -> None:
         with mock.patch.object(
             sys,
             "argv",
@@ -417,8 +418,6 @@ print(json.dumps({{
                 "benchmark_test.py",
                 "--single-timeout",
                 "900",
-                "--finalization-grace-seconds",
-                "60",
                 "--max-unchanged-status-polls",
                 "1",
                 "--max-recovery-attempts",
@@ -427,9 +426,13 @@ print(json.dumps({{
         ):
             args = benchmark_test.parse_args()
 
-        self.assertEqual(60, args.finalization_grace_seconds)
+        self.assertFalse(hasattr(args, "finalization_grace_seconds"))
         self.assertEqual(1, args.max_unchanged_status_polls)
         self.assertEqual(1, args.max_recovery_attempts)
+
+        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--finalization-grace-seconds", "60"]):
+            with self.assertRaises(SystemExit):
+                benchmark_test.parse_args()
 
     def test_parse_args_accepts_single_timeout_retry_flags(self) -> None:
         with mock.patch.object(
@@ -1076,8 +1079,8 @@ Points: 0.5, Item: Second criterion
         self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertNotIn("thinking", agents["benchmark-single-skills-on"])
         self.assertNotIn("thinking", agents["benchmark-judge"])
-        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
-        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
+        self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
+        self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
         self.assertIn(str(benchmark_test.runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
 
     def test_default_judge_model_uses_openai_gpt_55(self) -> None:
@@ -1099,8 +1102,8 @@ Points: 0.5, Item: Second criterion
             )
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual([], agents["benchmark-single-skills-off"]["skills"])
-        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
-        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
+        self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
+        self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_run_scoped_config_payload_benchmark_judge_runtime_uses_judge_model(self) -> None:
         base = {
@@ -1149,8 +1152,8 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("qwen3.5-plus", agents[slot]["model"])
             self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents[slot]["skills"])
             self.assertNotIn("thinking", agents[slot])
-        self.assertTrue(payload["tools"]["web"]["search"]["enabled"])
-        self.assertTrue(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
+        self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
+        self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_run_scoped_config_payload_chemqa_uses_benchmark_workspace_roots(self) -> None:
         base = {
@@ -3010,6 +3013,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
             self.assertIn("--eval-kind", command)
             self.assertEqual("chembench_open_ended", command[command.index("--eval-kind") + 1])
+            self.assertNotIn("--finalization-grace-seconds", command)
             audit = out.runner_meta["skill_use_audit"]
             self.assertEqual(2, audit["available_skill_count"])
             self.assertTrue(audit["skill_tool_executed"])
@@ -3687,7 +3691,6 @@ Points: 0.5, Item: Second criterion
                 runtime_bundle_root=Path("/tmp"),
                 convergence_policy=benchmark_test.ConvergencePolicy(
                     timeout_seconds=900,
-                    finalization_grace_seconds=90,
                 ),
             )
 

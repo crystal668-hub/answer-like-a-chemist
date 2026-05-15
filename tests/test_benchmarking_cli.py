@@ -27,6 +27,8 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert callable(benchmarking_cli.parse_args)
     assert benchmarking_cli.EXPERIMENT_GROUPS["single_llm_skills_on"].runner == "single_llm"
     assert benchmarking_cli.EXPERIMENT_GROUPS["chemqa_skills_on"].runner == "chemqa"
+    assert all(group.websearch is False for group in benchmarking_cli.EXPERIMENT_GROUPS.values())
+    assert all(spec.websearch_enabled is False for spec in benchmarking_cli.EXPERIMENT_SPECS.values())
 
 
 def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:
@@ -39,6 +41,30 @@ def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:
     args = benchmarking_cli.parse_args()
 
     assert args.no_timeout is True
+
+
+def test_default_web_search_preflight_skips_all_experiment_groups(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+
+    class FakeConfigPool:
+        def config_for_group(self, group):
+            return tmp_path / f"{group.id}.json"
+
+    def fake_preflight(**kwargs):
+        calls.append(kwargs["agent_id"])
+        return {"available": True}
+
+    monkeypatch.setattr(benchmarking_cli, "run_web_search_preflight", fake_preflight)
+
+    report = benchmarking_cli.run_benchmark_web_search_preflight(
+        group_ids=list(benchmarking_cli.EXPERIMENT_GROUPS),
+        config_pool=FakeConfigPool(),
+        args=type("Args", (), {"single_agent_id_override": None})(),
+    )
+
+    assert calls == []
+    assert report["available"] is True
+    assert report["reports"] == {}
 
 
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
@@ -56,6 +82,30 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
         ),
     )
     run_group_calls: list[str] = []
+    monkeypatch.setitem(
+        benchmarking_cli.EXPERIMENT_GROUPS,
+        "single_llm_skills_on",
+        benchmarking_cli.ExperimentGroup(
+            id="single_llm_skills_on",
+            label=benchmarking_cli.EXPERIMENT_GROUPS["single_llm_skills_on"].label,
+            runner="single_llm",
+            websearch=True,
+            skills_enabled=True,
+        ),
+    )
+    monkeypatch.setitem(
+        benchmarking_cli.EXPERIMENT_SPECS,
+        "single_llm_skills_on",
+        benchmarking_cli.ExperimentSpec(
+            id="single_llm_skills_on",
+            label=benchmarking_cli.EXPERIMENT_GROUPS["single_llm_skills_on"].label,
+            runner_kind="single_llm",
+            websearch_enabled=True,
+            skills_enabled=True,
+            single_agent_id=benchmarking_cli.BASELINE_AGENT_IDS["single_llm_skills_on"],
+            skill_allowlist=tuple(benchmarking_cli.BENCHMARK_SKILLS_ALLOWLIST),
+        ),
+    )
 
     class FakeConfigPool:
         def __init__(self, *args, **kwargs) -> None:
@@ -196,7 +246,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
                 group_id="single_llm_skills_off",
                 group_label="single off",
                 runner="single_llm",
-                websearch=True,
+                websearch=False,
                 record_id="record-1",
                 subset="demo_subset",
                 dataset="demo",
@@ -327,10 +377,12 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     manifest = benchmarking_cli.json.loads((tmp_path / "out" / "runtime-manifest.json").read_text(encoding="utf-8"))
     assert manifest["automated_evaluation"]["status"] == "launched"
     assert manifest["groups"]["single_llm_skills_off"]["single_agent_thinking"] == "medium"
+    assert manifest["groups"]["single_llm_skills_off"]["group"]["websearch"] is False
     assert manifest["judge"]["thinking"] == "minimal"
     assert manifest["timeout_mode"] == "bounded"
     results = benchmarking_cli.json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
     assert results["timeout_mode"] == "bounded"
+    assert results["run_groups"][0]["websearch"] is False
 
 
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
