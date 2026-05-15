@@ -427,6 +427,52 @@ def conformer_embed(request: dict[str, Any], rdkit_ctx: dict[str, Any]) -> dict[
     }
 
 
+def _ch2_nmr_interpretation_risks(mol_h: Any, proton_classes: dict[int, list[int]]) -> list[dict[str, Any]]:
+    hydrogen_parent: dict[int, int] = {}
+    carbon_hydrogens: dict[int, list[int]] = {}
+    for atom in mol_h.GetAtoms():
+        if atom.GetSymbol() != "H":
+            continue
+        neighbors = atom.GetNeighbors()
+        if not neighbors:
+            continue
+        parent = neighbors[0]
+        parent_index = int(parent.GetIdx())
+        hydrogen_index = int(atom.GetIdx())
+        hydrogen_parent[hydrogen_index] = parent_index
+        if parent.GetSymbol() == "C":
+            carbon_hydrogens.setdefault(parent_index, []).append(hydrogen_index)
+
+    ch2_parent_indices = {parent_index for parent_index, hydrogens in carbon_hydrogens.items() if len(hydrogens) == 2}
+    risks: list[dict[str, Any]] = []
+    for rank, hydrogen_indices in proton_classes.items():
+        ch2_hydrogens = sorted(index for index in hydrogen_indices if hydrogen_parent.get(index) in ch2_parent_indices)
+        ch2_parents = sorted({hydrogen_parent[index] for index in ch2_hydrogens})
+        if len(ch2_parents) < 2:
+            continue
+        ring_parents = [index for index in ch2_parents if mol_h.GetAtomWithIdx(index).IsInRing()]
+        risk_basis = ["multiple_ch2_parent_atoms_in_one_graph_proton_class"]
+        if ring_parents:
+            risk_basis.append("ring_ch2_parent_atoms")
+        risks.append(
+            {
+                "code": "unresolved_ch2_proton_nonequivalence",
+                "graph_proton_class_rank": int(rank),
+                "proton_atom_indices": ch2_hydrogens,
+                "parent_atom_indices": ch2_parents,
+                "ring_parent_atom_indices": ring_parents,
+                "possible_additional_splitting": True,
+                "risk_basis": risk_basis,
+                "message": (
+                    "This graph proton class merges hydrogens on multiple CH2 carbons. "
+                    "Endo/exo, diastereotopic, or other stereochemical nonequivalence can split these hydrogens "
+                    "into more 1H NMR signals than the graph class count."
+                ),
+            }
+        )
+    return risks
+
+
 def nmr_symmetry_heuristics(request: dict[str, Any], rdkit_ctx: dict[str, Any]) -> dict[str, Any]:
     Chem = rdkit_ctx["Chem"]
     mol, metadata = load_molecule(rdkit_ctx, request.get("molecule"))
@@ -450,15 +496,31 @@ def nmr_symmetry_heuristics(request: dict[str, Any], rdkit_ctx: dict[str, Any]) 
     append_warning(placeholder_payload, "heuristic_only", "Graph symmetry heuristics do not replace expert NMR interpretation.")
     append_warning(
         placeholder_payload,
+        "graph_count_not_nmr_peak_count",
+        "Graph proton equivalence class counts are not an NMR peak count; use manual NMR review for final signal assignment.",
+    )
+    append_warning(
+        placeholder_payload,
         "missing_effects",
         "Conformation, tautomerism, solvent effects, and accidental equivalence are not modeled by this heuristic.",
     )
     warnings.extend(placeholder_payload["warnings"])
 
+    nmr_interpretation_risks = _ch2_nmr_interpretation_risks(mol_h, proton_classes)
     primary_result = {
         **metadata,
         "proton_equivalence_class_count": len(proton_classes),
         "carbon_equivalence_class_count": len(carbon_classes),
+        "graph_proton_equivalence_class_count": len(proton_classes),
+        "graph_carbon_equivalence_class_count": len(carbon_classes),
+        "nmr_signal_count_estimate": None,
+        "nmr_signal_count_is_definitive": False,
+        "interpretation_limitations": {
+            "do_not_use_graph_count_as_nmr_peak_count": True,
+            "requires_manual_nmr_review": True,
+            "graph_count_semantics": "RDKit graph-symmetry atom ranks, not a full 1H NMR assignment.",
+        },
+        "nmr_interpretation_risks": nmr_interpretation_risks,
         "proton_equivalence_classes": sorted(
             ({"rank": rank, "atom_indices": atom_indices} for rank, atom_indices in proton_classes.items()),
             key=lambda item: (len(item["atom_indices"]), item["atom_indices"]),

@@ -92,7 +92,11 @@ Multi-molecule scripts:
   product candidates when the reactants match.
 - `conformer_embed.py`: embeds and optimizes available conformers locally.
 - `nmr_symmetry_heuristics.py`: returns graph-symmetry equivalence classes and
-  always includes warnings about heuristic limitations.
+  always includes warnings about heuristic limitations. The graph class counts
+  are not final NMR peak counts; the payload includes
+  `nmr_signal_count_estimate: null`, `nmr_signal_count_is_definitive: false`,
+  `interpretation_limitations`, and `nmr_interpretation_risks` such as
+  unresolved CH2 proton nonequivalence.
 
 ## Failure Modes
 

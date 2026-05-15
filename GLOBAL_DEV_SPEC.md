@@ -360,7 +360,7 @@
   - Status: `DONE`
 
 - Name: RDKit provider skill
-  - Description: Runs deterministic local cheminformatics helpers for canonicalization, descriptors, substructure, stereochemistry, similarity, reactions, conformers, and symmetry heuristics.
+  - Description: Runs deterministic local cheminformatics helpers for canonicalization, descriptors, substructure, stereochemistry, similarity, reactions, conformers, and symmetry heuristics. The NMR symmetry heuristic reports RDKit graph-rank proton/carbon equivalence classes as advisory data only, explicitly marks them as non-definitive NMR peak counts, and surfaces CH2 nonequivalence risks such as possible endo/exo or diastereotopic splitting.
   - Input / Output:
     - Input: request JSON plus output directory.
     - Output: stable `result.json` payloads with structured diagnostics/tool traces.

@@ -308,6 +308,24 @@ class NmrSymmetryHeuristicTests(unittest.TestCase):
         self.assertEqual(5, primary["carbon_equivalence_class_count"])
         self.assertTrue(any("heuristic" in warning["message"].lower() for warning in payload["warnings"]))
 
+    def test_ch2_risk_prevents_graph_count_from_looking_like_nmr_peak_count(self) -> None:
+        payload, _ = run_script(
+            "nmr_symmetry_heuristics.py",
+            {"molecule": {"format": "smiles", "value": "O=C1OCC2CC1C2"}},
+        )
+
+        self.assertEqual("partial", payload["status"])
+        primary = payload["primary_result"]
+        self.assertEqual(4, primary["proton_equivalence_class_count"])
+        self.assertEqual(4, primary["graph_proton_equivalence_class_count"])
+        self.assertIsNone(primary["nmr_signal_count_estimate"])
+        self.assertFalse(primary["nmr_signal_count_is_definitive"])
+        self.assertTrue(primary["interpretation_limitations"]["do_not_use_graph_count_as_nmr_peak_count"])
+        self.assertTrue(primary["interpretation_limitations"]["requires_manual_nmr_review"])
+        risk_codes = {risk["code"] for risk in primary["nmr_interpretation_risks"]}
+        self.assertIn("unresolved_ch2_proton_nonequivalence", risk_codes)
+        self.assertTrue(any("not an nmr peak count" in warning["message"].lower() for warning in payload["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()
