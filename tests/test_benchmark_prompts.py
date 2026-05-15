@@ -263,6 +263,8 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("itemized reasoning criteria", prompt)
         self.assertIn("every requested sub-question", prompt)
         self.assertIn("Do not collapse", prompt)
+        self.assertIn("## FINAL RESEARCH ANSWER", prompt)
+        self.assertIn("<rubric-complete final synthesis>", prompt)
         self.assertNotIn("FINAL ANSWER:", prompt)
         self.assertNotIn("concise answer summary", prompt)
 
@@ -297,6 +299,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         self.assertIn("complete multi-part research answer", goal)
         self.assertIn("Do not compress the response to a concise final answer", goal)
+        self.assertIn("## FINAL RESEARCH ANSWER", goal)
         self.assertNotIn("concise answer summary", goal)
         self.assertIn("ChemQA Artifact Flow answer kind: multi_part_research_answer.", goal)
 

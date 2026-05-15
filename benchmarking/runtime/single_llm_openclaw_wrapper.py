@@ -58,7 +58,9 @@ Do not start new tool chains or skill exploration unless one short decisive chec
 FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
 Do not call tools or inspect files. Use only the reasoning already present in this session.
 Provide a brief but complete visible derivation and checks, then provide the final answer in the required format from the benchmark prompt.
-For FrontierScience research-track tasks, provide a complete structured research answer and use a clear final/conclusion marker if the original prompt did not require a short final-answer line.
+For FrontierScience research-track tasks, end with exactly:
+## FINAL RESEARCH ANSWER
+<rubric-complete final synthesis>
 For multiple-choice questions, use: FINAL ANSWER: <option letters>"""
 
 

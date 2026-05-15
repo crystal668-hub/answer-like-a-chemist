@@ -14,6 +14,7 @@ from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo
 from benchmarking.core.convergence import (
     ConvergencePolicy,
     has_final_answer_marker,
+    has_research_final_marker,
     is_complete_answer_for_eval,
     is_timeout_family_text,
 )
@@ -428,6 +429,8 @@ def _candidate_contract_meta(
     if missing_fields:
         meta["missing_fields"] = list(missing_fields)
     raw_text = str(full_response_text or "")
+    if meta["eval_kind"] == "frontierscience_research":
+        meta["has_research_final_marker"] = has_research_final_marker(raw_text)
     if raw_text:
         meta["raw_text"] = raw_text[:4000]
         meta["raw_text_truncated"] = len(raw_text) > 4000

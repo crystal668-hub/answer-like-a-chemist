@@ -438,6 +438,45 @@ class BenchmarkConvergenceTests(unittest.TestCase):
         self.assertFalse(is_complete_benchmark_answer(text))
         self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
 
+    def test_research_rescue_accepts_final_research_answer_marker(self) -> None:
+        text = (
+            "## Evidence and derivation\n"
+            "The rubric-relevant reasoning is visible above.\n\n"
+            "## FINAL RESEARCH ANSWER\n"
+            "The rubric-complete synthesis covers the protocol, mechanism, calculations, and conclusion."
+        )
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+        self.assertFalse(is_complete_rescue_answer(text, eval_kind="frontierscience_olympiad"))
+
+    def test_research_rescue_accepts_inline_final_research_answer_marker(self) -> None:
+        text = (
+            "Reasoning above.\n"
+            "FINAL RESEARCH ANSWER: The final research synthesis covers every scored condition and conclusion."
+        )
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_research_rescue_accepts_final_research_answer_family_fallbacks(self) -> None:
+        markers = [
+            "FINAL RESEARCH RESPONSE",
+            "FINAL RESEARCH SYNTHESIS",
+            "FINAL RESEARCH CONCLUSION",
+            "RESEARCH FINAL ANSWER",
+        ]
+        for marker in markers:
+            with self.subTest(marker=marker):
+                text = (
+                    "## Evidence and derivation\n"
+                    "The rubric-relevant reasoning is visible above.\n\n"
+                    f"## 7. {marker} - The final research synthesis covers the protocol and conclusion."
+                )
+
+                self.assertFalse(is_complete_benchmark_answer(text))
+                self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
     def test_rescue_accepts_research_conclusion_section(self) -> None:
         text = (
             "## Visible Derivation\n"
@@ -506,6 +545,12 @@ class BenchmarkConvergenceTests(unittest.TestCase):
 
     def test_rescue_rejects_empty_or_process_only_research_markers(self) -> None:
         self.assertFalse(is_complete_rescue_answer("Reasoning\nFINAL ANSWER:\n\n", eval_kind="frontierscience_research"))
+        self.assertFalse(
+            is_complete_rescue_answer(
+                "Reasoning\n## FINAL RESEARCH ANSWER\n\n## References\n1. Source paper",
+                eval_kind="frontierscience_research",
+            )
+        )
         self.assertFalse(
             is_complete_rescue_answer(
                 "FINAL ANSWER:\n\n## References\n1. Source paper\n\n**Coverage checklist:**\n- done: evidence",

@@ -15,10 +15,26 @@ RESCUE_FINAL_ANSWER_MARKER_ONLY_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*FINAL\s+ANSWER\s*(?:[:：-]\s*)?(?:\*\*)?\s*$",
     re.IGNORECASE,
 )
+RESEARCH_FINAL_MARKER_PATTERN = (
+    r"FINAL\s+RESEARCH\s+ANSWER|"
+    r"FINAL\s+RESEARCH\s+RESPONSE|"
+    r"FINAL\s+RESEARCH\s+SYNTHESIS|"
+    r"FINAL\s+RESEARCH\s+CONCLUSION|"
+    r"RESEARCH\s+FINAL\s+ANSWER"
+)
+RESEARCH_FINAL_MARKER_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:\d+(?:\.\d+)*[.)]?\s*)?"
+    r"(?P<marker>"
+    + RESEARCH_FINAL_MARKER_PATTERN
+    + r")"
+    r"\s*(?:[:：-]\s*)?(?:\*\*)?\s*(?P<answer>.*)$",
+    re.IGNORECASE,
+)
 RESCUE_RESEARCH_SECTION_MARKER_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:\d+(?:\.\d+)*[.)]?\s*)?"
     r"(?P<marker>"
-    r"FINAL\s+ANSWER|FINAL\s+SYNTHESIS|FINAL(?:\s*/\s*|\s+AND\s+|\s+)CONCLUSION|"
+    + RESEARCH_FINAL_MARKER_PATTERN
+    + r"|FINAL\s+ANSWER|FINAL\s+SYNTHESIS|FINAL(?:\s*/\s*|\s+AND\s+|\s+)CONCLUSION|"
     r"SUPPORTED\s+CONCLUSION|CONCLUSION"
     r")"
     r"\s*(?:[:：-]\s*)?(?:\*\*)?\s*(?P<answer>.*)$",
@@ -335,6 +351,10 @@ def extract_final_answer_line(text: str) -> str:
 
 def has_final_answer_marker(text: str) -> bool:
     return bool(extract_final_answer_line(text))
+
+
+def has_research_final_marker(text: str) -> bool:
+    return any(RESEARCH_FINAL_MARKER_RE.match(line) for line in str(text or "").splitlines())
 
 
 def is_complete_benchmark_answer(text: str) -> bool:

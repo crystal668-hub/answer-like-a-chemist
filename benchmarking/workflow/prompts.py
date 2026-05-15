@@ -149,8 +149,12 @@ def build_single_llm_prompt(
         instructions.append("Provide a complete, structured response that covers every requested sub-question, condition, calculation, mechanism, protocol consequence, and conclusion.")
         instructions.append("Use numbered sections or clear headings when the prompt has multiple parts.")
         instructions.append("Include intermediate derivations, formulas, assumptions, units, and justifications needed for a rubric judge to award each point.")
+        instructions.append("Keep detailed multi-part reasoning before the final research section.")
         instructions.append("Do not collapse the response to a short final answer, and do not replace the detailed response with a concise summary.")
-        instructions.append("If you include a conclusion, make it a supported conclusion section after the detailed reasoning, not a standalone short-answer line.")
+        instructions.append("Do not add the short-answer final marker used by non-research tasks to FrontierScience research responses.")
+        instructions.append("End the response with this exact Markdown heading and section:")
+        instructions.append("## FINAL RESEARCH ANSWER")
+        instructions.append("<rubric-complete final synthesis>")
     elif record.eval_kind == "hle":
         instructions.append("Use the official HLE response format exactly:")
         instructions.append("Explanation: <your visible derivation and checks>")
@@ -194,6 +198,10 @@ def build_chemqa_goal(
     elif record.eval_kind == "frontierscience_research":
         instructions.append("Provide a complete multi-part research answer that covers every requested condition, calculation, mechanism, protocol consequence, and conclusion.")
         instructions.append("Do not compress the response to a concise final answer; keep the rubric-relevant reasoning visible.")
+        instructions.append("Do not add the short-answer final marker used by non-research tasks to FrontierScience research responses.")
+        instructions.append("End the response with this exact Markdown heading and section:")
+        instructions.append("## FINAL RESEARCH ANSWER")
+        instructions.append("<rubric-complete final synthesis>")
     elif record.eval_kind == "hle":
         instructions.append("Use the official HLE response format exactly:")
         instructions.append("Explanation: <your visible derivation and checks>")

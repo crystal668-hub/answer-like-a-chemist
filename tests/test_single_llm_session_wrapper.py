@@ -1165,7 +1165,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 ),
                 stderr="",
             )
-            rescue_text = "**FINAL ANSWER:**\nA=11.3, B=100.0, C=7.9"
+            rescue_text = "## FINAL RESEARCH ANSWER\nA=11.3, B=100.0, C=7.9"
             rescue = subprocess.CompletedProcess(
                 ["openclaw"],
                 0,
@@ -1183,6 +1183,98 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         result = payload["result"]
         self.assertEqual(rescue_text, result["payloads"][0]["text"])
         self.assertTrue(result["meta"]["convergence"]["finalization_rescue_succeeded"])
+
+    def test_wrapper_research_finalization_rescue_prompt_requires_research_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Reasoning without final marker."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+                eval_kind="frontierscience_research",
+            )
+            first = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "stream_read_error", "isError": True}],
+                            "meta": {
+                                "stopReason": "error",
+                                "completion": {"finishReason": "error"},
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+            rescue = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [
+                                {
+                                    "text": (
+                                        "## FINAL RESEARCH ANSWER\n"
+                                        "The rescued research answer covers the protocol and conclusion."
+                                    )
+                                }
+                            ],
+                            "meta": {},
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO):
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        rescue_kwargs = run_mock.call_args_list[1].kwargs
+        self.assertIn("## FINAL RESEARCH ANSWER", rescue_kwargs["message_override"])
+        self.assertIn("<rubric-complete final synthesis>", rescue_kwargs["message_override"])
 
     def test_wrapper_finalization_rescue_keeps_error_payload_when_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
