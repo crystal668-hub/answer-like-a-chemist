@@ -19,7 +19,5 @@
   and reaction-option filtering with explicit structural transforms.
 - Use `conformer_embed.py` only when approximate 3D geometry matters; do not
   use it for name lookup or simple formula questions.
-- Use `nmr_symmetry_heuristics.py` only as a heuristic. Its output should be
-  treated as graph-symmetry guidance, not definitive NMR assignment. Do not use
-  graph proton class counts as 1H NMR peak counts; inspect
-  `nmr_interpretation_risks` for CH2 endo/exo or other nonequivalence risks.
+- For NMR peak-count questions, use RDKit scripts only to verify structural
+  facts. Do not use graph-symmetry proton-class tooling for NMR signal counts.

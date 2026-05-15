@@ -65,10 +65,16 @@ class RdkitSkillLayoutTests(unittest.TestCase):
             "similarity.py",
             "reaction_smarts.py",
             "conformer_embed.py",
-            "nmr_symmetry_heuristics.py",
         ]
         for name in expected:
             self.assertTrue((SCRIPTS_ROOT / name).is_file(), f"missing script: {name}")
+
+    def test_nmr_symmetry_heuristic_script_is_not_exposed(self) -> None:
+        removed_script = "nmr_" + "symmetry_" + "heuristics.py"
+        self.assertFalse(
+            (SCRIPTS_ROOT / removed_script).exists(),
+            "Removed NMR graph-equivalence script should not be exposed.",
+        )
 
 
 class CanonicalizeTests(unittest.TestCase):
@@ -281,50 +287,6 @@ class ConformerEmbedTests(unittest.TestCase):
         self.assertEqual("error", payload["status"])
         self.assertEqual(0, payload["primary_result"]["embedded_conformer_count"])
         self.assertTrue(payload["errors"])
-
-
-class NmrSymmetryHeuristicTests(unittest.TestCase):
-    def test_benzene_equivalence_classes_include_uncertainty_note(self) -> None:
-        payload, _ = run_script(
-            "nmr_symmetry_heuristics.py",
-            {"molecule": {"format": "smiles", "value": "c1ccccc1"}},
-        )
-
-        self.assertEqual("partial", payload["status"])
-        primary = payload["primary_result"]
-        self.assertEqual(1, primary["proton_equivalence_class_count"])
-        self.assertEqual(1, primary["carbon_equivalence_class_count"])
-        self.assertTrue(payload["warnings"])
-
-    def test_toluene_has_multiple_proton_classes_and_documented_uncertainty(self) -> None:
-        payload, _ = run_script(
-            "nmr_symmetry_heuristics.py",
-            {"molecule": {"format": "smiles", "value": "Cc1ccccc1"}},
-        )
-
-        self.assertEqual("partial", payload["status"])
-        primary = payload["primary_result"]
-        self.assertEqual(4, primary["proton_equivalence_class_count"])
-        self.assertEqual(5, primary["carbon_equivalence_class_count"])
-        self.assertTrue(any("heuristic" in warning["message"].lower() for warning in payload["warnings"]))
-
-    def test_ch2_risk_prevents_graph_count_from_looking_like_nmr_peak_count(self) -> None:
-        payload, _ = run_script(
-            "nmr_symmetry_heuristics.py",
-            {"molecule": {"format": "smiles", "value": "O=C1OCC2CC1C2"}},
-        )
-
-        self.assertEqual("partial", payload["status"])
-        primary = payload["primary_result"]
-        self.assertEqual(4, primary["proton_equivalence_class_count"])
-        self.assertEqual(4, primary["graph_proton_equivalence_class_count"])
-        self.assertIsNone(primary["nmr_signal_count_estimate"])
-        self.assertFalse(primary["nmr_signal_count_is_definitive"])
-        self.assertTrue(primary["interpretation_limitations"]["do_not_use_graph_count_as_nmr_peak_count"])
-        self.assertTrue(primary["interpretation_limitations"]["requires_manual_nmr_review"])
-        risk_codes = {risk["code"] for risk in primary["nmr_interpretation_risks"]}
-        self.assertIn("unresolved_ch2_proton_nonequivalence", risk_codes)
-        self.assertTrue(any("not an nmr peak count" in warning["message"].lower() for warning in payload["warnings"]))
 
 
 if __name__ == "__main__":

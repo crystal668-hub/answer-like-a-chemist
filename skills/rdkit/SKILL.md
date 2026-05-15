@@ -1,6 +1,6 @@
 ---
 name: rdkit
-description: Use when an agent needs deterministic local cheminformatics for structure normalization, descriptors, substructure, stereochemistry, similarity, reactions, conformers, or lightweight symmetry heuristics.
+description: Use when an agent needs deterministic local cheminformatics for structure normalization, descriptors, substructure, stereochemistry, similarity, reactions, or conformers.
 ---
 
 # RDKit
@@ -41,17 +41,14 @@ python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
 - `similarity.py`: Morgan fingerprint similarity ranking against supplied candidates
 - `reaction_smarts.py`: reaction SMARTS validation and product generation
 - `conformer_embed.py`: ETKDG embedding plus available RDKit force-field optimization
-- `nmr_symmetry_heuristics.py`: graph-symmetry-based proton and carbon equivalence heuristics for NMR-style questions; its graph counts are not NMR peak counts
 
 ## Execution Rules
 
 - Canonicalize raw external structures before downstream structural analysis.
-- Treat `nmr_symmetry_heuristics.py` as advisory only. It is not a substitute
-  for full spectroscopic interpretation. Its `proton_equivalence_class_count`
-  and `graph_proton_equivalence_class_count` fields are RDKit graph-rank
-  groupings, not final 1H NMR signal counts. Check `nmr_interpretation_risks`
-  for CH2 endo/exo or other nonequivalence risks before answering NMR peak
-  count questions.
+- For NMR peak-count questions, use RDKit only for structure facts such as
+  canonicalization, formula, ring systems, and stereochemistry. Do not look for
+  or create graph-symmetry proton-count tooling; final NMR peak counts require
+  manual spectroscopic interpretation.
 - Use `conformer_embed.py` only when 3D geometry is relevant.
 - Read `routing-rules.md` for script selection and
   `references/contracts.md` for request and result contracts.
