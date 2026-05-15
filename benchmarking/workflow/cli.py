@@ -28,7 +28,7 @@ if str(_SOURCE_ROOT) not in sys.path:
 from benchmarking.runtime import bundles as _runtime_bundles
 from benchmarking.runtime import cleanroom as _cleanroom
 from benchmarking.workflow import orchestration as _orchestration
-from benchmarking.analysis.launcher import launch_automated_evaluation
+from benchmarking.analysis.launcher import analysis_paths, launch_automated_evaluation
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.datasets import (
@@ -394,6 +394,11 @@ def parse_args() -> argparse.Namespace:
         "--no-timeout",
         action="store_true",
         help="取消单题作答时间上限，让模型自由探索，但保留进程级兜底安全阀",
+    )
+    parser.add_argument(
+        "--no-analysis",
+        action="store_true",
+        help="本轮 benchmark run 结束后不启动自动化评估流程，适合临时测试型 run",
     )
     parser.add_argument(
         "--single-timeout-retry-backoff-seconds",
@@ -1671,6 +1676,15 @@ def automated_evaluation_launch_failed(output_root: Path, exc: Exception) -> dic
     }
 
 
+def automated_evaluation_skipped(output_root: Path) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "reason": "disabled_by_cli",
+        "output_root": str(output_root),
+        **analysis_paths(output_root),
+    }
+
+
 
 def build_execution_error_evaluation(record: BenchmarkRecord, *, error_message: str) -> EvaluationResult:
     return _shared_build_execution_error_evaluation(record, error_message=error_message)
@@ -2109,11 +2123,15 @@ def main() -> int:
         },
     }
     save_json(output_root / "runtime-manifest.json", runtime_manifest)
-    try:
-        automated_evaluation_status = launch_automated_evaluation(output_root)
-    except Exception as exc:
-        automated_evaluation_status = automated_evaluation_launch_failed(output_root, exc)
+    if bool(getattr(args, "no_analysis", False)):
+        automated_evaluation_status = automated_evaluation_skipped(output_root)
         save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
+    else:
+        try:
+            automated_evaluation_status = launch_automated_evaluation(output_root)
+        except Exception as exc:
+            automated_evaluation_status = automated_evaluation_launch_failed(output_root, exc)
+            save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
     runtime_manifest["automated_evaluation"] = automated_evaluation_status
     save_json(output_root / "runtime-manifest.json", runtime_manifest)
     print(json.dumps({"output_dir": str(output_root), "summary": summary}, indent=2, ensure_ascii=False))
