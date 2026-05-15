@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.core.convergence import ConvergencePolicy, has_final_answer_marker, is_timeout_family_text
+from benchmarking.core.convergence import (
+    ConvergencePolicy,
+    has_final_answer_marker,
+    is_complete_answer_for_eval,
+    is_timeout_family_text,
+)
 from benchmarking.skills.audit import build_skill_use_audit
 
 
@@ -286,6 +291,7 @@ def classify_agent_error_payload(
     payloads: list[dict[str, Any]],
     runner_meta: dict[str, Any],
     full_response_text: str,
+    eval_kind: str = "",
 ) -> AgentErrorClassification | None:
     if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text):
         return None
@@ -295,7 +301,14 @@ def classify_agent_error_payload(
     stop_reason = str(runner_meta.get("stopReason") or "").strip().lower()
     finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
     liveness_state = str(runner_meta.get("livenessState") or "").strip()
-    has_complete_answer = bool(has_final_answer_marker(full_response_text) or HLE_ANSWER_RE.search(full_response_text))
+    has_complete_answer = bool(
+        is_complete_answer_for_eval(full_response_text, eval_kind=str(eval_kind or ""))
+        or HLE_ANSWER_RE.search(full_response_text)
+    )
+    replay_invalid_diagnostics = _replay_invalid_diagnostics(
+        runner_meta=runner_meta,
+        payload_is_error=error_payload,
+    )
 
     if (
         any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
@@ -315,6 +328,7 @@ def classify_agent_error_payload(
                 "finishReason": completion.get("finishReason"),
                 "livenessState": runner_meta.get("livenessState"),
                 "replayInvalid": runner_meta.get("replayInvalid"),
+                **({"replay_invalid_diagnostics": replay_invalid_diagnostics} if replay_invalid_diagnostics else {}),
             },
         )
 
@@ -336,10 +350,56 @@ def classify_agent_error_payload(
                 "finishReason": completion.get("finishReason"),
                 "livenessState": runner_meta.get("livenessState"),
                 "replayInvalid": runner_meta.get("replayInvalid"),
+                **({"replay_invalid_diagnostics": replay_invalid_diagnostics} if replay_invalid_diagnostics else {}),
             },
         )
 
     return None
+
+
+def _extract_diagnostic_text(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("message", "error", "code", "type", "reason"):
+            text = str(value.get(key) or "").strip()
+            if text:
+                return text
+    return str(value or "").strip()
+
+
+def _replay_invalid_diagnostics(*, runner_meta: dict[str, Any], payload_is_error: bool) -> dict[str, Any]:
+    if runner_meta.get("replayInvalid") is not True:
+        return {}
+    completion = runner_meta.get("completion") if isinstance(runner_meta.get("completion"), dict) else {}
+    convergence = runner_meta.get("convergence") if isinstance(runner_meta.get("convergence"), dict) else {}
+    existing = convergence.get("replay_invalid_diagnostics")
+    if isinstance(existing, dict):
+        diagnostics = dict(existing)
+        diagnostics.setdefault("reason", "replay_invalid")
+        diagnostics.setdefault("payload_is_error", payload_is_error)
+        return diagnostics
+    diagnostic_candidates = [
+        runner_meta.get("replayInvalidReason"),
+        runner_meta.get("replayError"),
+        runner_meta.get("error"),
+        runner_meta.get("message"),
+        convergence.get("latest_prompt_error"),
+        convergence.get("finalization_rescue_error"),
+    ]
+    diagnostic_text = ""
+    for candidate in diagnostic_candidates:
+        diagnostic_text = _extract_diagnostic_text(candidate)
+        if diagnostic_text:
+            break
+    return {
+        "reason": "replay_invalid",
+        "diagnostic_text": diagnostic_text,
+        "stopReason": runner_meta.get("stopReason"),
+        "finishReason": completion.get("finishReason") or completion.get("stopReason"),
+        "livenessState": runner_meta.get("livenessState"),
+        "payload_is_error": payload_is_error,
+        "latest_prompt_error": convergence.get("latest_prompt_error"),
+        "latest_prompt_error_is_timeout": convergence.get("latest_prompt_error_is_timeout"),
+    }
 
 
 def _candidate_contract_meta(
@@ -954,6 +1014,7 @@ class SingleLLMRunner:
             payloads=payloads,
             runner_meta=runner_meta,
             full_response_text=full_response_text,
+            eval_kind=str(getattr(record, "eval_kind", "") or ""),
         )
         if agent_error is not None and not transcript_answer_recovered and not finalization_rescue_recovered:
             runner_meta["agent_error"] = dict(agent_error.details)

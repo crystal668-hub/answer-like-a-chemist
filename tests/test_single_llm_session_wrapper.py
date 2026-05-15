@@ -780,7 +780,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertTrue(convergence["finalization_rescue_succeeded"])
         self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
 
-    def test_wrapper_finalization_rescue_accepts_research_wide_marker_only_in_rescue(self) -> None:
+    def test_wrapper_recovers_research_final_answer_heading_from_transcript(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -829,7 +829,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
-            first = subprocess.CompletedProcess(
+            completed = subprocess.CompletedProcess(
                 ["openclaw"],
                 0,
                 stdout=json.dumps(
@@ -846,28 +846,263 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 ),
                 stderr="",
             )
-            rescue_text = "## FINAL ANSWER\nThe rescue answer covers the research protocol, evidence, and conclusion."
-            rescue = subprocess.CompletedProcess(
-                ["openclaw"],
-                0,
-                stdout=json.dumps({"result": {"payloads": [{"text": rescue_text}], "meta": {}}}),
-                stderr="",
-            )
 
             with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
-                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]) as run_mock, \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
                 mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
                 exit_code = wrapper.main()
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(2, run_mock.call_count)
+        self.assertEqual(1, run_mock.call_count)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual(rescue_text, result["payloads"][0]["text"])
+        self.assertEqual(
+            "## FINAL ANSWER\nPrimary transcript research answer should not be recovered.",
+            result["payloads"][0]["text"],
+        )
         convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["transcript_answer_recovered"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
+        self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
+
+    def test_wrapper_recovers_research_conclusion_from_transcript_when_replay_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            research_text = (
+                "## 1. Coverage checklist and fact ledger\n"
+                "- done: cover the requested research criteria.\n\n"
+                "## Supported conclusion\n"
+                "The answer covers mechanism, protocol, spectra, and reactivity in a supported synthesis."
+            )
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": research_text}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+                eval_kind="frontierscience_research",
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": research_text}],
+                            "meta": {
+                                "replayInvalid": True,
+                                "stopReason": "stop",
+                                "completion": {"finishReason": "stop"},
+                                "livenessState": "working",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual(research_text, result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["agent_error_payload_detected"])
+        self.assertEqual("agent_response_unavailable", convergence["agent_error_kind"])
+        self.assertTrue(convergence["transcript_answer_recovered"])
+        self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
+        self.assertEqual("replay_invalid", convergence["replay_invalid_diagnostics"]["reason"])
+
+    def test_wrapper_does_not_mark_complete_research_conclusion_as_agent_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text("", encoding="utf-8")
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            research_text = (
+                "## Evidence ledger\n"
+                "The requested source-specific claims are checked above.\n\n"
+                "## Supported conclusion\n"
+                "The answer covers the synthesis protocol, mechanism, spectra, and reactivity evidence."
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+                eval_kind="frontierscience_research",
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": research_text}],
+                            "meta": {
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual(research_text, result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertFalse(convergence["agent_error_payload_detected"])
+        self.assertEqual("", convergence["agent_error_kind"])
         self.assertFalse(convergence["transcript_answer_recovered"])
-        self.assertTrue(convergence["finalization_rescue_succeeded"])
-        self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
+
+    def test_wrapper_reports_replay_invalid_diagnostics_when_not_recovered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Partial research answer without conclusion."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                finalization_grace_seconds=10,
+                eval_kind="frontierscience_research",
+            )
+            first = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "Partial research answer without conclusion."}],
+                            "meta": {
+                                "replayInvalid": True,
+                                "stopReason": "stop",
+                                "completion": {"finishReason": "stop"},
+                                "livenessState": "working",
+                                "error": {"message": "session replay failed while rebuilding context"},
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+            rescue = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps({"result": {"payloads": [{"text": "Still partial."}], "meta": {}}}),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        payload = json.loads(stdout.getvalue())
+        convergence = payload["result"]["meta"]["convergence"]
+        diagnostics = convergence["replay_invalid_diagnostics"]
+        self.assertEqual("replay_invalid", diagnostics["reason"])
+        self.assertIn("session replay failed", diagnostics["diagnostic_text"])
+        self.assertEqual("working", diagnostics["livenessState"])
+        self.assertEqual("stop", diagnostics["stopReason"])
+        self.assertEqual("stop", diagnostics["finishReason"])
 
     def test_wrapper_finalization_rescue_accepts_research_next_line_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

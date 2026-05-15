@@ -16,8 +16,11 @@ RESCUE_FINAL_ANSWER_MARKER_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 RESCUE_RESEARCH_SECTION_MARKER_RE = re.compile(
-    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*"
-    r"(?P<marker>FINAL\s+ANSWER|FINAL\s+SYNTHESIS|FINAL\s+CONCLUSION|SUPPORTED\s+CONCLUSION|CONCLUSION)"
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:\d+(?:\.\d+)*[.)]?\s*)?"
+    r"(?P<marker>"
+    r"FINAL\s+ANSWER|FINAL\s+SYNTHESIS|FINAL(?:\s*/\s*|\s+AND\s+|\s+)CONCLUSION|"
+    r"SUPPORTED\s+CONCLUSION|CONCLUSION"
+    r")"
     r"\s*(?:[:：-]\s*)?(?:\*\*)?\s*(?P<answer>.*)$",
     re.IGNORECASE,
 )
@@ -420,11 +423,24 @@ def is_complete_rescue_answer(text: str, *, eval_kind: str = "") -> bool:
     return _is_complete_frontierscience_research_rescue_answer(candidate)
 
 
+def is_complete_answer_for_eval(text: str, *, eval_kind: str = "") -> bool:
+    candidate = str(text or "").strip()
+    if is_complete_benchmark_answer(candidate):
+        return True
+    if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
+        return False
+    return _is_complete_frontierscience_research_rescue_answer(candidate)
+
+
 def extract_latest_complete_answer_from_transcript(transcript_path: Path) -> str:
+    return extract_latest_complete_answer_from_transcript_for_eval(transcript_path, eval_kind="")
+
+
+def extract_latest_complete_answer_from_transcript_for_eval(transcript_path: Path, *, eval_kind: str = "") -> str:
     for message in reversed(_iter_transcript_messages(transcript_path)):
         if message.get("role") != "assistant":
             continue
         text = _text_from_content(message.get("content"))
-        if is_complete_benchmark_answer(text):
+        if is_complete_answer_for_eval(text, eval_kind=eval_kind):
             return text
     return ""

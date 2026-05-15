@@ -3379,6 +3379,11 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("agent_response_unavailable", out.failure.code)
             self.assertEqual(1, len(calls))
             self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
+            diagnostics = out.failure.details["replay_invalid_diagnostics"]
+            self.assertEqual("replay_invalid", diagnostics["reason"])
+            self.assertEqual("abandoned", diagnostics["livenessState"])
+            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
+            self.assertEqual(diagnostics, out.runner_meta["agent_error"]["replay_invalid_diagnostics"])
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
@@ -3804,6 +3809,7 @@ Points: 0.5, Item: Second criterion
             assert out.failure is not None
             self.assertEqual("agent_response_unavailable", out.failure.code)
             self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
+            self.assertIn("replay_invalid_diagnostics", out.runner_meta["agent_error"])
             self.assertFalse(out.should_score())
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
@@ -3935,6 +3941,64 @@ Points: 0.5, Item: Second criterion
             self.assertIn("## FINAL ANSWER", out.answer.full_response_text)
             assert out.recovery is not None
             self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_accepts_native_research_conclusion_with_blocked_meta(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            research_answer = (
+                "## Evidence ledger\n"
+                "The requested source-specific claims are checked above.\n\n"
+                "## Supported conclusion\n"
+                "The answer covers the synthesis protocol, mechanism, spectra, and reactivity evidence."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return benchmark_test.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": research_answer}],
+                                "meta": {
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = benchmark_test.BenchmarkRecord(
+                record_id="research-demo",
+                dataset="frontierscience",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="frontierscience_research",
+                prompt="Explain the research result.",
+                reference_answer="rubric",
+                payload={"track": "research"},
+            )
+
+            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertEqual(research_answer, out.answer.full_response_text)
+            self.assertNotIn("agent_error", out.runner_meta)
         finally:
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle

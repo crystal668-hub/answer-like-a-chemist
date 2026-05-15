@@ -8,6 +8,7 @@ from pathlib import Path
 from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
+    extract_latest_complete_answer_from_transcript_for_eval,
     is_complete_benchmark_answer,
     is_complete_rescue_answer,
     summarize_transcript_convergence,
@@ -448,6 +449,60 @@ class BenchmarkConvergenceTests(unittest.TestCase):
 
         self.assertFalse(is_complete_benchmark_answer(text))
         self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_research_rescue_accepts_final_slash_conclusion_heading(self) -> None:
+        text = (
+            "## Visible derivation and checks\n"
+            "Evidence and calculations are summarized above.\n\n"
+            "## FINAL / CONCLUSION\n"
+            "Meso-nitrogen modification changes the macrocycle electron count, aromaticity, spectra, and reactivity."
+        )
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_research_rescue_accepts_final_and_conclusion_heading(self) -> None:
+        text = (
+            "## Visible derivation and checks\n"
+            "Evidence and calculations are summarized above.\n\n"
+            "## FINAL AND CONCLUSION\n"
+            "The answer resolves the requested synthesis, spectra, and reactivity criteria."
+        )
+
+        self.assertFalse(is_complete_benchmark_answer(text))
+        self.assertTrue(is_complete_rescue_answer(text, eval_kind="frontierscience_research"))
+
+    def test_research_transcript_recovery_accepts_supported_conclusion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            text = (
+                "## 1. Coverage checklist and fact ledger\n"
+                "- done: cover the requested source-specific claims.\n\n"
+                "## 9. Supported conclusion\n"
+                "The supported conclusion covers the synthetic method, electron count, spectra, and reactivity."
+            )
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            answer = extract_latest_complete_answer_from_transcript_for_eval(
+                transcript,
+                eval_kind="frontierscience_research",
+            )
+            generic_answer = extract_latest_complete_answer_from_transcript(transcript)
+
+        self.assertEqual(text, answer)
+        self.assertEqual("", generic_answer)
 
     def test_rescue_rejects_empty_or_process_only_research_markers(self) -> None:
         self.assertFalse(is_complete_rescue_answer("Reasoning\nFINAL ANSWER:\n\n", eval_kind="frontierscience_research"))

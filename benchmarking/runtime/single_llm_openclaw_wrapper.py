@@ -16,8 +16,8 @@ if __package__ in {None, ""}:
 
 from benchmarking.core.convergence import (
     ConvergencePolicy,
-    extract_latest_complete_answer_from_transcript,
-    is_complete_benchmark_answer,
+    extract_latest_complete_answer_from_transcript_for_eval,
+    is_complete_answer_for_eval,
     is_complete_rescue_answer,
     summarize_transcript_convergence,
 )
@@ -107,12 +107,12 @@ def _target_result_payload(payload: Any) -> dict[str, Any] | None:
     return payload
 
 
-def _is_timeout_like_payload(target: dict[str, Any]) -> bool:
+def _is_timeout_like_payload(target: dict[str, Any], *, eval_kind: str = "") -> bool:
     payload_texts = _payload_texts(target)
     for text in payload_texts:
         if any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS):
             return True
-    if any(is_complete_benchmark_answer(text) for text in payload_texts):
+    if any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in payload_texts):
         return False
     meta = target.get("meta") if isinstance(target.get("meta"), dict) else {}
     return bool(meta.get("aborted") is True or str(meta.get("livenessState") or "") == "blocked")
@@ -141,7 +141,48 @@ def _has_error_payload_marker(target: dict[str, Any]) -> bool:
     return any(isinstance(item, dict) and item.get("isError") is True for item in payloads)
 
 
-def _classify_agent_error_payload(target: dict[str, Any]) -> str:
+def _extract_error_text(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("message", "error", "code", "type", "reason"):
+            text = str(value.get(key) or "").strip()
+            if text:
+                return text
+    text = str(value or "").strip()
+    return text
+
+
+def _replay_invalid_diagnostics(target: dict[str, Any]) -> dict[str, Any]:
+    meta = target.get("meta") if isinstance(target.get("meta"), dict) else {}
+    if meta.get("replayInvalid") is not True:
+        return {}
+    completion = meta.get("completion") if isinstance(meta.get("completion"), dict) else {}
+    convergence = meta.get("convergence") if isinstance(meta.get("convergence"), dict) else {}
+    diagnostic_candidates = [
+        meta.get("replayInvalidReason"),
+        meta.get("replayError"),
+        meta.get("error"),
+        meta.get("message"),
+        convergence.get("latest_prompt_error"),
+        convergence.get("finalization_rescue_error"),
+    ]
+    diagnostic_text = ""
+    for candidate in diagnostic_candidates:
+        diagnostic_text = _extract_error_text(candidate)
+        if diagnostic_text:
+            break
+    return {
+        "reason": "replay_invalid",
+        "diagnostic_text": diagnostic_text,
+        "stopReason": meta.get("stopReason"),
+        "finishReason": completion.get("finishReason") or completion.get("stopReason"),
+        "livenessState": meta.get("livenessState"),
+        "payload_is_error": _has_error_payload_marker(target),
+        "latest_prompt_error": convergence.get("latest_prompt_error"),
+        "latest_prompt_error_is_timeout": convergence.get("latest_prompt_error_is_timeout"),
+    }
+
+
+def _classify_agent_error_payload(target: dict[str, Any], *, eval_kind: str = "") -> str:
     payload_texts = _payload_texts(target)
     if _has_timeout_sentinel_payload(target):
         return ""
@@ -150,7 +191,7 @@ def _classify_agent_error_payload(target: dict[str, Any]) -> str:
     stop_reason = str(meta.get("stopReason") or "").strip().lower()
     finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
     liveness_state = str(meta.get("livenessState") or "").strip()
-    has_complete_answer = any(is_complete_benchmark_answer(text) for text in payload_texts)
+    has_complete_answer = any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in payload_texts)
 
     if (
         any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
@@ -215,23 +256,26 @@ def _time_reminder_meta_from_result(result: subprocess.CompletedProcess[str], ar
     return _base_time_reminder_meta(args)
 
 
-def _has_complete_answer_in_payload(payload: Any) -> bool:
+def _has_complete_answer_in_payload(payload: Any, *, eval_kind: str = "") -> bool:
     target = _target_result_payload(payload)
     if target is None:
         return False
-    return any(is_complete_benchmark_answer(text) for text in _payload_texts(target))
+    return any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in _payload_texts(target))
 
 
-def _has_complete_answer_in_result(result: subprocess.CompletedProcess[str], audit: dict[str, Any]) -> bool:
+def _has_complete_answer_in_result(result: subprocess.CompletedProcess[str], audit: dict[str, Any], *, eval_kind: str = "") -> bool:
     output = (result.stdout or "").strip() or (result.stderr or "").strip()
     if output:
         try:
-            if _has_complete_answer_in_payload(parse_openclaw_json_output(output)):
+            if _has_complete_answer_in_payload(parse_openclaw_json_output(output), eval_kind=eval_kind):
                 return True
         except Exception:
             pass
     transcript_path = transcript_path_from_audit(audit)
-    return bool(transcript_path is not None and extract_latest_complete_answer_from_transcript(transcript_path))
+    return bool(
+        transcript_path is not None
+        and extract_latest_complete_answer_from_transcript_for_eval(transcript_path, eval_kind=eval_kind)
+    )
 
 
 def _parse_remaining_seconds(value: Any) -> int:
@@ -330,10 +374,14 @@ def merge_convergence_metadata(
     transcript_path = transcript_path_from_audit(audit)
     if transcript_path is not None:
         convergence_meta.update(summarize_transcript_convergence(transcript_path))
-    agent_error_kind = _classify_agent_error_payload(target)
+    eval_kind = str(getattr(args, "eval_kind", "") or "")
+    agent_error_kind = _classify_agent_error_payload(target, eval_kind=eval_kind)
     if agent_error_kind:
         convergence_meta["agent_error_payload_detected"] = True
         convergence_meta["agent_error_kind"] = agent_error_kind
+    replay_diagnostics = _replay_invalid_diagnostics(target)
+    if replay_diagnostics:
+        convergence_meta["replay_invalid_diagnostics"] = replay_diagnostics
 
     meta = target.setdefault("meta", {})
     if isinstance(meta, dict):
@@ -343,9 +391,12 @@ def merge_convergence_metadata(
         meta["convergence"] = merged
 
     error_like = bool(agent_error_kind)
-    timeout_like = _is_timeout_like_payload(target)
+    timeout_like = _is_timeout_like_payload(target, eval_kind=eval_kind)
     if transcript_path is not None and (timeout_like or error_like):
-        recovered = extract_latest_complete_answer_from_transcript(transcript_path)
+        recovered = extract_latest_complete_answer_from_transcript_for_eval(
+            transcript_path,
+            eval_kind=eval_kind,
+        )
         if recovered:
             target["payloads"] = [{"text": recovered}]
             meta = target.setdefault("meta", {})
@@ -360,7 +411,10 @@ def merge_convergence_metadata(
         and env is not None
         and transcript_path is not None
         and _session_isolation_ok(audit)
-        and not any(is_complete_benchmark_answer(text) for text in _payload_texts(target))
+        and not any(
+            is_complete_answer_for_eval(text, eval_kind=eval_kind)
+            for text in _payload_texts(target)
+        )
     ):
         _try_finalization_rescue(target, args=args, env=env)
     return payload
@@ -465,7 +519,7 @@ def _maybe_run_time_reminder(
     if not reminder_meta.get("due_before_primary_return"):
         reminder_meta["skipped_reason"] = "threshold_not_reached"
         return primary_result, reminder_meta
-    if _has_complete_answer_in_result(primary_result, audit):
+    if _has_complete_answer_in_result(primary_result, audit, eval_kind=str(getattr(args, "eval_kind", "") or "")):
         reminder_meta["skipped_reason"] = "complete_answer_available"
         return primary_result, reminder_meta
     remaining_seconds = _parse_remaining_seconds(reminder_meta.get("remaining_seconds_at_primary_return"))
