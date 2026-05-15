@@ -733,6 +733,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 timeout=30,
                 json=True,
                 finalization_grace_seconds=10,
+                eval_kind="superchem_multiple_choice_rpf",
             )
             first = subprocess.CompletedProcess(
                 ["openclaw"],
@@ -766,10 +767,15 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(2, run_mock.call_count)
         rescue_kwargs = run_mock.call_args_list[1].kwargs
-        self.assertEqual(10, rescue_kwargs["timeout_override"])
-        self.assertIn("complete visible derivation and checks", rescue_kwargs["message_override"])
+        self.assertNotIn("timeout_override", rescue_kwargs)
+        self.assertIn("did not organize a final answer", rescue_kwargs["message_override"])
+        self.assertIn("reasoning chain, calculations, tool verification results, and evidence", rescue_kwargs["message_override"])
+        self.assertIn("check consistency across the prior reasoning", rescue_kwargs["message_override"])
         self.assertIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
-        self.assertNotIn("concise visible justification", rescue_kwargs["message_override"])
+        self.assertIn("separate multiple correct letters with `|`", rescue_kwargs["message_override"])
+        self.assertNotIn("## FINAL RESEARCH ANSWER", rescue_kwargs["message_override"])
+        self.assertNotIn("Explanation:", rescue_kwargs["message_override"])
+        self.assertNotIn("Confidence:", rescue_kwargs["message_override"])
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
         self.assertEqual("Visible check.\nFINAL ANSWER: B", result["payloads"][0]["text"])
@@ -1273,8 +1279,36 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
 
         self.assertEqual(0, exit_code)
         rescue_kwargs = run_mock.call_args_list[1].kwargs
+        self.assertNotIn("timeout_override", rescue_kwargs)
+        self.assertIn("did not organize a final answer", rescue_kwargs["message_override"])
         self.assertIn("## FINAL RESEARCH ANSWER", rescue_kwargs["message_override"])
         self.assertIn("<rubric-complete final synthesis>", rescue_kwargs["message_override"])
+        self.assertIn("Do not add the short-answer `FINAL ANSWER:` marker", rescue_kwargs["message_override"])
+        self.assertNotIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
+        self.assertNotIn("Explanation:", rescue_kwargs["message_override"])
+
+    def test_wrapper_hle_finalization_rescue_prompt_uses_hle_format_only(self) -> None:
+        prompt = wrapper.build_finalization_rescue_prompt("hle")
+
+        self.assertIn("did not organize a final answer", prompt)
+        self.assertIn("Explanation: <your visible derivation and checks>", prompt)
+        self.assertIn("Answer: <your chosen answer>", prompt)
+        self.assertIn("Confidence: <your confidence score between 0% and 100%>", prompt)
+        self.assertIn("Do not add `FINAL ANSWER:`", prompt)
+        self.assertNotIn("FINAL ANSWER: <answer>", prompt)
+        self.assertNotIn("## FINAL RESEARCH ANSWER", prompt)
+
+    def test_wrapper_short_answer_finalization_rescue_prompt_is_eval_kind_specific(self) -> None:
+        chembench_prompt = wrapper.build_finalization_rescue_prompt("chembench_open_ended")
+        olympiad_prompt = wrapper.build_finalization_rescue_prompt("frontierscience_olympiad")
+
+        self.assertIn("formulae, substitutions, units, rounding, or exact string evidence", chembench_prompt)
+        self.assertIn("FINAL ANSWER: <answer>", chembench_prompt)
+        self.assertNotIn("## FINAL RESEARCH ANSWER", chembench_prompt)
+        self.assertNotIn("FINAL ANSWER: <option letters>", chembench_prompt)
+        self.assertIn("requested value, expression, formula, structure name, or entity", olympiad_prompt)
+        self.assertIn("FINAL ANSWER: <answer>", olympiad_prompt)
+        self.assertNotIn("Explanation:", olympiad_prompt)
 
     def test_wrapper_finalization_rescue_keeps_error_payload_when_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

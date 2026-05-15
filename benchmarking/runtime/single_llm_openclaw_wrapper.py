@@ -55,13 +55,56 @@ TIME_REMINDER_PROMPT = """TIME REMINDER:
 Less than one third of the answer budget remains. Please quickly organize the reasoning chain already available in this session.
 Converge on a complete final answer in the required format.
 Do not start new tool chains or skill exploration unless one short decisive check is clearly necessary."""
-FINALIZATION_RESCUE_PROMPT = """The previous benchmark turn ended before a visible final answer was emitted.
-Do not call tools or inspect files. Use only the reasoning already present in this session.
-Provide a brief but complete visible derivation and checks, then provide the final answer in the required format from the benchmark prompt.
-For FrontierScience research-track tasks, end with exactly:
-## FINAL RESEARCH ANSWER
-<rubric-complete final synthesis>
-For multiple-choice questions, use: FINAL ANSWER: <option letters>"""
+def build_finalization_rescue_prompt(eval_kind: str = "") -> str:
+    kind = str(eval_kind or "").strip()
+    common = [
+        "The previous turn did not organize a final answer that satisfies the benchmark output requirements.",
+        "Do not call tools or inspect files.",
+        "Use only the reasoning chain, calculations, tool verification results, and evidence already present in this session.",
+        "Before answering, check consistency across the prior reasoning and then follow only the output requirements for this task type.",
+    ]
+    if kind == "frontierscience_research":
+        specific = [
+            "This is a FrontierScience research-track chemistry task scored against itemized reasoning criteria.",
+            "Provide a complete, structured, multi-part research synthesis covering every requested condition, calculation, mechanism, protocol consequence, and conclusion.",
+            "Keep rubric-relevant derivations, assumptions, units, evidence, and justifications visible before the final research section.",
+            "Do not add the short-answer `FINAL ANSWER:` marker used by non-research tasks.",
+            "End with exactly this Markdown heading and section:",
+            "## FINAL RESEARCH ANSWER",
+            "<rubric-complete final synthesis>",
+        ]
+    elif kind == "superchem_multiple_choice_rpf":
+        specific = [
+            "This is a chemistry multiple-choice question.",
+            "Provide concise visible option checks that distinguish the candidates.",
+            "End with exactly one line formatted as: FINAL ANSWER: <option letters>.",
+            "Use only uppercase option letters; separate multiple correct letters with `|`.",
+        ]
+    elif kind == "chembench_open_ended":
+        specific = [
+            "Provide the necessary formulae, substitutions, units, rounding, or exact string evidence for the answer.",
+            "End with exactly one line formatted as: FINAL ANSWER: <answer>.",
+        ]
+    elif kind == "frontierscience_olympiad":
+        specific = [
+            "End with exactly one line formatted as: FINAL ANSWER: <answer>.",
+            "The final line should contain only the requested value, expression, formula, structure name, or entity, including required units or rounding.",
+            "Do not provide multiple answer attempts.",
+        ]
+    elif kind == "hle":
+        specific = [
+            "Use the official HLE response format exactly:",
+            "Explanation: <your visible derivation and checks>",
+            "Answer: <your chosen answer>",
+            "Confidence: <your confidence score between 0% and 100%>",
+            "Do not add `FINAL ANSWER:` to HLE responses.",
+        ]
+    else:
+        specific = [
+            "Provide a complete answer based on the existing session reasoning.",
+            "If a final answer line is needed, use: FINAL ANSWER: <answer>.",
+        ]
+    return "\n".join(common + specific)
 
 
 def parse_args() -> argparse.Namespace:
@@ -293,13 +336,11 @@ def _try_finalization_rescue(
     args: argparse.Namespace,
     env: dict[str, str],
 ) -> bool:
-    grace_seconds = max(1, int(getattr(args, "finalization_grace_seconds", 90) or 90))
     try:
         result = run_openclaw(
             args,
             env=env,
-            message_override=FINALIZATION_RESCUE_PROMPT,
-            timeout_override=grace_seconds,
+            message_override=build_finalization_rescue_prompt(str(getattr(args, "eval_kind", "") or "")),
         )
     except Exception as exc:
         _merge_convergence(
