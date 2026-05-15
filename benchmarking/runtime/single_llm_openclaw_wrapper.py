@@ -115,7 +115,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--message", required=True, help="Prompt to send to OpenClaw.")
     parser.add_argument("--thinking", help="Forward OpenClaw thinking override.")
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw timeout override in seconds.")
-    parser.add_argument("--finalization-grace-seconds", type=int, default=90)
     parser.add_argument("--eval-kind", default="", help="Benchmark eval kind for rescue-only answer recovery.")
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output and attach isolation audit.")
     return parser.parse_args()
@@ -403,7 +402,6 @@ def merge_convergence_metadata(
         return payload
     policy = ConvergencePolicy(
         timeout_seconds=int(getattr(args, "timeout", 0) or 0),
-        finalization_grace_seconds=int(getattr(args, "finalization_grace_seconds", 90)),
     )
     convergence_meta: dict[str, Any] = {
         "policy": policy.to_meta(),

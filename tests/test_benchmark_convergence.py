@@ -17,13 +17,13 @@ from benchmarking.core.convergence import (
 
 class BenchmarkConvergenceTests(unittest.TestCase):
     def test_policy_serializes_to_metadata(self) -> None:
-        policy = ConvergencePolicy(timeout_seconds=900, finalization_grace_seconds=60)
+        policy = ConvergencePolicy(timeout_seconds=900)
 
         self.assertEqual(
             {
                 "timeout_seconds": 900,
                 "stop_fraction": 0.2,
-                "finalization_grace_seconds": 60,
+                "finalization_safety_seconds": 90,
                 "max_unchanged_status_polls": 2,
                 "max_recovery_attempts": 2,
             },

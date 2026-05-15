@@ -403,12 +403,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chemqa-timeout", type=int, default=1800, help="ChemQA fixed-lane review 每题超时秒数")
     parser.add_argument("--judge-timeout", type=int, default=300, help="Judge 每次评测超时秒数")
     parser.add_argument(
-        "--finalization-grace-seconds",
-        type=int,
-        default=90,
-        help="Reserved grace window for final answer recovery/finalization",
-    )
-    parser.add_argument(
         "--max-unchanged-status-polls",
         type=int,
         default=2,
@@ -1835,13 +1829,11 @@ def main() -> int:
     timeout_mode = "no_timeout" if bool(getattr(args, "no_timeout", False)) else "bounded"
     single_convergence_policy = ConvergencePolicy(
         timeout_seconds=args.single_timeout,
-        finalization_grace_seconds=args.finalization_grace_seconds,
         max_unchanged_status_polls=args.max_unchanged_status_polls,
         max_recovery_attempts=args.max_recovery_attempts,
     )
     chemqa_convergence_policy = ConvergencePolicy(
         timeout_seconds=args.chemqa_timeout,
-        finalization_grace_seconds=args.finalization_grace_seconds,
         max_unchanged_status_polls=args.max_unchanged_status_polls,
         max_recovery_attempts=args.max_recovery_attempts,
     )

@@ -590,7 +590,7 @@ class SingleLLMRunner:
             return NO_TIMEOUT_SUBPROCESS_GUARD_SECONDS
         return (
             int(self.convergence_policy.timeout_seconds)
-            + int(self.convergence_policy.finalization_grace_seconds)
+            + int(self.convergence_policy.finalization_safety_seconds)
             + 30
         )
 
@@ -611,17 +611,12 @@ class SingleLLMRunner:
             prompt,
             "--thinking",
             self._benchmark_agent_thinking,
-            "--finalization-grace-seconds",
-            str(self.convergence_policy.finalization_grace_seconds),
             "--eval-kind",
             str(getattr(record, "eval_kind", "") or ""),
             "--json",
         ]
         if not self.no_timeout:
-            command[command.index("--finalization-grace-seconds"):command.index("--finalization-grace-seconds")] = [
-                "--timeout",
-                str(self.convergence_policy.timeout_seconds),
-            ]
+            command.extend(["--timeout", str(self.convergence_policy.timeout_seconds)])
         return command
 
     @staticmethod

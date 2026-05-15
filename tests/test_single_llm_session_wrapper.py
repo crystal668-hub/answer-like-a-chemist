@@ -501,7 +501,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="hle",
             )
             completed = subprocess.CompletedProcess(
@@ -529,7 +528,8 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual("Explanation: ok\nAnswer: 273\nConfidence: 60%", result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
         self.assertTrue(convergence["transcript_answer_recovered"])
-        self.assertEqual(10, convergence["policy"]["finalization_grace_seconds"])
+        self.assertEqual(90, convergence["policy"]["finalization_safety_seconds"])
+        self.assertNotIn("finalization_grace_seconds", convergence["policy"])
         self.assertEqual(1, convergence["tool_call_count"])
         self.assertEqual(2, convergence["assistant_turn_count"])
 
@@ -579,7 +579,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="superchem_multiple_choice_rpf",
             )
             completed = subprocess.CompletedProcess(
@@ -661,7 +660,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="superchem_multiple_choice_rpf",
             )
             completed = subprocess.CompletedProcess(
@@ -732,7 +730,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="superchem_multiple_choice_rpf",
             )
             first = subprocess.CompletedProcess(
@@ -832,7 +829,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             completed = subprocess.CompletedProcess(
@@ -918,7 +914,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             completed = subprocess.CompletedProcess(
@@ -992,7 +987,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             completed = subprocess.CompletedProcess(
@@ -1066,7 +1060,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             first = subprocess.CompletedProcess(
@@ -1151,7 +1144,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             first = subprocess.CompletedProcess(
@@ -1231,7 +1223,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="frontierscience_research",
             )
             first = subprocess.CompletedProcess(
@@ -1351,7 +1342,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
                 eval_kind="superchem_multiple_choice_rpf",
             )
             first = subprocess.CompletedProcess(
@@ -1443,7 +1433,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=30,
                 json=True,
-                finalization_grace_seconds=10,
             )
             completed = subprocess.CompletedProcess(
                 ["openclaw"],
@@ -1486,7 +1475,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=900,
                 json=True,
-                finalization_grace_seconds=90,
             )
             completed = self.attach_time_reminder_meta(
                 self.agent_result("Reasoning.\nFINAL ANSWER: B"),
@@ -1533,7 +1521,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=900,
                 json=True,
-                finalization_grace_seconds=90,
             )
             completed = self.attach_time_reminder_meta(
                 self.agent_result("Reasoning.\nFINAL ANSWER: B"),
@@ -1579,7 +1566,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=900,
                 json=True,
-                finalization_grace_seconds=90,
             )
             primary = self.attach_time_reminder_meta(
                 self.agent_result("Partial reasoning without final marker."),
@@ -1632,7 +1618,6 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 thinking="high",
                 timeout=900,
                 json=True,
-                finalization_grace_seconds=90,
             )
             completed = self.attach_time_reminder_meta(
                 self.agent_result("Request timed out before a response was generated.", meta={"aborted": True}),

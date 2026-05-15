@@ -160,7 +160,7 @@ CHECKLIST_STATE_RE = re.compile(r"\b(?:todo|done|blocked)\b", re.IGNORECASE)
 class ConvergencePolicy:
     timeout_seconds: int
     stop_fraction: float = 0.2
-    finalization_grace_seconds: int = 90
+    finalization_safety_seconds: int = 90
     max_unchanged_status_polls: int = 2
     max_recovery_attempts: int = 2
 

@@ -178,8 +178,6 @@ def run_web_search_preflight(
             "minimal",
             "--timeout",
             str(timeout_seconds),
-            "--finalization-grace-seconds",
-            "10",
             "--json",
         ]
         try:
