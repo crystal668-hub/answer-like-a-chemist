@@ -22,8 +22,8 @@ Do not use this skill for structure lookup, nomenclature resolution, or literatu
 ## Execution
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root . \
   --execution-cwd "$PWD" \
   --script skills/chem-calculator/scripts/<capability>.py -- \
   --request-json /path/to/request.json \
@@ -35,4 +35,4 @@ python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
 - Every script writes `result.json` in the output directory.
 - `--json` prints the same top-level payload written to `result.json`.
 
-Read [contracts.md](/Users/xutao/.openclaw/workspace/skills/chem-calculator/references/contracts.md) for supported request modes and failure semantics.
+Read [contracts.md](references/contracts.md) for supported request modes and failure semantics.

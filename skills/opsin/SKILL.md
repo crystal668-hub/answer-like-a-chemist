@@ -29,8 +29,8 @@ Prefer `pubchem` instead for trivial names, trade names, abbreviations, or broad
 ## Standard Command
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root . \
   --execution-cwd "$PWD" \
   --script skills/opsin/scripts/<capability>.py -- \
   --request-json /path/to/request.json \
@@ -40,4 +40,4 @@ python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
 
 Each script writes `result.json` in `--output-dir` and prints the same payload when `--json` is set.
 
-Read [references/contracts.md](/Users/xutao/.openclaw/workspace/skills/opsin/references/contracts.md) for request and response details.
+Read [references/contracts.md](references/contracts.md) for request and response details.

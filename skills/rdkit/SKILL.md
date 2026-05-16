@@ -19,8 +19,8 @@ The skill is fully local:
 ## Command Pattern
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root . \
   --execution-cwd "$PWD" \
   --script skills/rdkit/scripts/<capability>.py -- \
   --request-json /path/to/request.json \

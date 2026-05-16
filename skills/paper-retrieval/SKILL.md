@@ -21,8 +21,8 @@ Do not use this skill for downloading or parsing documents.
 ## Execution
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root . \
   --execution-cwd "$PWD" \
   --script skills/paper-retrieval/scripts/paper_retrieval.py -- \
   --query "Pt/C HER alkaline electrolyte" \

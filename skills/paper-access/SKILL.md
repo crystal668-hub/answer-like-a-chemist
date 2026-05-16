@@ -22,8 +22,8 @@ Do not use this skill for parsing or reranking.
 ## Execution
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root . \
   --execution-cwd "$PWD" \
   --script skills/paper-access/scripts/paper_access.py -- \
   --request-json /path/to/request.json \
