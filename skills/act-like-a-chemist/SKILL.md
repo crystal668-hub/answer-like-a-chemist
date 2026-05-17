@@ -123,8 +123,3 @@ For organic mechanism, synthesis, product, or intermediate questions:
 - Research/source tasks: show a compact fact ledger, source or tool evidence for material claims, the mechanism/calculation chain, any remaining uncertainty, and final synthesis.
 - If evidence is already sufficient to answer, stop exploring tools and produce the final answer. More search is not a substitute for a clear visible trace.
 - If paper or web paths return 403, 429, empty results, or unavailable payloads twice in total, stop broadening that path and answer from available evidence with the limitation marked.
-
-## Empirical Lessons
-
-- Benchmark agents must not search for alternate skill runners or call skill scripts directly with `python` or `python3`; use the benchmark prompt's canonical `scripts/run_skill.py` wrapper when a provider skill is needed.
-- For multimodal multiple-choice chemistry, inspect the local question bundle and referenced images first. If those inputs distinguish the options, close with option checks and `FINAL ANSWER:` instead of reading unrelated skills.
