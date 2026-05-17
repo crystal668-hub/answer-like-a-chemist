@@ -29,7 +29,6 @@
   - `DONE`: Rerank papers by building GROBID profiles and calling an OpenAI-compatible chat-completions endpoint via `workspace/skills/paper-rerank/scripts/paper_rerank.py`.
   - `DONE`: Terminate benchmark-owned leftover processes from manifests/leases while preserving session files, session stores, run-scoped artifacts, manifests, and cleanup reports via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
   - `DONE`: Manage local Docker-backed GROBID via `workspace/scripts/docker_services.sh` and native macOS MinerU API via `workspace/scripts/mineru_service.sh`.
-  - `DONE`: Repair temporary SuperChem benchmark JSONL image path state with `workspace/scripts/repair_temp_superchem_image_paths.py`, including stale absolute path rewriting and optional pruning of unused image paths based on per-record `/media/uploads/...` locators.
   - `NOT_IMPLEMENTED`: No actual web UI/server is implemented in the repo despite `web-ui` optional dependencies in `workspace/pyproject.toml`.
 
 ## 2. System Architecture
