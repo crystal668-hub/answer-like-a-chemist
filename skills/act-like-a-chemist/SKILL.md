@@ -84,6 +84,7 @@ Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for
 ## Candidate / Hypothesis Verification
 
 - Treat tool results as evidence, not verdicts. If a tool checks a guessed answer, state whether it verifies an intermediate step or the decisive final-answer condition.
+- When enumeration is needed, first use deterministic prompt constraints, conservation laws, formula/mass/charge limits, symmetry, option constraints, or required mechanism steps to narrow the candidate set. Then enumerate and verify the reduced plausible set. Do not enumerate every possible candidate first and test them one by one when deterministic reasoning can shrink the space.
 - When plausible competing candidates exist, compare the key candidates side by side before choosing. Do not verify only the first candidate that gives a usable tool result.
 - A database hit, formula match, approximate numeric match, valid structure, or retrieved source can establish local support. It is not sufficient final-answer evidence unless it also satisfies the task's discriminating constraints or the competing candidates have been rejected.
 
