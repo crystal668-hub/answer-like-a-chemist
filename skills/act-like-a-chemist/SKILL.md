@@ -18,27 +18,40 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 ## Standard Answering Flow
 
 1. Identify the task type, answer format, structures, conditions, images, data tables, and external-source requirements.
-2. Write a compact Coverage Checklist using the relevant task template below. Use `todo` for unresolved evidence gaps, `done` only after all subchecks needed for that gap are covered, and `blocked` for gaps that cannot be resolved after bounded verification.
+2. Write a compact Atomic Coverage Checklist using the relevant task template below. Split the solution path into atomic tasks, including known givens, formulas, unit conversions, intermediate values, mechanism steps, comparison classes, prompt constraints, and final-answer slots. Use `todo` until each atom is locally solved, `done` only after its derivation or evidence is complete, and `blocked` for atoms that cannot be resolved after bounded verification.
 3. Write a compact fact ledger for the important claims:
    - `given`: directly stated by the prompt or attached material.
    - `derived`: obtained by calculation, conservation, or mechanism reasoning.
    - `tool-verified`: checked with a local skill or tool.
    - `source-supported`: checked against a retrieved paper, database, or provided source.
    - `assumption`: necessary but unverified; mark the risk.
-4. Choose only the provider skills needed to close concrete `todo` items for uncertain or high-impact subclaims. Before each tool call, name the checklist gap it should close and the expected output shape.
-5. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted gap: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an item `done` only after the complete gap, not just one useful subcheck, is supported.
-6. When coverage is sufficient or blocked, stop starting new tool paths and run a final consistency review: confirm each checklist gap is fully covered or explicitly blocked; the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
+4. Choose only the provider skills needed to close concrete `todo` atoms for uncertain or high-impact subclaims. Before each tool call, name the exact atom it should inform and the expected output shape.
+5. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted atom: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an atom `done` only after that exact task is satisfied; a useful tool result does not close neighboring atoms.
+6. When all atoms are `done` or `blocked`, run a final consistency review: Re-check every `blocked` atom to see whether prompt evidence, derivation, or earlier tool output now resolves it; confirm each completed atom appears in the answer plan; verify final values, units, dimensionality, rounding, formula or concept fit, structure/count/option constraints, and comparison cases one by one.
 7. End in the exact requested format while preserving the visible checkpoints that justify it.
 
-## Coverage Checklist
+## Atomic Coverage Checklist
 
-For chemistry questions, start visible work by writing a compact coverage checklist. Use only these states:
+For chemistry questions, start visible work by writing a compact Atomic Coverage Checklist. It is a high-granularity solution outline, not just a list of unknowns. Include atomic tasks for prompt-provided facts and known givens as well as unknowns, because the final answer must visibly carry the whole reasoning path.
 
-- `todo`: a coverage gap that must be filled before a reliable answer.
-- `done`: a coverage gap whose required subchecks are all satisfied by prompt evidence, derivation, source evidence, or tool output. A single useful evidence item is not enough when the gap requires multiple checks.
-- `blocked`: a gap that cannot be resolved within the available tools or after the allowed failure budget.
+Use only these states:
 
-Every tool call must target a specific `todo` item. Before calling a tool, state the checklist gap it will inform and the expected output shape. After the call, classify the result as `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark the item `done` only if all subchecks required by that gap are covered; otherwise keep it `todo` or mark it `blocked`.
+- `todo`: an atomic task that is part of the solution path and has not yet been shown.
+- `done`: an atomic task whose local derivation, prompt support, source evidence, or scoped evidence is complete.
+- `blocked`: an atomic task that cannot be resolved within the available tools or after the allowed failure budget.
+
+Build atoms at the granularity a grader would need to award visible reasoning credit:
+
+- givens and known prompt facts that must be reused in calculations or comparisons;
+- requested output format, units, rounding, and final-answer slots;
+- formulas, substitutions, conversions, algebraic systems, and intermediate values;
+- mechanism steps, reactive roles, oxidation states, bond changes, site/structure constraints, and competing pathways;
+- all options, candidates, catalyst/material variants, protocol changes, or comparison classes named by the prompt;
+- source-specific entities, assay/protocol conditions, named intermediates, spectra peaks, identifiers, and experimental observations.
+
+Every tool call must target a specific `todo` atom. Before calling a tool, state the atom it will inform and the expected output shape. After the call, classify the result as `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark the atom `done` only if that exact atom is covered; otherwise keep it `todo` or mark it `blocked`.
+
+Tool output is scoped evidence, not absolute authority. A tool result can verify an intermediate atom, such as a molar mass, structure validity, database property, or paper excerpt. It does not override prompt constraints, competing candidates, rubric-like requirements, dimensional checks, or final reasoning. If a tool verifies only one step, continue solving the remaining atoms instead of treating the tool result as the final answer.
 
 If the same verification target fails twice, mark that item `blocked` and stop trying alternate commands for that target. A script usage error, request-shape error, malformed JSON request, missing required argument, invalid input shape, or timeout counts as a failed attempt for that verification target. Do not spend the benchmark run debugging tool invocation style.
 
@@ -46,25 +59,25 @@ Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for
 
 ### Numeric, Formula, Or Table Tasks
 
-- `todo`: identify requested quantity, formula/law, givens, units, conversions, table values, and rounding rule.
-- `done`: formula is written, substitutions and units are visible, intermediate values are checked, and final precision matches the prompt.
+- `todo`: atomize requested quantity, prompt givens, formula/law, unit conversions, table values, substitutions, intermediate values, algebraic solves, rounding rule, and final value.
+- `done`: each atom is visibly derived or checked, and final precision matches the prompt.
 - `blocked`: missing table/image/source value, inconsistent units, or unavailable calculation verification after two failed attempts.
 
 ### Multiple-Choice Tasks
 
-- `todo`: inspect all provided options/images, define discriminating criteria, and check each option or option group.
+- `todo`: atomize answer format, all provided options/images, discriminating criteria, and accept/reject checks for each option or option group.
 - `done`: every plausible option has a visible accept/reject reason tied to structure, mechanism, calculation, or source evidence.
 - `blocked`: an option depends on unavailable source/image/tool evidence after two failed attempts; choose from remaining evidence and state the limitation.
 
 ### Research Or Open-Ended Tasks
 
-- `todo`: list source-specific claims, required entities, mechanisms, assays, protocols, materials, or calculations that affect the answer.
-- `done`: material claims are supported by retrieved/provided sources, tool output, or explicit derivation, with uncertainty separated from facts.
+- `todo`: atomize source-specific claims, required entities, mechanisms, assays, protocols, materials, calculations, named comparison cases, and final synthesis slots.
+- `done`: each material atom is supported by retrieved/provided sources, scoped evidence, or explicit derivation, with uncertainty separated from facts.
 - `blocked`: full text, database record, identifier resolution, or provider access remains unavailable after two failed attempts.
 
 ### HLE Tasks
 
-- `todo`: identify answer type, required final format, decisive facts, image/table inputs, and any source or tool evidence needed.
+- `todo`: atomize answer type, required final format, decisive facts, image/table inputs, elimination checks, confidence basis, and any source or tool evidence needed.
 - `done`: explanation covers the decisive facts and checks, answer is directly stated, and confidence reflects remaining uncertainty.
 - `blocked`: unresolved evidence is explicitly named before giving the best supported answer in the official HLE format.
 
@@ -130,5 +143,5 @@ For organic mechanism, synthesis, product, or intermediate questions:
 - Multiple-choice: show option checks or grouped option eliminations, name the decisive structure/mechanism/evidence distinction, then finish with `FINAL ANSWER: <letters>`.
 - Numeric: show the governing formula, unit conversions, substituted values, important intermediate numbers, rounding choice, and final answer line.
 - Research/source tasks: show a compact fact ledger, source or tool evidence for material claims, the mechanism/calculation chain, any remaining uncertainty, and final synthesis.
-- If evidence is already sufficient to answer because every checklist gap is fully covered or explicitly blocked, stop exploring tools and produce the final answer. Do not stop only because one tool call returned a useful or promising intermediate result.
+- If evidence is already sufficient to answer because every checklist atom is fully covered or explicitly blocked, stop exploring tools and produce the final answer. Do not stop only because one tool call returned a useful or promising intermediate result.
 - If paper or web paths return 403, 429, empty results, or unavailable payloads twice in total, stop broadening that path and answer from available evidence with the limitation marked.

@@ -55,7 +55,7 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
 
     assert "Skill capability tree" in rendered
     assert "Read `act-like-a-chemist` first" in rendered
-    assert "Coverage Checklist" in rendered
+    assert "Atomic Coverage Checklist" in rendered
     assert "Benchmark Coverage Checklist" not in rendered
     assert "First choose a capability domain" in rendered
     assert "benchmark-solving-protocol" not in rendered

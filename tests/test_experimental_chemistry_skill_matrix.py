@@ -175,7 +175,7 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 
     assert "Skill capability tree:" in prompt
     assert "Read `act-like-a-chemist` first" in prompt
-    assert "Coverage Checklist" in prompt
+    assert "Atomic Coverage Checklist" in prompt
     assert "Benchmark Coverage Checklist" not in prompt
     assert "materials-crystals" in prompt
     assert "paper-pipeline" in prompt
@@ -195,24 +195,26 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     text = (SKILLS_ROOT / "act-like-a-chemist" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "## Coverage Checklist" in text
+    assert "## Atomic Coverage Checklist" in text
     assert "## Benchmark Coverage Checklist" not in text
-    assert "Coverage Checklist" in text
+    assert "Atomic Coverage Checklist" in text
     assert "Standard Answering Flow" in text
-    assert "provider skills needed to close concrete `todo` items" in text
-    assert "coverage is sufficient or blocked" in text
+    assert "provider skills needed to close concrete `todo` atoms" in text
+    assert "all atoms are `done` or `blocked`" in text
     assert "`todo`" in text
     assert "`done`" in text
     assert "`blocked`" in text
+    assert "known givens" in text
+    assert "scoped evidence" in text
     assert "Numeric, Formula, Or Table Tasks" in text
     assert "Multiple-Choice Tasks" in text
     assert "Research Or Open-Ended Tasks" in text
     assert "HLE Tasks" in text
     assert "Do not use `python`, `python3`, `pip`" in text
     assert "usage error" in text
-    assert "only after all subchecks needed for that gap are covered" in text
+    assert "`done` only after its derivation or evidence is complete" in text
     assert "supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`" in text
-    assert "A single useful evidence item is not enough" in text
+    assert "a useful tool result does not close neighboring atoms" in text
     assert "## Candidate / Hypothesis Verification" in text
     assert "Do not verify only the first candidate that gives a usable tool result" in text
     assert "solve for the unknown directly" in text

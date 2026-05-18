@@ -1387,10 +1387,10 @@ Points: 0.5, Item: Second criterion
         )
 
         self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("Coverage Checklist", prompt)
+        self.assertIn("Atomic Coverage Checklist", prompt)
         self.assertNotIn("Benchmark Coverage Checklist", prompt)
         self.assertIn("act-like-a-chemist", prompt)
-        self.assertIn("coverage is sufficient or blocked", prompt)
+        self.assertIn("all checklist atoms are done or blocked", prompt)
         self.assertNotIn("When roughly 30% or less of the budget remains", prompt)
         self.assertNotIn("todo / done / blocked", prompt)
         self.assertNotIn("20% or less", prompt)
