@@ -18,7 +18,7 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 ## Standard Answering Flow
 
 1. Identify the task type, answer format, structures, conditions, images, data tables, and external-source requirements.
-2. Write a compact Coverage Checklist using the relevant task template below. Use `todo` for unresolved evidence gaps, `done` for gaps already covered by prompt evidence or derivation, and `blocked` for gaps that cannot be resolved after bounded verification.
+2. Write a compact Coverage Checklist using the relevant task template below. Use `todo` for unresolved evidence gaps, `done` only after all subchecks needed for that gap are covered, and `blocked` for gaps that cannot be resolved after bounded verification.
 3. Write a compact fact ledger for the important claims:
    - `given`: directly stated by the prompt or attached material.
    - `derived`: obtained by calculation, conservation, or mechanism reasoning.
@@ -26,8 +26,8 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
    - `source-supported`: checked against a retrieved paper, database, or provided source.
    - `assumption`: necessary but unverified; mark the risk.
 4. Choose only the provider skills needed to close concrete `todo` items for uncertain or high-impact subclaims. Before each tool call, name the checklist gap it should close and the expected output shape.
-5. Solve step by step, checking conservation, units, structures, and source facts. Mark an item `done` only when prompt evidence, derivation, source evidence, or tool output actually supports it.
-6. When coverage is sufficient or blocked, stop starting new tool paths and run a final consistency review: confirm the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
+5. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted gap: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an item `done` only after the complete gap, not just one useful subcheck, is supported.
+6. When coverage is sufficient or blocked, stop starting new tool paths and run a final consistency review: confirm each checklist gap is fully covered or explicitly blocked; the final value matches the derived intermediate values; units, dimensionality, and rounding match the requested target; formulas or concepts answer the actual question; and structure constraints, count constraints, and option constraints are satisfied one by one.
 7. End in the exact requested format while preserving the visible checkpoints that justify it.
 
 ## Coverage Checklist
@@ -35,10 +35,10 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 For chemistry questions, start visible work by writing a compact coverage checklist. Use only these states:
 
 - `todo`: a coverage gap that must be filled before a reliable answer.
-- `done`: a gap already satisfied by prompt evidence, derivation, source evidence, or tool output.
+- `done`: a coverage gap whose required subchecks are all satisfied by prompt evidence, derivation, source evidence, or tool output. A single useful evidence item is not enough when the gap requires multiple checks.
 - `blocked`: a gap that cannot be resolved within the available tools or after the allowed failure budget.
 
-Every tool call must target a specific `todo` item. Before calling a tool, state the checklist gap it will close and the expected output shape. After the call, mark the item `done` only if the result actually supports the claim; otherwise keep it `todo` or mark it `blocked`.
+Every tool call must target a specific `todo` item. Before calling a tool, state the checklist gap it will inform and the expected output shape. After the call, classify the result as `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark the item `done` only if all subchecks required by that gap are covered; otherwise keep it `todo` or mark it `blocked`.
 
 If the same verification target fails twice, mark that item `blocked` and stop trying alternate commands for that target. A script usage error, request-shape error, malformed JSON request, missing required argument, invalid input shape, or timeout counts as a failed attempt for that verification target. Do not spend the benchmark run debugging tool invocation style.
 
@@ -68,6 +68,12 @@ Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for
 - `done`: explanation covers the decisive facts and checks, answer is directly stated, and confidence reflects remaining uncertainty.
 - `blocked`: unresolved evidence is explicitly named before giving the best supported answer in the official HLE format.
 
+## Candidate / Hypothesis Verification
+
+- Treat tool results as evidence, not verdicts. If a tool checks a guessed answer, state whether it verifies an intermediate step or the decisive final-answer condition.
+- When plausible competing candidates exist, compare the key candidates side by side before choosing. Do not verify only the first candidate that gives a usable tool result.
+- A database hit, formula match, approximate numeric match, valid structure, or retrieved source can establish local support. It is not sufficient final-answer evidence unless it also satisfies the task's discriminating constraints or the competing candidates have been rejected.
+
 ## Mandatory Verification Triggers
 
 Use these tools when the trigger is material to the answer:
@@ -94,12 +100,15 @@ For organic mechanism, synthesis, product, or intermediate questions:
 5. For thermal, FVP, rearrangement, cyclization, or ring-opening conditions, compare fragmentation, rearrangement, pericyclic/electrocyclic paths, ring strain relief, and rearomatization before choosing.
 6. For cyclizations, identify the attacking atom, electrophilic atom, leaving group, ring size, conformational feasibility, and driving force.
 7. For stereochemistry, claim a stereocenter, enantiomer, diastereomer, retention, or inversion only after comparing substituent paths, symmetry, and mechanism.
+8. For reaction-chain, intermediate, or product-identification tasks, each retained candidate must satisfy formula/mass, structure, and upstream/downstream reaction constraints. A PubChem, RDKit, or literature hit proves existence or a local property; it does not by itself prove the candidate is the answer.
 
 ## Numerical Discipline
 
 - Write units for all quantities and convert before calculation.
 - Show the formula, substituted values, important intermediate numbers, and final rounding.
 - Match the prompt's requested precision. If the benchmark or source uses a specific intermediate path, preserve the same path when visible from the prompt or retrieved material.
+- When a numeric result determines identity, composition, or formula, solve for the unknown directly when possible before testing named candidates.
+- If using candidate verification for a numeric identity task, compare residuals for nearby or chemically plausible competitors. Do not accept a candidate only because it is approximately close.
 - Do not hide a numeric answer behind a qualitative explanation when the question is calculation-based.
 
 ## Research And Source Discipline
@@ -121,5 +130,5 @@ For organic mechanism, synthesis, product, or intermediate questions:
 - Multiple-choice: show option checks or grouped option eliminations, name the decisive structure/mechanism/evidence distinction, then finish with `FINAL ANSWER: <letters>`.
 - Numeric: show the governing formula, unit conversions, substituted values, important intermediate numbers, rounding choice, and final answer line.
 - Research/source tasks: show a compact fact ledger, source or tool evidence for material claims, the mechanism/calculation chain, any remaining uncertainty, and final synthesis.
-- If evidence is already sufficient to answer, stop exploring tools and produce the final answer. More search is not a substitute for a clear visible trace.
+- If evidence is already sufficient to answer because every checklist gap is fully covered or explicitly blocked, stop exploring tools and produce the final answer. Do not stop only because one tool call returned a useful or promising intermediate result.
 - If paper or web paths return 403, 429, empty results, or unavailable payloads twice in total, stop broadening that path and answer from available evidence with the limitation marked.

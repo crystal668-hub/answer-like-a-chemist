@@ -210,6 +210,17 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "HLE Tasks" in text
     assert "Do not use `python`, `python3`, `pip`" in text
     assert "usage error" in text
+    assert "only after all subchecks needed for that gap are covered" in text
+    assert "supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`" in text
+    assert "A single useful evidence item is not enough" in text
+    assert "## Candidate / Hypothesis Verification" in text
+    assert "Do not verify only the first candidate that gives a usable tool result" in text
+    assert "solve for the unknown directly" in text
+    assert "compare residuals for nearby or chemically plausible competitors" in text
+    assert "A PubChem, RDKit, or literature hit proves existence or a local property" in text
+    assert "Do not stop only because one tool call returned a useful or promising intermediate result" in text
+    assert "done`: a gap already satisfied" not in text
+    assert "Mark an item `done` only when prompt evidence, derivation, source evidence, or tool output actually supports it" not in text
 
 
 def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
