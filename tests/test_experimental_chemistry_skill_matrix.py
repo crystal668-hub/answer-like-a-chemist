@@ -219,7 +219,8 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "Do not verify only the first candidate that gives a usable tool result" in text
     assert "solve for the unknown directly" in text
     assert "compare residuals for nearby or chemically plausible competitors" in text
-    assert "A PubChem, RDKit, or literature hit proves existence or a local property" in text
+    assert "A database hit, formula match, approximate numeric match, valid structure, or retrieved source" in text
+    assert "It is not sufficient final-answer evidence" in text
     assert "Do not stop only because one tool call returned a useful or promising intermediate result" in text
     assert "done`: a gap already satisfied" not in text
     assert "Mark an item `done` only when prompt evidence, derivation, source evidence, or tool output actually supports it" not in text

@@ -6,7 +6,7 @@
     {
       "skill": "act-like-a-chemist",
       "tier": "protocol",
-      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, mandatory verification triggers, organic mechanism checks, numerical discipline, and source-sensitive answer tracing.",
+      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, mandatory verification triggers, candidate verification, numerical discipline, and source-sensitive answer tracing.",
       "primary_triggers": [
         "chemistry benchmark",
         "chemistry question",

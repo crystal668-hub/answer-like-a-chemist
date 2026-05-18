@@ -103,19 +103,6 @@ Use these tools when the trigger is material to the answer:
 
 When a provider skill contributes, cite its output path, structured tool trace, or retrieved source in the answer or artifact trace. An unexecuted skill is not evidence.
 
-## Organic Mechanism SOP
-
-For organic mechanism, synthesis, product, or intermediate questions:
-
-1. List likely reactive roles: nucleophile, electrophile, acid/base, leaving group, oxidant/reductant, heat/light, solvent, catalyst, protecting group.
-2. Map each step by bonds broken, bonds formed, electron movement, and proton/charge transfers.
-3. For every proposed intermediate, check atom conservation, formal charge, valence, DBE, ring count, ring size, and aromaticity or rearomatization.
-4. Do not claim a new or lost ring by intuition. Four-membered rings, bridged rings, fused rings, and bicyclic intermediates require structural, DBE, or condition support.
-5. For thermal, FVP, rearrangement, cyclization, or ring-opening conditions, compare fragmentation, rearrangement, pericyclic/electrocyclic paths, ring strain relief, and rearomatization before choosing.
-6. For cyclizations, identify the attacking atom, electrophilic atom, leaving group, ring size, conformational feasibility, and driving force.
-7. For stereochemistry, claim a stereocenter, enantiomer, diastereomer, retention, or inversion only after comparing substituent paths, symmetry, and mechanism.
-8. For reaction-chain, intermediate, or product-identification tasks, each retained candidate must satisfy formula/mass, structure, and upstream/downstream reaction constraints. A PubChem, RDKit, or literature hit proves existence or a local property; it does not by itself prove the candidate is the answer.
-
 ## Numerical Discipline
 
 - Write units for all quantities and convert before calculation.
