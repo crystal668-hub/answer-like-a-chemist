@@ -19,16 +19,16 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 
 1. Identify the task type, answer format, structures, conditions, images, data tables, and external-source requirements.
 2. Write a compact Atomic Coverage Checklist using the relevant task template below. Split the solution path into atomic tasks, including known givens, formulas, unit conversions, intermediate values, mechanism steps, comparison classes, prompt constraints, and final-answer slots. Use `todo` until each atom is locally solved, `done` only after its derivation or evidence is complete, and `blocked` for atoms that cannot be resolved after bounded verification.
-3. Write a compact fact ledger for the important claims:
+3. Choose only the skills needed by referring to `contract/skill-triggers.md` to close concrete `todo` atoms for uncertain or high-impact subclaims. Before each tool call, name the exact atom it should inform and the expected output shape.
+4. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted atom: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an atom `done` only after that exact task is satisfied; a useful tool result does not close neighboring atoms.
+5. Write a compact fact ledger for the important claims:
    - `given`: directly stated by the prompt or attached material.
    - `derived`: obtained by calculation, conservation, or mechanism reasoning.
    - `tool-verified`: checked with a local skill or tool.
    - `source-supported`: checked against a retrieved paper, database, or provided source.
    - `assumption`: necessary but unverified; mark the risk.
-4. Choose only the provider skills needed to close concrete `todo` atoms for uncertain or high-impact subclaims. Before each tool call, name the exact atom it should inform and the expected output shape.
-5. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted atom: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an atom `done` only after that exact task is satisfied; a useful tool result does not close neighboring atoms.
 6. When all atoms are `done` or `blocked`, run a final consistency review: Re-check every `blocked` atom to see whether prompt evidence, derivation, or earlier tool output now resolves it; confirm each completed atom appears in the answer plan; verify final values, units, dimensionality, rounding, formula or concept fit, structure/count/option constraints, and comparison cases one by one.
-7. End in the exact requested format while preserving the visible checkpoints that justify it.
+7. 将所有 atomic 推理步骤梳理为一个流畅的、完整的推理轨迹，保留所有已验证的可见checkpoint，并以指定的格式输出。
 
 ## Atomic Coverage Checklist
 
@@ -48,14 +48,6 @@ Build atoms at the granularity a grader would need to award visible reasoning cr
 - mechanism steps, reactive roles, oxidation states, bond changes, site/structure constraints, and competing pathways;
 - all options, candidates, catalyst/material variants, protocol changes, or comparison classes named by the prompt;
 - source-specific entities, assay/protocol conditions, named intermediates, spectra peaks, identifiers, and experimental observations.
-
-Every tool call must target a specific `todo` atom. Before calling a tool, state the atom it will inform and the expected output shape. After the call, classify the result as `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark the atom `done` only if that exact atom is covered; otherwise keep it `todo` or mark it `blocked`.
-
-Tool output is scoped evidence, not absolute authority. A tool result can verify an intermediate atom, such as a molar mass, structure validity, database property, or paper excerpt. It does not override prompt constraints, competing candidates, rubric-like requirements, dimensional checks, or final reasoning. If a tool verifies only one step, continue solving the remaining atoms instead of treating the tool result as the final answer.
-
-If the same verification target fails twice, mark that item `blocked` and stop trying alternate commands for that target. A script usage error, request-shape error, malformed JSON request, missing required argument, invalid input shape, or timeout counts as a failed attempt for that verification target. Do not spend the benchmark run debugging tool invocation style.
-
-Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for alternate runners to call skill scripts directly. Benchmark agents may run skill scripts only through the canonical `scripts/run_skill.py` wrapper command supplied in the benchmark prompt. If that wrapper returns a usage error or structured unavailable/error payload twice for the same target, mark the target `blocked`.
 
 ### Numeric, Formula, Or Table Tasks
 
@@ -88,10 +80,6 @@ Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for
 - When plausible competing candidates exist, compare the key candidates side by side before choosing. Do not verify only the first candidate that gives a usable tool result.
 - A database hit, formula match, approximate numeric match, valid structure, or retrieved source can establish local support. It is not sufficient final-answer evidence unless it also satisfies the task's discriminating constraints or the competing candidates have been rejected.
 
-## Rule Index
-
-Provider skill trigger rules live in `contract/skill-triggers.md`; read them only when choosing provider skills for concrete checklist atoms.
-
 ## Numerical Discipline
 
 - Write units for all quantities and convert before calculation.
@@ -118,7 +106,7 @@ Provider skill trigger rules live in `contract/skill-triggers.md`; read them onl
 ## Visible Trace Contract
 
 - Multiple-choice: show option checks or grouped option eliminations, name the decisive structure/mechanism/evidence distinction, then finish with `FINAL ANSWER: <letters>`.
-- Numeric: show the governing formula, unit conversions, substituted values, important intermediate numbers, rounding choice, and final answer line.
+- Numeric: show the governing formula, unit conversions, substituted values, intermediate numbers, rounding choice, and final answer line.
 - Research/source tasks: show a compact fact ledger, source or tool evidence for material claims, the mechanism/calculation chain, any remaining uncertainty, and final synthesis.
 - If evidence is already sufficient to answer because every checklist atom is fully covered or explicitly blocked, stop exploring tools and produce the final answer. Do not stop only because one tool call returned a useful or promising intermediate result.
 - If paper or web paths return 403, 429, empty results, or unavailable payloads twice in total, stop broadening that path and answer from available evidence with the limitation marked.

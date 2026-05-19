@@ -199,7 +199,7 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "## Benchmark Coverage Checklist" not in text
     assert "Atomic Coverage Checklist" in text
     assert "Standard Answering Flow" in text
-    assert "provider skills needed to close concrete `todo` atoms" in text
+    assert "Choose only the skills needed by referring to `contract/skill-triggers.md`" in text
     assert "all atoms are `done` or `blocked`" in text
     assert "`todo`" in text
     assert "`done`" in text
@@ -210,8 +210,8 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "Multiple-Choice Tasks" in text
     assert "Research Or Open-Ended Tasks" in text
     assert "HLE Tasks" in text
-    assert "Do not use `python`, `python3`, `pip`" in text
-    assert "usage error" in text
+    assert "Do not use `python`, `python3`, `pip`" not in text
+    assert "usage error" not in text
     assert "`done` only after its derivation or evidence is complete" in text
     assert "supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`" in text
     assert "a useful tool result does not close neighboring atoms" in text

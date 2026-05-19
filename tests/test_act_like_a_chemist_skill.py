@@ -18,6 +18,9 @@ def test_act_like_a_chemist_defines_atomic_checklist_contract() -> None:
     assert "scoped evidence" in text
     assert "Treat tool results as evidence, not verdicts" in text
     assert "A database hit, formula match, approximate numeric match, valid structure, or retrieved source" in text
+    assert "将所有 atomic 推理步骤梳理为一个流畅的、完整的推理轨迹" in text
+    assert "保留所有已验证的可见checkpoint，并以指定的格式输出" in text
+    assert "End in the exact requested format while preserving the visible checkpoints that justify it." not in text
 
 
 def test_act_like_a_chemist_guides_enumeration_by_constraints_first() -> None:
