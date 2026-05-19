@@ -26,7 +26,9 @@ def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline
 
     assert len(allowlist) == 85
     assert len(allowlist) == len(set(allowlist))
-    assert allowlist == tuple(str(entry["skill"]) for entry in inventory["skills"])
+    assert allowlist == tuple(
+        str(entry["skill"]) for entry in inventory["skills"] if entry["single_agent_exposure"] is True
+    )
     assert "act-like-a-chemist" in allowlist
     assert {"paper-retrieval", "paper-access", "paper-parse", "paper-rerank"} <= set(allowlist)
     assert {"chem-calculator", "rdkit", "opsin", "pubchem"} <= set(allowlist)
@@ -85,6 +87,9 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "Organic mechanism SOP" not in rendered
     assert "Experimental chemistry skill routing rules" not in rendered
     assert "first matching primary route" not in rendered
+    assert "Provider Skill Trigger Rules" not in rendered
+    assert "Capability Routing Matrix" not in rendered
+    assert "single-agent-exposed provider inventory" not in rendered
     assert "selected skill route" not in rendered.lower()
     assert "SKILL TRACE: skipped" not in rendered
     assert "If you skip" not in rendered

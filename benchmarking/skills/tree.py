@@ -240,7 +240,11 @@ def load_chemistry_skill_inventory() -> dict[str, Any]:
 
 
 def benchmark_skill_allowlist() -> tuple[str, ...]:
-    return tuple(str(entry["skill"]) for entry in load_chemistry_skill_inventory().get("skills", []))
+    return tuple(
+        str(entry["skill"])
+        for entry in load_chemistry_skill_inventory().get("skills", [])
+        if entry.get("single_agent_exposure") is True
+    )
 
 
 def load_skill_tree() -> tuple[dict[str, Any], ...]:

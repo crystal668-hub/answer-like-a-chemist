@@ -6,6 +6,8 @@ Use this contract only when choosing provider skills for concrete Atomic Coverag
 
 Provider output is scoped evidence, not a verdict. An unexecuted skill is not evidence. When a provider skill contributes, cite its output path, structured tool trace, or retrieved source in the answer or artifact trace.
 
+Concrete provider skill names must come from the single-agent-exposed provider inventory in `workspace/skills/chemistry-routing-matrix.json`. The inventory is a machine-readable skill catalog, not a deterministic router; runtime/orchestration skills are not provider routes and must not be selected for checklist atoms.
+
 ## Capability Need First
 
 First decide the capability domain required by the unresolved atom: numeric calculation, molecular structure, literature, materials database, spectra, protein, MD, HPC, ML, drug safety, or another explicit domain in the prompt. Do not start from a tool name and reverse-fit the problem to that tool.

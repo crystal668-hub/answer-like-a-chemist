@@ -6,7 +6,10 @@
     {
       "skill": "act-like-a-chemist",
       "tier": "protocol",
-      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, mandatory verification triggers, candidate verification, numerical discipline, and source-sensitive answer tracing.",
+      "capability_domain": "protocol",
+      "provider_role": "sop",
+      "single_agent_exposure": true,
+      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, provider trigger contract, candidate verification, numerical discipline, and source-sensitive answer tracing.",
       "primary_triggers": [
         "chemistry benchmark",
         "chemistry question",
@@ -25,6 +28,9 @@
     {
       "skill": "open-forcefield-toolkit",
       "tier": "core",
+      "capability_domain": "md",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "SMIRNOFF, AM1-BCC, partial charges, small-molecule force-field parameterization, and force-field interchange.",
       "primary_triggers": [
         "smirnoff",
@@ -46,6 +52,9 @@
     {
       "skill": "molecular-dynamics",
       "tier": "core",
+      "capability_domain": "md",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "MD workflow and trajectory analysis: RMSD, RMSF, contact maps, production MD, protein-ligand MD.",
       "primary_triggers": [
         "mdanalysis",
@@ -66,6 +75,9 @@
     {
       "skill": "openmm",
       "tier": "core",
+      "capability_domain": "md",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "OpenMM simulation setup/debugging: systems, integrators, platforms, solvation, reporters.",
       "primary_triggers": [
         "openmm",
@@ -83,6 +95,9 @@
     {
       "skill": "zinc-database",
       "tier": "core",
+      "capability_domain": "drug_safety",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "ZINC purchasable compounds, 3D-ready structures, analog discovery, virtual screening sources.",
       "primary_triggers": [
         "zinc",
@@ -99,6 +114,9 @@
     {
       "skill": "chembl-database",
       "tier": "core",
+      "capability_domain": "drug_safety",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "ChEMBL target, bioactivity, IC50, Ki, EC50, mechanism, indication, inhibitor, and SAR queries.",
       "primary_triggers": [
         "chembl",
@@ -123,6 +141,9 @@
     {
       "skill": "tooluniverse-chemical-safety",
       "tier": "core",
+      "capability_domain": "drug_safety",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Chemical safety, toxicology, ADMET, FDA label, DrugBank, CTD, STITCH evidence assessment.",
       "primary_triggers": [
         "chemical safety",
@@ -142,6 +163,9 @@
     {
       "skill": "tooluniverse-small-molecule-discovery",
       "tier": "core",
+      "capability_domain": "drug_safety",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Small-molecule discovery chain: identity, activity, ADMET, target prediction, sourcing.",
       "primary_triggers": [
         "small molecule discovery",
@@ -157,6 +181,9 @@
     {
       "skill": "tooluniverse-chemical-compound-retrieval",
       "tier": "core",
+      "capability_domain": "drug_safety",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "PubChem and ChEMBL cross-validated compound profile and identity disambiguation.",
       "primary_triggers": [
         "compound profile",
@@ -171,6 +198,9 @@
     {
       "skill": "materials-project",
       "tier": "core",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Materials Project DFT data: structures, band gaps, phase diagrams, energy above hull, mp-id.",
       "primary_triggers": [
         "materials project",
@@ -186,6 +216,9 @@
     {
       "skill": "cod",
       "tier": "database",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Crystallography Open Database crystal structures and CIF retrieval.",
       "primary_triggers": [
         "crystallography open database",
@@ -200,6 +233,9 @@
     {
       "skill": "oqmd",
       "tier": "database",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "OQMD open quantum materials data, formation energies, phase stability.",
       "primary_triggers": [
         "oqmd",
@@ -213,6 +249,9 @@
     {
       "skill": "jarvis",
       "tier": "database",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "JARVIS computed materials properties, 2D materials, NIST materials datasets.",
       "primary_triggers": [
         "jarvis",
@@ -227,6 +266,9 @@
     {
       "skill": "pymatgen",
       "tier": "core",
+      "capability_domain": "materials_database",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Materials and crystal analysis: CIF, POSCAR, space group, lattice, coordination polyhedra, phase diagrams, energy above hull.",
       "primary_triggers": [
         "cif crystal",
@@ -247,6 +289,9 @@
     {
       "skill": "ase",
       "tier": "core",
+      "capability_domain": "md",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Atomistic structure construction and simulation workflows: slabs, adsorption, NEB, vibrations, calculators.",
       "primary_triggers": [
         "ase",
@@ -265,6 +310,9 @@
     {
       "skill": "cclib",
       "tier": "core",
+      "capability_domain": "numeric_calculation",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Quantum chemistry output parsing: Gaussian, ORCA, Q-Chem, SCF energies, orbitals, frequencies.",
       "primary_triggers": [
         "gaussian output",
@@ -287,6 +335,9 @@
     {
       "skill": "datamol",
       "tier": "core",
+      "capability_domain": "molecular_structure",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Batch molecular standardization, descriptors, fingerprints, scaffolds, clustering, conformers.",
       "primary_triggers": [
         "datamol",
@@ -305,6 +356,9 @@
     {
       "skill": "molfeat",
       "tier": "core",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Molecular ML featurization: QSAR features, fingerprints, molecular embeddings, chemical space.",
       "primary_triggers": [
         "molfeat",
@@ -323,6 +377,9 @@
     {
       "skill": "rdkit",
       "tier": "existing",
+      "capability_domain": "molecular_structure",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Local small-molecule structure reasoning: SMILES/InChI normalization, descriptors, substructure, stereochemistry, reactions, NMR heuristics.",
       "primary_triggers": [
         "smiles",
@@ -348,6 +405,9 @@
     {
       "skill": "opsin",
       "tier": "existing",
+      "capability_domain": "molecular_structure",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Systematic or IUPAC-like name-to-structure parsing, followed by RDKit validation when needed.",
       "primary_triggers": [
         "iupac",
@@ -362,6 +422,9 @@
     {
       "skill": "pubchem",
       "tier": "existing",
+      "capability_domain": "molecular_structure",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "PubChem PUG REST identity and metadata: common names, CID, synonyms, formula hints, properties.",
       "primary_triggers": [
         "pubchem",
@@ -380,6 +443,9 @@
     {
       "skill": "chem-calculator",
       "tier": "existing",
+      "capability_domain": "numeric_calculation",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Deterministic numeric chemistry: molar mass, stoichiometry, concentration, Ksp, pH, gas laws, thermo, redox, Nernst.",
       "primary_triggers": [
         "ksp",
@@ -404,6 +470,9 @@
     {
       "skill": "q-chem",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Q-Chem input/workflow guidance: $rem, job types, basis sets, SCF convergence, TDDFT, PCM.",
       "primary_triggers": [
         "q-chem input",
@@ -420,6 +489,9 @@
     {
       "skill": "hpc-orca",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "ORCA input/workflow guidance: DFT, TDDFT, DLPNO, frequencies, solvation, convergence.",
       "primary_triggers": [
         "orca input",
@@ -436,6 +508,9 @@
     {
       "skill": "hpc-gaussian",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Gaussian input/workflow guidance: route sections, opt/freq, TDDFT, checkpoint, solvation, SCF.",
       "primary_triggers": [
         "gaussian input",
@@ -452,6 +527,9 @@
     {
       "skill": "hpc-pyscf",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "PySCF electronic-structure workflows: HF, DFT, MP2, CCSD, CASSCF, custom Python pipelines.",
       "primary_triggers": [
         "pyscf",
@@ -468,6 +546,9 @@
     {
       "skill": "hpc-xtb",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "xTB and CREST workflows: GFN-xTB optimization, conformer search, solvation, fast screening.",
       "primary_triggers": [
         "xtb",
@@ -483,6 +564,9 @@
     {
       "skill": "hpc-vasp",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "VASP workflows: INCAR, POSCAR, KPOINTS, POTCAR, relax/static/DOS/bands, convergence.",
       "primary_triggers": [
         "vasp",
@@ -500,6 +584,9 @@
     {
       "skill": "hpc-nwchem",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "NWChem workflows: DFT, MP2, CCSD(T), TDDFT, CASSCF, periodic jobs.",
       "primary_triggers": [
         "nwchem",
@@ -513,6 +600,9 @@
     {
       "skill": "hpc-cp2k",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CP2K workflows: periodic DFT, AIMD, geometry optimization, hybrid DFT, input/debugging.",
       "primary_triggers": [
         "cp2k",
@@ -527,6 +617,9 @@
     {
       "skill": "hpc-quantum-espresso",
       "tier": "software",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Quantum ESPRESSO workflows: pw.x, pseudopotentials, cutoffs, SCF/relax/bands.",
       "primary_triggers": [
         "quantum espresso",
@@ -543,6 +636,9 @@
     {
       "skill": "qc-output-analysis",
       "tier": "software",
+      "capability_domain": "numeric_calculation",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Structured Gaussian/ORCA output extraction for spectra, scans, TS, energies, polarizability.",
       "primary_triggers": [
         "qc output analysis",
@@ -557,6 +653,9 @@
     {
       "skill": "cccbdb",
       "tier": "database",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CCCBDB computational chemistry benchmarks, thermochemistry, spectroscopy reference data.",
       "primary_triggers": [
         "cccbdb",
@@ -571,6 +670,9 @@
     {
       "skill": "molssi-qca",
       "tier": "database",
+      "capability_domain": "hpc",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "MolSSI Quantum Chemistry Archive benchmark datasets and quantum chemistry reference calculations.",
       "primary_triggers": [
         "molssi qca",
@@ -585,6 +687,9 @@
     {
       "skill": "pubchem-database",
       "tier": "database",
+      "capability_domain": "molecular_structure",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Expanded PubChemPy/PUG-REST, bioassay, similarity/substructure, compound retrieval.",
       "primary_triggers": [
         "pubchempy",
@@ -599,6 +704,9 @@
     {
       "skill": "pdb-database",
       "tier": "database",
+      "capability_domain": "protein",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "RCSB PDB protein/nucleic acid structure search, coordinate download, metadata.",
       "primary_triggers": [
         "rcsb",
@@ -614,6 +722,9 @@
     {
       "skill": "alphafold-database",
       "tier": "database",
+      "capability_domain": "protein",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "AlphaFold predicted protein structures, UniProt lookup, pLDDT/PAE confidence.",
       "primary_triggers": [
         "alphafold",
@@ -629,6 +740,9 @@
     {
       "skill": "reactome-database",
       "tier": "database",
+      "capability_domain": "protein",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Reactome pathways, enrichment, gene-pathway mapping, molecular interactions.",
       "primary_triggers": [
         "reactome",
@@ -643,6 +757,9 @@
     {
       "skill": "pubmed-database",
       "tier": "database",
+      "capability_domain": "literature",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "PubMed E-utilities, MeSH/Boolean literature lookup and citation retrieval.",
       "primary_triggers": [
         "pubmed",
@@ -657,6 +774,9 @@
     {
       "skill": "openalex-database",
       "tier": "database",
+      "capability_domain": "literature",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "OpenAlex scholarly literature search, authors/institutions, research trends.",
       "primary_triggers": [
         "openalex",
@@ -671,6 +791,9 @@
     {
       "skill": "cif",
       "tier": "format",
+      "capability_domain": "spectra",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CIF format syntax, crystallographic data parsing and interoperability.",
       "primary_triggers": [
         "cif format",
@@ -686,6 +809,9 @@
     {
       "skill": "jcamp-dx",
       "tier": "format",
+      "capability_domain": "spectra",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "JCAMP-DX spectroscopy data exchange and archiving format.",
       "primary_triggers": [
         "jcamp",
@@ -699,6 +825,9 @@
     {
       "skill": "cml",
       "tier": "format",
+      "capability_domain": "molecular_structure",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Chemical Markup Language molecular/reaction/spectra interoperability.",
       "primary_triggers": [
         "cml",
@@ -712,6 +841,9 @@
     {
       "skill": "spectral-analysis",
       "tier": "format",
+      "capability_domain": "spectra",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Experimental XRD/IR analysis: peaks, phase prediction, Rietveld, functional-group spectra.",
       "primary_triggers": [
         "xrd",
@@ -728,6 +860,9 @@
     {
       "skill": "crystal-viewer",
       "tier": "format",
+      "capability_domain": "spectra",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Interactive 3D HTML crystal viewer generation from CIF.",
       "primary_triggers": [
         "crystal viewer",
@@ -742,6 +877,9 @@
     {
       "skill": "xtal2png",
       "tier": "format",
+      "capability_domain": "spectra",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Crystal structure encoding/decoding to PNG for image-based ML workflows.",
       "primary_triggers": [
         "xtal2png",
@@ -756,6 +894,9 @@
     {
       "skill": "doped-perovskite-structure-analysis",
       "tier": "materials-specialist",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Doped perovskite/SrTiO3 structure construction, XRD validation, VASP input preparation.",
       "primary_triggers": [
         "doped perovskite",
@@ -770,6 +911,9 @@
     {
       "skill": "mace",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "MACE ML potentials for crystal stability screening and energy ranking.",
       "primary_triggers": [
         "mace",
@@ -784,6 +928,9 @@
     {
       "skill": "chgnet",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CHGNet universal neural potential for relaxation, energy, force, stress, MD.",
       "primary_triggers": [
         "chgnet",
@@ -797,6 +944,9 @@
     {
       "skill": "mattersim",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "MatterSim materials simulation model for property prediction and accelerated materials discovery.",
       "primary_triggers": [
         "mattersim",
@@ -809,6 +959,9 @@
     {
       "skill": "schnet",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "SchNet molecular quantum-property prediction and graph neural network modeling.",
       "primary_triggers": [
         "schnet",
@@ -822,6 +975,9 @@
     {
       "skill": "nequip",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "NequIP equivariant interatomic potentials and molecular potential prediction.",
       "primary_triggers": [
         "nequip",
@@ -835,6 +991,9 @@
     {
       "skill": "orb",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Orb universal ML force field for geometry optimization and molecular dynamics.",
       "primary_triggers": [
         "orb force field",
@@ -848,6 +1007,9 @@
     {
       "skill": "reann",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "REANN recursive atomic neural network potential training and PES fitting.",
       "primary_triggers": [
         "reann",
@@ -861,6 +1023,9 @@
     {
       "skill": "torchmd-net",
       "tier": "ml-potential",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "TorchMD-Net equivariant molecular simulation/property prediction from checkpoints.",
       "primary_triggers": [
         "torchmd-net",
@@ -875,6 +1040,9 @@
     {
       "skill": "mattergen",
       "tier": "generative-materials",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "MatterGen diffusion-based inorganic materials generation and property-conditioned design.",
       "primary_triggers": [
         "mattergen",
@@ -888,6 +1056,9 @@
     {
       "skill": "diffcsp",
       "tier": "generative-materials",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "DiffCSP diffusion crystal structure prediction and generative CSP.",
       "primary_triggers": [
         "diffcsp",
@@ -901,6 +1072,9 @@
     {
       "skill": "crystalflow",
       "tier": "generative-materials",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CrystalFlow flow-based crystal structure generation and CSP.",
       "primary_triggers": [
         "crystalflow",
@@ -914,6 +1088,9 @@
     {
       "skill": "chemprop",
       "tier": "molecular-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Chemprop GNN model training/prediction for molecular properties and toxicity.",
       "primary_triggers": [
         "chemprop",
@@ -928,6 +1105,9 @@
     {
       "skill": "matformer",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Matformer crystal graph transformer for materials property prediction.",
       "primary_triggers": [
         "matformer",
@@ -940,6 +1120,9 @@
     {
       "skill": "matminer",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Matminer materials featurizers, datasets, descriptors for materials ML.",
       "primary_triggers": [
         "matminer",
@@ -953,6 +1136,9 @@
     {
       "skill": "matbench",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Matbench benchmark datasets and materials ML evaluation.",
       "primary_triggers": [
         "matbench",
@@ -966,6 +1152,9 @@
     {
       "skill": "modnet",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "MODNet materials property prediction from composition or structure.",
       "primary_triggers": [
         "modnet",
@@ -978,6 +1167,9 @@
     {
       "skill": "crabnet",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "CrabNet/Roost composition-only materials property prediction.",
       "primary_triggers": [
         "crabnet",
@@ -991,6 +1183,9 @@
     {
       "skill": "xenonpy",
       "tier": "materials-ml",
+      "capability_domain": "ml",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "XenonPy materials informatics descriptors, pretrained models, transfer learning.",
       "primary_triggers": [
         "xenonpy",
@@ -1003,6 +1198,9 @@
     {
       "skill": "optimade",
       "tier": "workflow",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "OPTIMADE federated materials database query standard and interoperability.",
       "primary_triggers": [
         "optimade",
@@ -1015,6 +1213,9 @@
     {
       "skill": "optimade-python-tools",
       "tier": "workflow",
+      "capability_domain": "materials_database",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Python tools for OPTIMADE API clients/servers and data conversion.",
       "primary_triggers": [
         "optimade python",
@@ -1028,6 +1229,9 @@
     {
       "skill": "aiida",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "AiiDA provenance-preserving computational workflow and data management.",
       "primary_triggers": [
         "aiida",
@@ -1041,6 +1245,9 @@
     {
       "skill": "atomate",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "Atomate high-throughput materials workflows built on FireWorks/pymatgen.",
       "primary_triggers": [
         "atomate",
@@ -1053,6 +1260,9 @@
     {
       "skill": "fireworks",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "FireWorks dynamic workflow engine for high-throughput computational jobs.",
       "primary_triggers": [
         "fireworks workflow",
@@ -1066,6 +1276,9 @@
     {
       "skill": "custodian",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "Custodian error recovery for computational chemistry/materials jobs.",
       "primary_triggers": [
         "custodian",
@@ -1079,6 +1292,9 @@
     {
       "skill": "quacc",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "Quacc high-throughput materials and quantum chemistry workflow automation.",
       "primary_triggers": [
         "quacc",
@@ -1091,6 +1307,9 @@
     {
       "skill": "pyiron",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "Pyiron computational materials IDE and high-throughput simulation protocols.",
       "primary_triggers": [
         "pyiron",
@@ -1103,6 +1322,9 @@
     {
       "skill": "qmflows",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "QMFlows input generation and workflow automation for quantum chemistry.",
       "primary_triggers": [
         "qmflows",
@@ -1115,6 +1337,9 @@
     {
       "skill": "qmforge",
       "tier": "workflow",
+      "capability_domain": "workflow_infrastructure",
+      "provider_role": "inventory_only",
+      "single_agent_exposure": true,
       "route_summary": "QMForge quantum chemistry result visualization: orbitals, density, DFT/ab initio properties.",
       "primary_triggers": [
         "qmforge",
@@ -1128,6 +1353,9 @@
     {
       "skill": "blue-obelisk",
       "tier": "workflow",
+      "capability_domain": "molecular_structure",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Open chemistry standards, interoperability, reproducibility, and tool ecosystem guidance.",
       "primary_triggers": [
         "blue obelisk",
@@ -1141,6 +1369,9 @@
     {
       "skill": "chemistry-query",
       "tier": "extended",
+      "capability_domain": "molecular_structure",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "One-stop PubChem/RDKit/BRICS/ADMET helper for compound lookup and simple retrosynthesis.",
       "primary_triggers": [
         "chemistry-query",
@@ -1155,6 +1386,9 @@
     {
       "skill": "medchem",
       "tier": "extended",
+      "capability_domain": "drug_safety",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Medicinal chemistry filters: Lipinski, Veber, PAINS, structural alerts, drug-likeness.",
       "primary_triggers": [
         "lipinski",
@@ -1170,6 +1404,9 @@
     {
       "skill": "atb",
       "tier": "extended",
+      "capability_domain": "md",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Automated Topology Builder for topology files and molecular simulation parameters.",
       "primary_triggers": [
         "automated topology builder",
@@ -1183,6 +1420,9 @@
     {
       "skill": "literature-review",
       "tier": "extended",
+      "capability_domain": "literature",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Systematic literature reviews across academic databases.",
       "primary_triggers": [
         "systematic literature review",
@@ -1196,6 +1436,9 @@
     {
       "skill": "paper-retrieval",
       "tier": "workflow",
+      "capability_domain": "literature",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Scholarly API paper search, normalized metadata, deduplicated candidate lists.",
       "primary_triggers": [
         "paper retrieval",
@@ -1214,6 +1457,9 @@
     {
       "skill": "paper-access",
       "tier": "workflow",
+      "capability_domain": "literature",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Resolve DOI/OA URLs, verify PDF endpoints, and download local paper artifacts.",
       "primary_triggers": [
         "paper access",
@@ -1232,6 +1478,9 @@
     {
       "skill": "paper-parse",
       "tier": "workflow",
+      "capability_domain": "literature",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Parse local paper PDFs/text into fulltext, sections, snippets, and extraction reports.",
       "primary_triggers": [
         "paper parse",
@@ -1250,6 +1499,9 @@
     {
       "skill": "paper-rerank",
       "tier": "workflow",
+      "capability_domain": "literature",
+      "provider_role": "primary",
+      "single_agent_exposure": true,
       "route_summary": "Build paper profiles from local PDFs and run explicit listwise LLM reranking.",
       "primary_triggers": [
         "paper rerank",
@@ -1267,6 +1519,9 @@
     {
       "skill": "synthesize-literature",
       "tier": "extended",
+      "capability_domain": "literature",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
       "route_summary": "Structured synthesis of literature into a comprehensive review report.",
       "primary_triggers": [
         "synthesize literature",

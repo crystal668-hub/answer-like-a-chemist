@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "act-like-a-chemist" / "SKILL.md"
 TRIGGER_RULES_PATH = SKILL_PATH.parent / "contract" / "skill-triggers.md"
+INVENTORY_PATH = SKILL_PATH.parent.parent / "chemistry-routing-matrix.json"
 
 
 def test_act_like_a_chemist_defines_atomic_checklist_contract() -> None:
@@ -94,3 +96,31 @@ def test_provider_skill_trigger_rules_define_layered_routing_contract() -> None:
 
     for runtime_skill in ("benchmark-cleanroom", "debateclaw-v1", "chemqa-review"):
         assert runtime_skill in text
+
+
+def test_provider_trigger_rules_point_to_single_agent_inventory_source() -> None:
+    text = TRIGGER_RULES_PATH.read_text(encoding="utf-8")
+
+    assert "single-agent-exposed provider inventory" in text
+    assert "workspace/skills/chemistry-routing-matrix.json" in text
+    assert "runtime/orchestration skills are not provider routes" in text
+
+
+def test_representative_trigger_rule_providers_exist_in_inventory() -> None:
+    text = TRIGGER_RULES_PATH.read_text(encoding="utf-8")
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    inventory_skills = {str(entry["skill"]) for entry in inventory["skills"]}
+
+    for skill in (
+        "chem-calculator",
+        "rdkit",
+        "pubchem",
+        "paper-retrieval",
+        "materials-project",
+        "cclib",
+        "qc-output-analysis",
+        "matminer",
+        "tooluniverse-chemical-safety",
+    ):
+        assert skill in text
+        assert skill in inventory_skills

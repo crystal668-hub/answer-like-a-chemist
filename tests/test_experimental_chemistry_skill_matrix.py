@@ -6,6 +6,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = ROOT / "skills"
+RUNTIME_OR_ORCHESTRATION_SKILLS = {"benchmark-cleanroom", "debateclaw-v1", "chemqa-review"}
+ALLOWED_CAPABILITY_DOMAINS = {
+    "protocol",
+    "numeric_calculation",
+    "molecular_structure",
+    "literature",
+    "materials_database",
+    "spectra",
+    "protein",
+    "md",
+    "hpc",
+    "ml",
+    "drug_safety",
+    "workflow_infrastructure",
+}
+ALLOWED_PROVIDER_ROLES = {"sop", "primary", "specialized", "inventory_only", "excluded_runtime"}
 
 
 EXPECTED_EXPERIMENTAL_SKILLS = {
@@ -104,6 +120,54 @@ def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
     assert EXPECTED_EXPERIMENTAL_SKILLS <= skill_names
     assert {"rdkit", "opsin", "pubchem", "chem-calculator"} <= skill_names
     assert inventory["mode"] == "experimental_mid_plus"
+
+
+def test_experimental_matrix_entries_define_provider_inventory_contract() -> None:
+    from benchmarking.skills.tree import load_chemistry_skill_inventory
+
+    inventory = load_chemistry_skill_inventory()
+
+    for entry in inventory["skills"]:
+        assert isinstance(entry.get("capability_domain"), str), entry["skill"]
+        assert entry["capability_domain"] in ALLOWED_CAPABILITY_DOMAINS, entry["skill"]
+        assert isinstance(entry.get("provider_role"), str), entry["skill"]
+        assert entry["provider_role"] in ALLOWED_PROVIDER_ROLES, entry["skill"]
+        assert isinstance(entry.get("single_agent_exposure"), bool), entry["skill"]
+
+    by_skill = {entry["skill"]: entry for entry in inventory["skills"]}
+    assert by_skill["act-like-a-chemist"]["capability_domain"] == "protocol"
+    assert by_skill["act-like-a-chemist"]["provider_role"] == "sop"
+    assert by_skill["act-like-a-chemist"]["single_agent_exposure"] is True
+    assert "provider trigger contract" in by_skill["act-like-a-chemist"]["route_summary"]
+    assert "mandatory verification triggers" not in by_skill["act-like-a-chemist"]["route_summary"].lower()
+
+    expected_primary = {
+        "chem-calculator": "numeric_calculation",
+        "rdkit": "molecular_structure",
+        "opsin": "molecular_structure",
+        "pubchem": "molecular_structure",
+        "pymatgen": "materials_database",
+        "chembl-database": "drug_safety",
+        "medchem": "drug_safety",
+    }
+    for skill, domain in expected_primary.items():
+        assert by_skill[skill]["capability_domain"] == domain
+        assert by_skill[skill]["provider_role"] == "primary"
+        assert by_skill[skill]["single_agent_exposure"] is True
+
+    expected_specialized = {
+        "materials-project": "materials_database",
+        "cclib": "numeric_calculation",
+        "qc-output-analysis": "numeric_calculation",
+        "matminer": "ml",
+        "tooluniverse-chemical-safety": "drug_safety",
+    }
+    for skill, domain in expected_specialized.items():
+        assert by_skill[skill]["capability_domain"] == domain
+        assert by_skill[skill]["provider_role"] == "specialized"
+        assert by_skill[skill]["single_agent_exposure"] is True
+
+    assert not (RUNTIME_OR_ORCHESTRATION_SKILLS & set(by_skill))
 
 
 def test_act_like_a_chemist_skill_bundle_is_installed() -> None:
