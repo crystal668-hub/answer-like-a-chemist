@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -55,18 +56,19 @@ def test_provider_skill_trigger_rules_define_layered_routing_contract() -> None:
     assert "Mandatory Verification Triggers" not in text
     assert "Every tool call must target a concrete Atomic Coverage Checklist atom" in text
     assert "An unexecuted skill is not evidence" in text
+    assert not re.search(r"[\u4e00-\u9fff]", text)
 
     for domain in (
-        "数值",
-        "结构",
-        "文献",
-        "材料数据库",
-        "谱图",
-        "蛋白",
+        "numeric calculation",
+        "molecular structure",
+        "literature",
+        "materials database",
+        "spectra",
+        "protein",
         "MD",
         "HPC",
         "ML",
-        "药物安全",
+        "drug safety",
     ):
         assert domain in text
 
