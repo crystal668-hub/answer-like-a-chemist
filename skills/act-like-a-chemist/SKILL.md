@@ -88,20 +88,9 @@ Do not use `python`, `python3`, `pip`, temporary runner scripts, or searches for
 - When plausible competing candidates exist, compare the key candidates side by side before choosing. Do not verify only the first candidate that gives a usable tool result.
 - A database hit, formula match, approximate numeric match, valid structure, or retrieved source can establish local support. It is not sufficient final-answer evidence unless it also satisfies the task's discriminating constraints or the competing candidates have been rejected.
 
-## Mandatory Verification Triggers
+## Rule Index
 
-Use these tools when the trigger is material to the answer:
-
-| Trigger | First tool choice |
-| --- | --- |
-| SMILES, InChI, formula, charge, ring count, ring size, aromaticity, substructure, stereochemistry | `rdkit` |
-| IUPAC-like or systematic chemical name | `opsin`, then `rdkit` if structure validation matters |
-| Common name, synonym, CID, public compound metadata, molecular formula from a database | `pubchem` |
-| pH, Ksp, Nernst, stoichiometry, molar mass, concentration, unit conversion, gas law, thermo, redox | `chem-calculator` |
-| Paper, protocol, material source, biological target, experimental condition, source-specific fact | `paper-retrieval` -> `paper-access` -> `paper-rerank` -> `paper-parse`, or web search when appropriate |
-| Multimodal structure, reaction scheme, option image, plot, or table | inspect the local bundle/image before answering |
-
-When a provider skill contributes, cite its output path, structured tool trace, or retrieved source in the answer or artifact trace. An unexecuted skill is not evidence.
+Provider skill trigger rules live in `contract/skill-triggers.md`; read them only when choosing provider skills for concrete checklist atoms.
 
 ## Numerical Discipline
 

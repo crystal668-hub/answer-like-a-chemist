@@ -17,6 +17,9 @@ def _all_tree_skills() -> list[str]:
     return skills
 
 
+RUNTIME_OR_ORCHESTRATION_SKILLS = {"benchmark-cleanroom", "debateclaw-v1", "chemqa-review"}
+
+
 def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline() -> None:
     inventory = load_chemistry_skill_inventory()
     allowlist = benchmark_skill_allowlist()
@@ -27,6 +30,7 @@ def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline
     assert "act-like-a-chemist" in allowlist
     assert {"paper-retrieval", "paper-access", "paper-parse", "paper-rerank"} <= set(allowlist)
     assert {"chem-calculator", "rdkit", "opsin", "pubchem"} <= set(allowlist)
+    assert not (RUNTIME_OR_ORCHESTRATION_SKILLS & set(allowlist))
 
 
 def test_skill_tree_covers_every_allowlisted_skill() -> None:
@@ -35,6 +39,7 @@ def test_skill_tree_covers_every_allowlisted_skill() -> None:
 
     assert allowlist <= set(tree_skills)
     assert not (set(tree_skills) - allowlist)
+    assert not (RUNTIME_OR_ORCHESTRATION_SKILLS & set(tree_skills))
 
 
 def test_skill_tree_has_three_layers_and_paper_pipeline_family() -> None:
@@ -88,6 +93,8 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "`chem-calculator`" not in rendered
     assert "`rdkit`" not in rendered
     assert "`paper-retrieval`" not in rendered
+    for runtime_skill in RUNTIME_OR_ORCHESTRATION_SKILLS:
+        assert runtime_skill not in rendered
     assert len(rendered.splitlines()) < 60
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "act-like-a-chemist" / "SKILL.md"
+TRIGGER_RULES_PATH = SKILL_PATH.parent / "contract" / "skill-triggers.md"
 
 
 def test_act_like_a_chemist_defines_atomic_checklist_contract() -> None:
@@ -30,3 +31,61 @@ def test_act_like_a_chemist_avoids_topic_specific_sop_sections() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
 
     assert "## Organic Mechanism SOP" not in text
+
+
+def test_act_like_a_chemist_links_provider_trigger_rules_contract() -> None:
+    text = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "## Mandatory Verification Triggers" not in text
+    assert "contract/skill-triggers.md" in text
+    assert (
+        "Provider skill trigger rules live in `contract/skill-triggers.md`; read them only when "
+        "choosing provider skills for concrete checklist atoms."
+    ) in text
+
+
+def test_provider_skill_trigger_rules_define_layered_routing_contract() -> None:
+    text = TRIGGER_RULES_PATH.read_text(encoding="utf-8")
+
+    assert "# Provider Skill Trigger Rules" in text
+    assert "## Purpose" in text
+    assert "## Capability Need First" in text
+    assert "## Primary Before Specialized" in text
+    assert "## Capability Routing Matrix" in text
+    assert "Mandatory Verification Triggers" not in text
+    assert "Every tool call must target a concrete Atomic Coverage Checklist atom" in text
+    assert "An unexecuted skill is not evidence" in text
+
+    for domain in (
+        "数值",
+        "结构",
+        "文献",
+        "材料数据库",
+        "谱图",
+        "蛋白",
+        "MD",
+        "HPC",
+        "ML",
+        "药物安全",
+    ):
+        assert domain in text
+
+    for skill in (
+        "chem-calculator",
+        "rdkit",
+        "opsin",
+        "pubchem",
+        "paper-retrieval",
+        "pymatgen",
+        "spectral-analysis",
+        "pdb-database",
+        "molecular-dynamics",
+        "hpc-gaussian",
+        "matminer",
+        "chembl-database",
+        "tooluniverse-chemical-safety",
+    ):
+        assert skill in text
+
+    for runtime_skill in ("benchmark-cleanroom", "debateclaw-v1", "chemqa-review"):
+        assert runtime_skill in text
