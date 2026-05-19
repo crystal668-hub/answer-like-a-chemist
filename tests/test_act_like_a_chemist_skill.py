@@ -16,7 +16,8 @@ def test_act_like_a_chemist_defines_atomic_checklist_contract() -> None:
     assert "known givens" in text
     assert "Re-check every `blocked` atom" in text
     assert "scoped evidence" in text
-    assert "does not override prompt constraints" in text
+    assert "Treat tool results as evidence, not verdicts" in text
+    assert "A database hit, formula match, approximate numeric match, valid structure, or retrieved source" in text
 
 
 def test_act_like_a_chemist_guides_enumeration_by_constraints_first() -> None:
@@ -39,10 +40,8 @@ def test_act_like_a_chemist_links_provider_trigger_rules_contract() -> None:
 
     assert "## Mandatory Verification Triggers" not in text
     assert "contract/skill-triggers.md" in text
-    assert (
-        "Provider skill trigger rules live in `contract/skill-triggers.md`; read them only when "
-        "choosing provider skills for concrete checklist atoms."
-    ) in text
+    assert "Choose only the skills needed by referring to `contract/skill-triggers.md`" in text
+    assert "Before each tool call, name the exact atom it should inform and the expected output shape" in text
 
 
 def test_provider_skill_trigger_rules_define_layered_routing_contract() -> None:
