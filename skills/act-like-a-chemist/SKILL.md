@@ -28,7 +28,7 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
    - `source-supported`: checked against a retrieved paper, database, or provided source.
    - `assumption`: necessary but unverified; mark the risk.
 6. When all atoms are `done` or `blocked`, run a final consistency review: Re-check every `blocked` atom to see whether prompt evidence, derivation, or earlier tool output now resolves it; confirm each completed atom appears in the answer plan; verify final values, units, dimensionality, rounding, formula or concept fit, structure/count/option constraints, and comparison cases one by one.
-7. 将所有 atomic 推理步骤梳理为一个流畅的、完整的推理轨迹，保留所有已验证的可见checkpoint，并以指定的格式输出。
+7. Organize all atomic reasoning steps into a smooth, complete reasoning trace, preserve all verified visible checkpoints, and output in the requested format.
 
 ## Atomic Coverage Checklist
 
