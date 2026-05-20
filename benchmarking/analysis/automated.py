@@ -55,6 +55,11 @@ def truncate_text(text: Any, *, max_chars: int = MAX_TEXT_CHARS) -> dict[str, An
     }
 
 
+def complete_text(text: Any) -> dict[str, Any]:
+    value = str(text or "")
+    return {"text": value, "truncated": False, "original_chars": len(value)}
+
+
 def file_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -254,7 +259,7 @@ def group_results_by_record(results: list[dict[str, Any]]) -> list[dict[str, Any
                     "runner": item.get("runner"),
                     "skills_enabled": item.get("skills_enabled"),
                     "websearch": item.get("websearch"),
-                    "answer_text": truncate_text(item.get("answer_text"), max_chars=5000),
+                    "answer_text": complete_text(item.get("answer_text")),
                     "short_answer_text": item.get("short_answer_text", ""),
                     "evaluation": item.get("evaluation") or {},
                     "status_axes": {

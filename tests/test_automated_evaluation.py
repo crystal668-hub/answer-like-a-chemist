@@ -374,6 +374,36 @@ def test_build_input_bundle_groups_records_and_warns_on_missing_transcript(tmp_p
     assert any("missing transcript" in warning["message"] for warning in bundle["warnings"])
 
 
+def test_build_input_bundle_keeps_complete_answer_text_for_review(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    long_answer = "reasoning-" + ("x" * 7000) + "\nFINAL ANSWER: complete"
+    result = minimal_record_payload(
+        group_id="single_llm_skills_on",
+        record_id="r1",
+        runner="single_llm",
+        runner_meta={},
+    )
+    result["answer_text"] = long_answer
+    result["full_response_text"] = long_answer
+    write_json(
+        output_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-05-11T00:00:00+0000",
+            "results": [result],
+            "summary": {"groups": {"single_llm_skills_on": {"count": 1}}},
+        },
+    )
+    write_json(output_root / "runtime-manifest.json", {"run_groups": ["single_llm_skills_on"]})
+
+    bundle = automated_evaluation.build_input_bundle(output_root)
+    answer_preview = bundle["records"][0]["groups"][0]["answer_text"]
+
+    assert answer_preview["text"] == long_answer
+    assert answer_preview["truncated"] is False
+    assert answer_preview["original_chars"] == len(long_answer)
+
+
 def test_chemqa_artifact_summary_reads_archive_files(tmp_path: Path) -> None:
     archive_dir = tmp_path / "artifacts" / "chemqa_skills_on" / "r1" / "run-1"
     write_json(archive_dir / "artifact_manifest.json", {"artifacts": [{"name": "final_answer_artifact"}]})
