@@ -208,6 +208,8 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     missing_skill_doc_read_count = 0
     tool_result_error_count = 0
     request_shape_error_count = 0
+    exec_tool_result_error_count = 0
+    exec_request_shape_error_count = 0
     coverage_checklist_present = False
     for event in _iter_transcript_events(transcript_path):
         if event.get("customType") == "openclaw:prompt-error":
@@ -235,10 +237,16 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
             normalized = tool_text.lower()
             if any(pattern in normalized for pattern in MISSING_SKILL_DOC_PATTERNS):
                 missing_skill_doc_read_count += 1
-            if _looks_like_tool_result_error(normalized, tool_name=tool_name):
+            is_tool_result_error = _looks_like_tool_result_error(normalized, tool_name=tool_name)
+            is_request_shape_error = _looks_like_request_shape_error(normalized, tool_name=tool_name)
+            if is_tool_result_error:
                 tool_result_error_count += 1
-            if _looks_like_request_shape_error(normalized, tool_name=tool_name):
+                if tool_name.strip().lower() == "exec":
+                    exec_tool_result_error_count += 1
+            if is_request_shape_error:
                 request_shape_error_count += 1
+                if tool_name.strip().lower() == "exec":
+                    exec_request_shape_error_count += 1
     latest_prompt_error = prompt_errors[-1] if prompt_errors else ""
     return {
         "transcript_path": str(transcript_path),
@@ -251,6 +259,8 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
         "missing_skill_doc_read_count": missing_skill_doc_read_count,
         "tool_result_error_count": tool_result_error_count,
         "request_shape_error_count": request_shape_error_count,
+        "exec_tool_result_error_count": exec_tool_result_error_count,
+        "exec_request_shape_error_count": exec_request_shape_error_count,
         "coverage_checklist_present": coverage_checklist_present,
     }
 

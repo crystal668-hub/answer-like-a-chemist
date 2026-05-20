@@ -155,6 +155,8 @@ class BenchmarkConvergenceTests(unittest.TestCase):
         self.assertEqual(1, summary["missing_skill_doc_read_count"])
         self.assertEqual(2, summary["tool_result_error_count"])
         self.assertEqual(1, summary["request_shape_error_count"])
+        self.assertEqual(1, summary["exec_tool_result_error_count"])
+        self.assertEqual(1, summary["exec_request_shape_error_count"])
 
     def test_transcript_summary_ignores_request_contract_text_from_read_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -295,6 +297,8 @@ class BenchmarkConvergenceTests(unittest.TestCase):
 
         self.assertEqual(4, summary["tool_result_error_count"])
         self.assertEqual(3, summary["request_shape_error_count"])
+        self.assertEqual(3, summary["exec_tool_result_error_count"])
+        self.assertEqual(3, summary["exec_request_shape_error_count"])
 
     def test_transcript_summary_detects_timeout_prompt_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

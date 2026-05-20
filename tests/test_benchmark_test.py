@@ -1925,14 +1925,19 @@ Points: 0.5, Item: Second criterion
                 runner_meta={
                     "skill_use_audit": {
                         "skills_enabled": True,
-                        "tool_call_count": 2,
+                        "tool_call_count": 5,
+                        "openclaw_tool_call_count": 5,
                         "tool_failure_count": 3,
+                        "openclaw_tool_failure_count": 3,
+                        "skill_tool_call_count": 2,
+                        "skill_tool_failure_count": 1,
                         "missing_skill_doc_read_count": 1,
                         "request_shape_error_count": 2,
                         "coverage_checklist_present": True,
                         "skill_tool_executed": True,
                         "model_declared_skip": False,
                         "no_tool_call": False,
+                        "no_skill_tool_call": False,
                     },
                     "session_isolation": {
                         "session_isolation_ok": True,
@@ -1979,14 +1984,19 @@ Points: 0.5, Item: Second criterion
                 runner_meta={
                     "skill_use_audit": {
                         "skills_enabled": True,
-                        "tool_call_count": 0,
+                        "tool_call_count": 3,
+                        "openclaw_tool_call_count": 3,
                         "tool_failure_count": 1,
+                        "openclaw_tool_failure_count": 1,
+                        "skill_tool_call_count": 0,
+                        "skill_tool_failure_count": 0,
                         "missing_skill_doc_read_count": 0,
                         "request_shape_error_count": 1,
                         "coverage_checklist_present": False,
                         "skill_tool_executed": False,
                         "model_declared_skip": True,
-                        "no_tool_call": True,
+                        "no_tool_call": False,
+                        "no_skill_tool_call": True,
                     },
                     "session_isolation": {
                         "session_isolation_ok": False,
@@ -2017,7 +2027,9 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["skill_model_declared_skip_count"])
         self.assertEqual(1, summary["groups"]["g1"]["skill_no_tool_call_count"])
         self.assertEqual(2, summary["groups"]["g1"]["skill_tool_call_total"])
-        self.assertEqual(4, summary["groups"]["g1"]["skill_tool_failure_total"])
+        self.assertEqual(1, summary["groups"]["g1"]["skill_tool_failure_total"])
+        self.assertEqual(8, summary["groups"]["g1"]["openclaw_tool_call_total"])
+        self.assertEqual(4, summary["groups"]["g1"]["openclaw_tool_failure_total"])
         self.assertEqual(1, summary["groups"]["g1"]["missing_skill_doc_read_total"])
         self.assertEqual(3, summary["groups"]["g1"]["request_shape_error_total"])
         self.assertEqual(1, summary["groups"]["g1"]["coverage_checklist_present_count"])
@@ -2772,6 +2784,7 @@ Points: 0.5, Item: Second criterion
                                 "payloads": [{"text": "Reasoning\nFINAL ANSWER: 5"}],
                                 "meta": {
                                     "toolSummary": {"calls": 1, "tools": ["exec"], "failures": 0},
+                                    "convergence": {"tool_call_count": 1, "tool_names": ["exec"]},
                                     "session_isolation": {
                                         "requested_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
                                         "agent_id": "benchmark-single-skills-on",
