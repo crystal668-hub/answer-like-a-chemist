@@ -65,6 +65,8 @@ def render_run_config(
     web = tools.setdefault("web", {})
     search = web.setdefault("search", {})
     search["enabled"] = spec.websearch_enabled
+    fetch = web.setdefault("fetch", {})
+    fetch["enabled"] = spec.websearch_enabled
 
     plugins = payload.setdefault("plugins", {})
     entries = plugins.setdefault("entries", {})

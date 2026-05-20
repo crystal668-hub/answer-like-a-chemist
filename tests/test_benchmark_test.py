@@ -614,14 +614,16 @@ Points: 0.5, Item: Second criterion
 
     def test_build_temp_openclaw_config_payload_toggles_websearch(self) -> None:
         base = {
-            "tools": {"web": {"search": {"enabled": False}}},
+            "tools": {"web": {"search": {"enabled": False}, "fetch": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
         enabled = benchmark_test.build_temp_openclaw_config_payload(base, enable_websearch=True)
         disabled = benchmark_test.build_temp_openclaw_config_payload(base, enable_websearch=False)
         self.assertIs(True, enabled["tools"]["web"]["search"]["enabled"])
+        self.assertIs(True, enabled["tools"]["web"]["fetch"]["enabled"])
         self.assertIs(True, enabled["plugins"]["entries"]["duckduckgo"]["enabled"])
         self.assertIs(False, disabled["tools"]["web"]["search"]["enabled"])
+        self.assertIs(False, disabled["tools"]["web"]["fetch"]["enabled"])
         self.assertIs(False, disabled["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_group_waves_batches_in_selected_order(self) -> None:

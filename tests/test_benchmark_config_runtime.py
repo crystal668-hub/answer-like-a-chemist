@@ -32,7 +32,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
     def test_render_run_config_is_pure_and_does_not_mutate_base_payload(self) -> None:
         base = {
             "agents": {"list": []},
-            "tools": {"web": {"search": {"enabled": False}}},
+            "tools": {"web": {"search": {"enabled": False}, "fetch": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
         spec = ExperimentSpec(
@@ -65,8 +65,52 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
 
         self.assertEqual([], base["agents"]["list"])
         self.assertTrue(rendered["tools"]["web"]["search"]["enabled"])
+        self.assertTrue(rendered["tools"]["web"]["fetch"]["enabled"])
         self.assertTrue(rendered["plugins"]["entries"]["duckduckgo"]["enabled"])
         self.assertEqual(["chem-calculator", "rdkit"], rendered["agents"]["list"][1]["skills"])
+
+    def test_render_run_config_forces_single_llm_web_search_and_fetch_off(self) -> None:
+        for group_id, skills_enabled, skill_allowlist in (
+            ("single_llm_skills_on", True, ("chem-calculator", "rdkit")),
+            ("single_llm_skills_off", False, ()),
+        ):
+            with self.subTest(group_id=group_id):
+                base = {
+                    "agents": {"list": []},
+                    "tools": {"web": {"search": {"enabled": True}, "fetch": {"enabled": True}}},
+                    "plugins": {"entries": {"duckduckgo": {"enabled": True, "config": {}}}},
+                }
+                spec = ExperimentSpec(
+                    id=group_id,
+                    label=group_id,
+                    runner_kind="single_llm",
+                    websearch_enabled=False,
+                    skills_enabled=skills_enabled,
+                    single_agent_id=f"benchmark-{group_id}",
+                    skill_allowlist=skill_allowlist,
+                )
+                provisioned = ProvisionedExperiment(
+                    judge=ProvisionedAgent("benchmark-judge", Path("/tmp/judge"), Path("/tmp/agents/judge")),
+                    runner_agents=(
+                        ProvisionedAgent(
+                            f"benchmark-{group_id}",
+                            Path("/tmp/single"),
+                            Path("/tmp/agents/single"),
+                        ),
+                    ),
+                )
+
+                rendered = render_run_config(
+                    base_payload=base,
+                    spec=spec,
+                    provisioned=provisioned,
+                    judge_model="judge-model",
+                    runner_model="runner-model",
+                )
+
+                self.assertIs(False, rendered["tools"]["web"]["search"]["enabled"])
+                self.assertIs(False, rendered["tools"]["web"]["fetch"]["enabled"])
+                self.assertIs(False, rendered["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_render_run_config_disables_runner_skills_with_empty_allowlist(self) -> None:
         base = {

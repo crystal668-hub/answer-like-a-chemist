@@ -680,6 +680,8 @@ def build_temp_openclaw_config_payload(base_payload: dict[str, Any], *, enable_w
     web = tools.setdefault("web", {})
     search = web.setdefault("search", {})
     search["enabled"] = enable_websearch
+    fetch = web.setdefault("fetch", {})
+    fetch["enabled"] = enable_websearch
 
     plugins = payload.setdefault("plugins", {})
     entries = plugins.setdefault("entries", {})
