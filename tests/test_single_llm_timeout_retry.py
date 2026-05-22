@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import subprocess
+import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,10 +43,12 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self,
         *,
         captured_commands: list[list[str]],
+        captured_envs: list[dict[str, str]] | None = None,
         captured_timeouts: list[int | None] | None = None,
         timeout_once: bool = True,
         no_timeout: bool = False,
         build_prompt: Any | None = None,
+        config_path: Path = Path("/tmp/openclaw.json"),
     ) -> SingleLLMRunner:
         calls = {"count": 0}
         prompt_builder = build_prompt or (lambda *args, **kwargs: "BASE PROMPT")
@@ -52,6 +56,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         def run_subprocess(command: list[str], *, env: dict[str, str], timeout: int) -> CompletedProcess:
             calls["count"] += 1
             captured_commands.append(command)
+            if captured_envs is not None:
+                captured_envs.append(dict(env))
             if captured_timeouts is not None:
                 captured_timeouts.append(timeout)
             if timeout_once and calls["count"] == 1:
@@ -59,9 +65,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             return CompletedProcess()
 
         return SingleLLMRunner(
-            agent_id="benchmark-single",
+            agent_id="benchmark-single-skills-on",
             timeout_seconds=10,
-            config_path=Path("/tmp/openclaw.json"),
+            config_path=config_path,
             runtime_bundle_root=Path("/tmp/bundles"),
             run_subprocess=run_subprocess,
             parse_json_stdout=lambda result, command: {
@@ -90,7 +96,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
 
         self.assertEqual(2, len(captured_commands))
-        self.assertEqual("BASE PROMPT", self._message_from_command(captured_commands[0]))
+        first_prompt = self._message_from_command(captured_commands[0])
+        self.assertIn("BASE PROMPT", first_prompt)
+        self.assertIn("BENCHMARK SCRATCH DIRECTORY", first_prompt)
         retry_prompt = self._message_from_command(captured_commands[1])
         self.assertIn("BASE PROMPT", retry_prompt)
         self.assertIn("previous skills-enabled benchmark attempt timed out", retry_prompt)
@@ -138,6 +146,67 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertIsNone(captured_prompt_kwargs.get("time_budget_seconds"))
         self.assertEqual("no_timeout", result.runner_meta["timeout_mode"])
         self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])
+
+    def test_skills_on_attempt_uses_record_session_scratch_directory(self) -> None:
+        captured_commands: list[list[str]] = []
+        captured_envs: list[dict[str, str]] = []
+        runner = self._runner(captured_commands=captured_commands, captured_envs=captured_envs, timeout_once=False)
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual(1, len(captured_commands))
+        session_id = captured_commands[0][captured_commands[0].index("--session-id") + 1]
+        scratch_dir = Path(captured_envs[0]["BENCHMARK_SKILL_SCRATCH_DIR"])
+        expected = (
+            Path("/tmp/openclaw.json").parent / "benchmark-single-skills-on" / ".benchmark-scratch" / "record-1" / session_id
+        ).resolve()
+        self.assertEqual(expected, scratch_dir)
+        self.assertTrue(scratch_dir.is_dir())
+        self.assertEqual(str(scratch_dir / "requests"), captured_envs[0]["BENCHMARK_SKILL_REQUEST_DIR"])
+        self.assertEqual(str(scratch_dir / "outputs"), captured_envs[0]["BENCHMARK_SKILL_OUTPUT_DIR"])
+        self.assertIn(str(scratch_dir), self._message_from_command(captured_commands[0]))
+        scratch_meta = result.runner_meta["skill_scratch"]
+        self.assertEqual(str(scratch_dir), scratch_meta["scratch_dir"])
+        self.assertEqual("record-1", scratch_meta["record_slug"])
+        self.assertEqual(session_id, scratch_meta["session_id"])
+        self.assertEqual("single_llm_skills_on", scratch_meta["group_id"])
+
+    def test_skills_on_scratch_directory_uses_configured_agent_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "benchmark" / "workspaces" / "benchmark-single-skills-on"
+            config_path = root / "runtime-config" / "single-openclaw.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "benchmark-single-skills-on",
+                                    "workspace": str(workspace),
+                                    "agentDir": str(root / "agents" / "benchmark-single-skills-on" / "agent"),
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            captured_commands: list[list[str]] = []
+            captured_envs: list[dict[str, str]] = []
+            runner = self._runner(
+                captured_commands=captured_commands,
+                captured_envs=captured_envs,
+                timeout_once=False,
+                config_path=config_path,
+            )
+
+            runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+            session_id = captured_commands[0][captured_commands[0].index("--session-id") + 1]
+            scratch_dir = Path(captured_envs[0]["BENCHMARK_SKILL_SCRATCH_DIR"])
+            self.assertEqual((workspace / ".benchmark-scratch" / "record-1" / session_id).resolve(), scratch_dir)
 
 
 if __name__ == "__main__":

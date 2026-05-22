@@ -14,7 +14,7 @@ def render_single_agent_skill_tools_md() -> str:
     run_skill_command = (
         'python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
         '--workspace-root /Users/xutao/.openclaw/workspace '
-        '--execution-cwd "$PWD" '
+        '--execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" '
         "--script SCRIPT_PATH -- "
         "--request-json REQUEST_JSON_PATH "
         "--output-dir OUTPUT_DIR "
@@ -42,10 +42,14 @@ def render_single_agent_skill_tools_md() -> str:
             "",
             "Replace every uppercase placeholder before running:",
             "",
-            "- REQUEST_JSON_PATH: an absolute or workspace-relative path to the request file you wrote.",
+            "- BENCHMARK_SKILL_SCRATCH_DIR: set by the benchmark runner to `.benchmark-scratch/<record>/<session_id>` inside this workspace.",
+            "- REQUEST_JSON_PATH: an absolute path under the current scratch directory, preferably `$BENCHMARK_SKILL_REQUEST_DIR/<name>.json`.",
             "- REQUEST_JSON_STRING: valid compact JSON for the selected script contract.",
             "- SCRIPT_PATH: a real path like skills/<skill>/scripts/<script>.py, chosen from the skill docs or scripts directory.",
-            "- OUTPUT_DIR: a writable output directory for this call.",
+            "- OUTPUT_DIR: an absolute output directory under the current scratch directory, preferably `$BENCHMARK_SKILL_OUTPUT_DIR/<name>`.",
+            "",
+            "Do not write request JSON, downloaded papers, temporary scripts, notes, or skill outputs in the workspace root.",
+            "Keep all benchmark exploration artifacts under the current scratch directory.",
             "",
             "Do not execute the template with placeholders still present.",
             "",

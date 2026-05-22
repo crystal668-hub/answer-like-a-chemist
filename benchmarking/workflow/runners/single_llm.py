@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -46,6 +47,7 @@ FINAL_MARKER_REQUIRED_EVAL_KINDS = {
     "chembench_open_ended",
     "frontierscience_olympiad",
 }
+BENCHMARK_SCRATCH_DIRNAME = ".benchmark-scratch"
 
 
 @dataclass(frozen=True)
@@ -628,6 +630,38 @@ class SingleLLMRunner:
             return base_prompt
         return base_prompt.rstrip() + "\n\n" + SKILLS_ON_RETRY_FOCUS_PROMPT
 
+    def _skill_scratch_dir(self, *, record: Any, session_id: str) -> Path:
+        record_slug = self._slugify(str(getattr(record, "record_id", "") or "record"), limit=80)
+        agent_workspace = self._configured_agent_workspace()
+        return agent_workspace / BENCHMARK_SCRATCH_DIRNAME / record_slug / session_id
+
+    def _configured_agent_workspace(self) -> Path:
+        try:
+            payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+            entries = ((payload.get("agents") or {}).get("list") or [])
+            for entry in entries:
+                if isinstance(entry, dict) and str(entry.get("id") or "") == self.agent_id:
+                    workspace = str(entry.get("workspace") or "").strip()
+                    if workspace:
+                        return Path(workspace).expanduser().resolve()
+        except Exception:
+            pass
+        return (self.config_path.parent / self.agent_id).resolve()
+
+    @staticmethod
+    def _attach_skill_scratch_prompt(prompt: str, *, scratch_dir: Path, request_dir: Path, output_dir: Path) -> str:
+        return "\n".join(
+            [
+                prompt.rstrip(),
+                "",
+                "BENCHMARK SCRATCH DIRECTORY:",
+                f"- Use this absolute directory for all local skill request files, outputs, downloaded papers, temporary scripts, and notes: {scratch_dir}",
+                f"- Request JSON files must be written under: {request_dir}",
+                f"- Skill output directories must be created under: {output_dir}",
+                "- Do not write benchmark exploration artifacts in the workspace root.",
+            ]
+        )
+
     def _timeout_failure_result(
         self,
         *,
@@ -846,6 +880,34 @@ class SingleLLMRunner:
                 attempt_index=attempt_index,
                 skills_enabled=skills_enabled,
             )
+            attempt_env = dict(env)
+            skill_scratch_meta: dict[str, str] | None = None
+            if skills_enabled:
+                scratch_dir = self._skill_scratch_dir(record=record, session_id=session_id)
+                request_dir = scratch_dir / "requests"
+                output_dir = scratch_dir / "outputs"
+                notes_dir = scratch_dir / "notes"
+                for path in (request_dir, output_dir, notes_dir):
+                    path.mkdir(parents=True, exist_ok=True)
+                attempt_env["BENCHMARK_SKILL_SCRATCH_DIR"] = str(scratch_dir)
+                attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(request_dir)
+                attempt_env["BENCHMARK_SKILL_OUTPUT_DIR"] = str(output_dir)
+                attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(notes_dir)
+                attempt_prompt = self._attach_skill_scratch_prompt(
+                    attempt_prompt,
+                    scratch_dir=scratch_dir,
+                    request_dir=request_dir,
+                    output_dir=output_dir,
+                )
+                skill_scratch_meta = {
+                    "scratch_dir": str(scratch_dir),
+                    "request_dir": str(request_dir),
+                    "output_dir": str(output_dir),
+                    "notes_dir": str(notes_dir),
+                    "record_slug": self._slugify(str(getattr(record, "record_id", "") or "record"), limit=80),
+                    "session_id": session_id,
+                    "group_id": str(getattr(group, "id", "") or ""),
+                }
             result = self._run_attempt(
                 record,
                 group,
@@ -853,8 +915,10 @@ class SingleLLMRunner:
                 prompt=attempt_prompt,
                 session_id=session_id,
                 wrapper_path=wrapper_path,
-                env=env,
+                env=attempt_env,
             )
+            if skill_scratch_meta is not None:
+                result.runner_meta.setdefault("skill_scratch", skill_scratch_meta)
             last_result = result
             decision = self._timeout_retry_decision(result)
             can_retry = decision.retryable and attempt_index < self.timeout_retries
