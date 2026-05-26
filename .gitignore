@@ -20,13 +20,10 @@ __pycache__/
 /memory/
 /state/
 /docs/
-/temp-benchmarks/
+/data/
 /benchmark-single-skills-on/
 /benchmark-runs/
 /.run/
-
-# Benchmark datasets
-/benchmarks/
 
 # Skill runtime control outputs
 /skills/chemqa-review/control/runplans/

@@ -95,6 +95,7 @@
     - Re-exports the package-owned CLI symbols directly from `workspace/benchmarking/workflow/cli.py` without re-registering evaluators or redefining shared result dataclasses.
   - `workspace/runtime_paths.py`
     - Central path resolution for repo, skills, benchmarks, runtime roots, and config files.
+    - The default persisted benchmark dataset root is the OpenClaw home data directory at `data/formal-benchmarks/`; temporary benchmark datasets live at `data/temp-benchmarks/`. `OPENCLAW_BENCHMARKS_ROOT` and `OPENCLAW_DATA_ROOT` can override these defaults.
 
 - Skill bundles under `workspace/skills/`
   - `debateclaw-v1/`
@@ -122,10 +123,10 @@
     - Standalone paper-processing pipeline stages.
 
 - Dataset prep modules
-  - `workspace/benchmarks/chembench/extract_open_ended_reasoning_pool.py`
-  - `workspace/benchmarks/frontierscience/extract_chemistry_pool.py`
-  - `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
-  - `workspace/benchmarks/superchem/extract_superchem_pool.py`
+  - `data/formal-benchmarks/chembench/extract_open_ended_reasoning_pool.py`
+  - `data/formal-benchmarks/frontierscience/extract_chemistry_pool.py`
+  - `data/formal-benchmarks/hle/extract_hle_chemistry_pool.py`
+  - `data/formal-benchmarks/superchem/extract_superchem_pool.py`
 - Module interactions
   - `benchmark_test.py` -> `benchmarking.workflow.cli`
     - Preserves the historical root script/import facade and delegates execution directly to the package entrypoint.
@@ -183,11 +184,11 @@
   - Status: `DONE`
 
 - Name: HLE chemistry pool extraction
-  - Description: Extracts chemistry-related Humanity's Last Exam rows from `cais/hle` into the local benchmark JSONL style under `workspace/benchmarks/hle/data/`, matching records by `category` and `raw_subject`, preserving HLE question/answer/answer_type/image/canary metadata, and writing a manifest with selection counts.
+  - Description: Extracts chemistry-related Humanity's Last Exam rows from `cais/hle` into the local benchmark JSONL style under `data/formal-benchmarks/hle/data/`, matching records by `category` and `raw_subject`, preserving HLE question/answer/answer_type/image/canary metadata, and writing a manifest with selection counts.
   - Input / Output:
     - Input: authenticated Hugging Face `cais/hle` test split or a local HLE JSONL export.
     - Output: `hle_chemistry_pool.jsonl` plus `hle_chemistry_pool.manifest.json`.
-  - Implementation location: `workspace/benchmarks/hle/extract_hle_chemistry_pool.py`
+  - Implementation location: `data/formal-benchmarks/hle/extract_hle_chemistry_pool.py`
   - Status: `DONE`
 
 - Name: Benchmark visual input bundle materialization
@@ -476,7 +477,7 @@
   - Input / Output:
     - Input: dataset name and output paths.
     - Output: JSONL pool + manifest.
-  - Implementation location: `workspace/benchmarks/chembench/extract_open_ended_reasoning_pool.py`
+  - Implementation location: `data/formal-benchmarks/chembench/extract_open_ended_reasoning_pool.py`
   - Status: `DONE`
 
 - Name: FrontierScience dataset extraction
@@ -484,7 +485,7 @@
   - Input / Output:
     - Input: olympiad/research JSONL files.
     - Output: JSONL pool + manifest.
-  - Implementation location: `workspace/benchmarks/frontierscience/extract_chemistry_pool.py`
+  - Implementation location: `data/formal-benchmarks/frontierscience/extract_chemistry_pool.py`
   - Status: `DONE`
 
 - Name: SuperChem dataset extraction
@@ -492,7 +493,7 @@
   - Input / Output:
     - Input: dataset name, output JSONL/assets paths.
     - Output: JSONL pool + manifest + assets.
-  - Implementation location: `workspace/benchmarks/superchem/extract_superchem_pool.py`
+  - Implementation location: `data/formal-benchmarks/superchem/extract_superchem_pool.py`
   - Status: `DONE`
 
 - Name: Web UI / API server
@@ -505,7 +506,7 @@
 
 ## 4. Actual Behavior
 - Primary execution flow: three-group skills benchmark
-  - `workspace/benchmarking/workflow/cli.py` parses CLI args and discovers benchmark JSONL files under `workspace/benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
+  - `workspace/benchmarking/workflow/cli.py` parses CLI args and discovers benchmark JSONL files under `data/formal-benchmarks/*/data/*.jsonl` unless explicit files/datasets are provided. It can further filter normalized records by comma-separated `--subsets` labels such as `frontierscience_Research,superchem_multimodal`, and rejects unknown subset names instead of silently running a different range. `workspace/benchmark_test.py` imports and re-exports that module so historical absolute-path execution and `import benchmark_test` callers keep working.
   - On import, the facade and package CLI ensure the workspace source root is on `sys.path` and import benchmark internals through canonical subpackages plus `runtime_paths`, so loading the legacy entrypoint by absolute path does not depend on a resolvable parent `workspace` package.
   - It normalizes records through `benchmarking.core.datasets.load_records`.
   - It runs benchmark skill health checks through `benchmarking.skills.health.check_all_skill_health`, writes `output_root/skill-health.json`, derives effective experiment specs by removing unavailable skills from skills-on allowlists, and includes the health summary/effective allowlists in `runtime-manifest.json`.

@@ -301,7 +301,7 @@ except Exception:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run three-group skills benchmark experiments.")
-    parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="benchmarks/ 根目录")
+    parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="formal-benchmarks/ 根目录")
     parser.add_argument("--chemqa-root", default=str(DEFAULT_CHEMQA_ROOT), help="chemqa-review skill 根目录")
     parser.add_argument("--openclaw-config", default=str(DEFAULT_OPENCLAW_CONFIG), help="基础 OpenClaw 配置文件")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="结果输出目录")
@@ -321,7 +321,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--datasets",
-        help="仅运行指定数据集，逗号分隔；默认扫描 benchmarks/*/data/*.jsonl",
+        help="仅运行指定数据集，逗号分隔；默认扫描 formal-benchmarks/*/data/*.jsonl",
     )
     parser.add_argument(
         "--subsets",

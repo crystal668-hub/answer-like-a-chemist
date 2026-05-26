@@ -3,11 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
+import runtime_paths
+
 
 ROOT = Path(__file__).resolve().parents[1]
+OPENCLAW_HOME = ROOT.parent
 
 
 class WorkspaceLayoutTests(unittest.TestCase):
+    def test_benchmark_data_roots_live_under_openclaw_data(self) -> None:
+        self.assertEqual(OPENCLAW_HOME / "data" / "formal-benchmarks", runtime_paths.benchmarks_root)
+        self.assertEqual(OPENCLAW_HOME / "data" / "temp-benchmarks", runtime_paths.temp_benchmarks_root)
+        self.assertFalse((ROOT / "benchmarks").exists())
+        self.assertFalse((ROOT / "temp-benchmarks").exists())
+
     def test_review_loop_benchmark_entrypoint_is_removed(self) -> None:
         self.assertFalse((ROOT / "benchmark_rl.py").exists())
 
