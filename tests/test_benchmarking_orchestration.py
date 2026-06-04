@@ -12,6 +12,7 @@ from benchmarking.scoring.evaluators import EvaluationResult, normalize_answer_t
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.workflow.orchestration import run_group
 from benchmarking.core.reporting import build_error_group_record_result
+from benchmarking.dashboard.progress import ProgressWriter
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,174 @@ class OrchestrationTests(unittest.TestCase):
         self.assertIn("configured_skills", calls["build_runner_kwargs"])
         self.assertEqual("minimal", calls["build_runner_kwargs"]["benchmark_agent_thinking"])
         self.assertEqual("r1.json", saved[0].name)
+
+    def test_run_group_writes_progress_events(self) -> None:
+        record = BenchmarkRecord(
+            record_id="r1",
+            dataset="chembench",
+            source_file="/tmp/demo.jsonl",
+            eval_kind="chembench_open_ended",
+            prompt="Q",
+            reference_answer="A",
+            payload={},
+        )
+        group = Group()
+
+        class StubRunner:
+            def run(self, actual_record: BenchmarkRecord, actual_group: Group) -> RunnerResult:
+                return RunnerResult(
+                    status=RunStatus.COMPLETED,
+                    answer=AnswerPayload(short_answer_text="A", full_response_text="FINAL ANSWER: A"),
+                    raw={"ok": True},
+                    runner_meta={},
+                )
+
+        def build_error_entry(**kwargs: Any):
+            return build_error_group_record_result(
+                **kwargs,
+                classify_subset_fn=lambda _record: "chembench",
+                normalize_answer_tracks_fn=normalize_answer_tracks,
+                build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
+                    eval_kind=actual_record.eval_kind,
+                    score=0.0,
+                    max_score=1.0,
+                    normalized_score=0.0,
+                    passed=False,
+                    primary_metric="execution_error",
+                    primary_metric_direction="lower_is_better",
+                    details={"error": error_message},
+                ),
+                deep_copy_jsonish_fn=lambda value: value,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            progress_writer = ProgressWriter(output_root, total_records=1, groups=[group.id])
+            run_group(
+                group=group,
+                records=[record],
+                output_root=output_root,
+                single_timeout=10,
+                chemqa_timeout=10,
+                judge=object(),
+                config_path=output_root / "cfg.json",
+                single_agent="agent-1",
+                chemqa_root=output_root,
+                chemqa_model_profile="unused",
+                review_rounds=None,
+                rebuttal_rounds=None,
+                chemqa_slot_sets={},
+                experiment_specs={
+                    group.id: ExperimentSpec(
+                        id=group.id,
+                        label=group.label,
+                        runner_kind=group.runner,
+                        websearch_enabled=group.websearch,
+                        skills_enabled=group.skills_enabled,
+                        single_agent_id="agent-1",
+                    )
+                },
+                build_runner_fn=lambda **_kwargs: StubRunner(),
+                evaluate_answer_fn=lambda *_args, **_kwargs: EvaluationResult(
+                    eval_kind="chembench_open_ended",
+                    score=1.0,
+                    max_score=1.0,
+                    normalized_score=1.0,
+                    passed=True,
+                    primary_metric="unit",
+                    primary_metric_direction="higher_is_better",
+                    details={},
+                ),
+                build_error_group_record_result_fn=build_error_entry,
+                classify_subset_fn=lambda _record: "chembench",
+                save_json_fn=lambda path, payload: (
+                    path.parent.mkdir(parents=True, exist_ok=True),
+                    path.write_text(str(payload), encoding="utf-8"),
+                ),
+                slugify_fn=lambda value, **_kwargs: str(value),
+                single_agent_thinking="minimal",
+                progress_writer=progress_writer,
+            )
+            events = (output_root / "progress" / "events.jsonl").read_text(encoding="utf-8")
+
+        self.assertIn('"type": "group_started"', events)
+        self.assertIn('"type": "record_started"', events)
+        self.assertIn('"type": "record_completed"', events)
+
+    def test_run_group_marks_progress_failed_when_runner_init_fails(self) -> None:
+        record = BenchmarkRecord(
+            record_id="r1",
+            dataset="chembench",
+            source_file="/tmp/demo.jsonl",
+            eval_kind="chembench_open_ended",
+            prompt="Q",
+            reference_answer="A",
+            payload={},
+        )
+        group = Group()
+
+        def build_error_entry(**kwargs: Any):
+            return build_error_group_record_result(
+                **kwargs,
+                classify_subset_fn=lambda _record: "chembench",
+                normalize_answer_tracks_fn=normalize_answer_tracks,
+                build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
+                    eval_kind=actual_record.eval_kind,
+                    score=0.0,
+                    max_score=1.0,
+                    normalized_score=0.0,
+                    passed=False,
+                    primary_metric="execution_error",
+                    primary_metric_direction="lower_is_better",
+                    details={"error": error_message},
+                ),
+                deep_copy_jsonish_fn=lambda value: value,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            progress_writer = ProgressWriter(output_root, total_records=1, groups=[group.id])
+            run_group(
+                group=group,
+                records=[record],
+                output_root=output_root,
+                single_timeout=10,
+                chemqa_timeout=10,
+                judge=object(),
+                config_path=output_root / "cfg.json",
+                single_agent="agent-1",
+                chemqa_root=output_root,
+                chemqa_model_profile="unused",
+                review_rounds=None,
+                rebuttal_rounds=None,
+                chemqa_slot_sets={},
+                experiment_specs={
+                    group.id: ExperimentSpec(
+                        id=group.id,
+                        label=group.label,
+                        runner_kind=group.runner,
+                        websearch_enabled=group.websearch,
+                        skills_enabled=group.skills_enabled,
+                        single_agent_id="agent-1",
+                    )
+                },
+                build_runner_fn=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+                evaluate_answer_fn=lambda *_args, **_kwargs: None,
+                build_error_group_record_result_fn=build_error_entry,
+                classify_subset_fn=lambda _record: "chembench",
+                save_json_fn=lambda path, payload: (
+                    path.parent.mkdir(parents=True, exist_ok=True),
+                    path.write_text(str(payload), encoding="utf-8"),
+                ),
+                slugify_fn=lambda value, **_kwargs: str(value),
+                single_agent_thinking="minimal",
+                progress_writer=progress_writer,
+            )
+            state = (output_root / "progress" / "state.json").read_text(encoding="utf-8")
+
+        self.assertIn('"status": "failed"', state)
+        self.assertIn('"completed": 1', state)
+        self.assertIn('"completed_count": 1', state)
 
     def test_run_group_preserves_runner_diagnostics_when_evaluator_raises(self) -> None:
         record = BenchmarkRecord(

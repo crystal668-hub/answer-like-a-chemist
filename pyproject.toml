@@ -136,6 +136,9 @@ full = [
     "chemqa[web-ui]",
 ]
 
+[project.scripts]
+benchmark-dashboard = "benchmarking.dashboard.app:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

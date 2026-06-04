@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import pytest
+
+from benchmarking.dashboard.app import create_app
+from tests.test_benchmark_dashboard import write_demo_run
+
+
+def test_dashboard_app_module_imports_without_fastapi_extra() -> None:
+    module = importlib.import_module("benchmarking.dashboard.app")
+
+    assert "uv run --extra web-ui" in module.FASTAPI_EXTRA_MESSAGE
+
+
+def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
+    static_root = Path(__file__).resolve().parents[1] / "benchmarking" / "dashboard" / "static"
+    index = (static_root / "index.html").read_text(encoding="utf-8")
+    script = (static_root / "app.js").read_text(encoding="utf-8")
+
+    assert "Benchmark Dashboard" in index
+    assert "run-list" in index
+    assert "record-list" in index
+    assert "setInterval(refreshProgress" in script
+    assert "function renderInlineMarkdown" in script
+    assert "asset-image" in script
+    assert "dataset-filter" in index
+    assert "hide-run" in index
+    assert "api/annotations" in script
+
+
+def test_dashboard_api_supports_run_metadata_and_annotation_crud(tmp_path: Path) -> None:
+    run_root = write_demo_run(tmp_path)
+    testclient = pytest.importorskip("fastapi.testclient")
+
+    app = create_app(run_roots=[tmp_path], annotation_db=tmp_path / "dashboard.sqlite")
+    client = testclient.TestClient(app)
+
+    patched = client.patch(f"/api/runs/{run_root.name}", json={"alias": "Smoke", "favorite": True, "hidden": True})
+    assert patched.status_code == 200
+    assert patched.json()["alias"] == "Smoke"
+    assert client.get("/api/runs").json() == []
+    visible = client.get("/api/runs?include_hidden=true").json()
+    assert visible[0]["alias"] == "Smoke"
+    assert visible[0]["hidden"] is True
+
+    created = client.post(
+        "/api/annotations",
+        json={
+            "run_id": run_root.name,
+            "record_id": "r1",
+            "group_id": "single_llm_skills_on",
+            "note": "needs review",
+            "status": "needs_review",
+            "tags": ["manual"],
+            "manual_verdict": "uncertain",
+        },
+    )
+    assert created.status_code == 200
+    annotation_id = created.json()["id"]
+    updated = client.patch(f"/api/annotations/{annotation_id}", json={"note": "checked", "tags": ["done"]})
+    assert updated.status_code == 200
+    assert updated.json()["note"] == "checked"
+    record = client.get(f"/api/runs/{run_root.name}/records/r1").json()
+    assert record["annotations"][0]["tags"] == ["done"]
+    deleted = client.delete(f"/api/annotations/{annotation_id}")
+    assert deleted.status_code == 200
+    assert client.get(f"/api/runs/{run_root.name}/records/r1").json()["annotations"] == []
+
+
+def test_dashboard_asset_api_rejects_path_traversal(tmp_path: Path) -> None:
+    run_root = write_demo_run(tmp_path)
+    testclient = pytest.importorskip("fastapi.testclient")
+
+    app = create_app(run_roots=[tmp_path], annotation_db=tmp_path / "dashboard.sqlite")
+    client = testclient.TestClient(app)
+
+    response = client.get(f"/api/runs/{run_root.name}/assets/../outside.txt")
+
+    assert response.status_code == 404

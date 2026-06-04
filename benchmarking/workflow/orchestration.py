@@ -80,6 +80,7 @@ def run_group(
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str,
     no_timeout: bool = False,
+    progress_writer: Any | None = None,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
     try:
@@ -114,6 +115,9 @@ def run_group(
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
+        if progress_writer is not None:
+            progress_writer.group_started(group.id)
+            progress_writer.error(group_id=group.id, message=error_message)
         group_results = [
             build_error_group_record_result_fn(
                 group=group,
@@ -122,12 +126,21 @@ def run_group(
             )
             for record in records
         ]
-        for entry in group_results:
+        for index, entry in enumerate(group_results, start=1):
             save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+            if progress_writer is not None:
+                progress_writer.record_started(group.id, str(entry.record_id), index=index)
+                progress_writer.record_completed(group.id, str(entry.record_id), status="failed", score=0.0)
+        if progress_writer is not None:
+            progress_writer.group_completed(group.id, status="failed")
         return group_results
 
     group_results: list[GroupRecordResult] = []
-    for record in records:
+    if progress_writer is not None:
+        progress_writer.group_started(group.id)
+    for index, record in enumerate(records, start=1):
+        if progress_writer is not None:
+            progress_writer.record_started(group.id, record.record_id, index=index)
         started = time.time()
         run_result: Any | None = None
         try:
@@ -221,6 +234,20 @@ def run_group(
                         "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
                     },
                 )
+            if progress_writer is not None:
+                progress_writer.error(group_id=group.id, record_id=record.record_id, message=str(exc))
         group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
+        if progress_writer is not None:
+            evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+            score = evaluation.get("normalized_score", evaluation.get("score"))
+            progress_writer.record_completed(
+                group.id,
+                record.record_id,
+                status=str(entry.run_lifecycle_status or "completed"),
+                score=float(score) if isinstance(score, (int, float)) else None,
+            )
+    if progress_writer is not None:
+        group_status = "completed" if all(item.run_lifecycle_status == "completed" for item in group_results) else "completed_with_errors"
+        progress_writer.group_completed(group.id, status=group_status)
     return group_results

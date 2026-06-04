@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Benchmark Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OpenClaw</p>
+          <h1>Benchmark Dashboard</h1>
+        </div>
+        <div class="toolbar" aria-label="Dashboard tools">
+          <label class="search">
+            <span aria-hidden="true">⌕</span>
+            <input id="search-input" placeholder="搜索 run 或题目" />
+          </label>
+          <button id="refresh-button" class="icon-button" title="刷新" aria-label="刷新">↻</button>
+        </div>
+      </header>
+
+      <section class="filter-strip" aria-label="Run filters">
+        <label>Dataset <select id="dataset-filter" aria-label="Dataset 筛选"><option value="">全部</option></select></label>
+        <label>Subset <select id="subset-filter" aria-label="Subset 筛选"><option value="">全部</option></select></label>
+        <button id="show-hidden-button" class="icon-button" title="显示隐藏 run" aria-label="显示隐藏 run">◌</button>
+      </section>
+
+      <section class="dashboard-grid">
+        <aside class="runs-pane">
+          <div class="pane-header">
+            <h2>Runs</h2>
+            <select id="status-filter" aria-label="状态筛选">
+              <option value="">全部状态</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+          <div id="run-list" class="run-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="records-pane">
+          <div class="pane-header">
+            <div>
+              <h2 id="run-title">选择一个 run</h2>
+              <p id="run-subtitle" class="muted">查看逐题结果与实时进度</p>
+            </div>
+            <button id="favorite-run" class="icon-button" title="收藏 run" aria-label="收藏 run">☆</button>
+            <button id="hide-run" class="icon-button" title="隐藏 run" aria-label="隐藏 run">⌫</button>
+          </div>
+          <div id="progress-strip" class="progress-strip"></div>
+          <div id="record-list" class="record-list"></div>
+        </section>
+
+        <section class="detail-pane">
+          <div class="pane-header">
+            <div>
+              <h2 id="record-title">题目详情</h2>
+              <p id="record-subtitle" class="muted">选择左侧题目后显示内容</p>
+            </div>
+            <button id="note-button" class="icon-button" title="添加复核备注" aria-label="添加复核备注">✎</button>
+          </div>
+          <div class="detail-columns">
+            <article class="question-panel">
+              <h3>题目</h3>
+              <div id="question-content" class="markdown"></div>
+              <h3>标准答案 / 参考依据</h3>
+              <div id="reference-content" class="reference-block"></div>
+              <h3>复核备注</h3>
+              <div id="annotation-list" class="annotation-list"></div>
+            </article>
+            <article class="groups-panel">
+              <h3>测试组对比</h3>
+              <div id="group-results" class="group-results"></div>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="annotation-dialog">
+      <form id="annotation-form" method="dialog">
+        <h2>复核备注</h2>
+        <label>状态 <input id="annotation-status" placeholder="reviewed / needs_review" /></label>
+        <label>标签 <input id="annotation-tags" placeholder="逗号分隔" /></label>
+        <label>人工结论 <input id="annotation-verdict" placeholder="correct / incorrect / uncertain" /></label>
+        <label>备注 <textarea id="annotation-note" rows="5"></textarea></label>
+        <menu>
+          <button value="cancel">取消</button>
+          <button id="save-annotation" value="default">保存</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

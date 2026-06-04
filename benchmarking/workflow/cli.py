@@ -55,6 +55,7 @@ from benchmarking.core.status import (
     normalize_chemqa_run_status,
     normalize_run_status_value,
 )
+from benchmarking.dashboard.progress import ProgressWriter
 from benchmarking.runtime.bundles import (
     RuntimeBundle,
     RuntimeBundleError,
@@ -1744,6 +1745,21 @@ def materialize_group_failure_results(
     return [GroupRecordResult(**asdict(entry)) for entry in entries]
 
 
+def record_group_progress_failure(
+    progress_writer: ProgressWriter,
+    *,
+    group_id: str,
+    records: list[BenchmarkRecord],
+    error_message: str,
+) -> None:
+    progress_writer.group_started(group_id)
+    progress_writer.error(group_id=group_id, message=error_message)
+    for index, record in enumerate(records, start=1):
+        progress_writer.record_started(group_id, record.record_id, index=index)
+        progress_writer.record_completed(group_id, record.record_id, status="failed", score=0.0)
+    progress_writer.group_completed(group_id, status="failed")
+
+
 def run_group(
     *,
     group: ExperimentGroup,
@@ -1766,6 +1782,7 @@ def run_group(
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
     no_timeout: bool = False,
+    progress_writer: Any | None = None,
 ) -> list[GroupRecordResult]:
     try:
         return _orchestration.run_group(
@@ -1790,6 +1807,7 @@ def run_group(
             single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
             single_agent_thinking=single_agent_thinking,
             no_timeout=no_timeout,
+            progress_writer=progress_writer,
             build_runner_fn=build_runner,
             evaluate_answer_fn=evaluate_answer,
             build_error_group_record_result_fn=build_error_group_record_result,
@@ -1917,6 +1935,12 @@ def main() -> int:
         thinking=args.judge_agent_thinking,
     )
     group_waves = build_group_waves(group_ids, max_concurrent_groups=args.max_concurrent_groups)
+    progress_writer = ProgressWriter(
+        output_root,
+        total_records=len(records) * len(group_ids),
+        groups=group_ids,
+    )
+    progress_writer.run_started()
 
     group_results: dict[str, list[GroupRecordResult]] = {}
     try:
@@ -1944,6 +1968,12 @@ def main() -> int:
                             group=group,
                             records=records,
                             output_root=output_root,
+                            error_message=error_message,
+                        )
+                        record_group_progress_failure(
+                            progress_writer,
+                            group_id=group_id,
+                            records=records,
                             error_message=error_message,
                         )
                         continue
@@ -1976,6 +2006,7 @@ def main() -> int:
                         no_timeout=bool(getattr(args, "no_timeout", False)),
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
+                        progress_writer=progress_writer,
                     )
                     future_map[future] = group_id
 
@@ -1990,6 +2021,12 @@ def main() -> int:
                             group=group,
                             records=records,
                             output_root=output_root,
+                            error_message=error_message,
+                        )
+                        record_group_progress_failure(
+                            progress_writer,
+                            group_id=group_id,
+                            records=records,
                             error_message=error_message,
                         )
             gc.collect()
@@ -2136,6 +2173,7 @@ def main() -> int:
             save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
     runtime_manifest["automated_evaluation"] = automated_evaluation_status
     save_json(output_root / "runtime-manifest.json", runtime_manifest)
+    progress_writer.run_completed(status="completed")
     print(json.dumps({"output_dir": str(output_root), "summary": summary}, indent=2, ensure_ascii=False))
     return 0
 

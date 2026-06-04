@@ -216,6 +216,10 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
     result_path = tmp_path / "out" / "per-record" / "single_llm_skills_on" / "record-1.json"
     payload = benchmarking_cli.json.loads(result_path.read_text(encoding="utf-8"))
     assert "web_search preflight failed" in payload["error"]
+    progress = benchmarking_cli.json.loads((tmp_path / "out" / "progress" / "state.json").read_text(encoding="utf-8"))
+    assert progress["completed"] == 1
+    assert progress["groups"]["single_llm_skills_on"]["status"] == "failed"
+    assert progress["groups"]["single_llm_skills_on"]["completed_records"] == ["record-1"]
 
 
 def test_main_launches_automated_evaluation_after_results_are_written(monkeypatch, tmp_path) -> None:

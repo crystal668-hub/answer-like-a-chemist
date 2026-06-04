@@ -29,7 +29,7 @@
   - `DONE`: Rerank papers by building GROBID profiles and calling an OpenAI-compatible chat-completions endpoint via `workspace/skills/paper-rerank/scripts/paper_rerank.py`.
   - `DONE`: Terminate benchmark-owned leftover processes from manifests/leases while preserving session files, session stores, run-scoped artifacts, manifests, and cleanup reports via `workspace/skills/benchmark-cleanroom/scripts/cleanup_benchmark_run.py`.
   - `DONE`: Manage local Docker-backed GROBID via `workspace/scripts/docker_services.sh` and native macOS MinerU API via `workspace/scripts/mineru_service.sh`.
-  - `NOT_IMPLEMENTED`: No actual web UI/server is implemented in the repo despite `web-ui` optional dependencies in `workspace/pyproject.toml`.
+  - `DONE`: Serve a local benchmark result dashboard through `workspace/benchmarking/dashboard/app.py` when launched with the `web-ui` optional dependencies. The dashboard scans benchmark run directories, reads immutable result artifacts, displays per-record group comparisons and progress, serves run-local visual assets with path containment checks, and stores only review metadata in `state/benchmark-dashboard/dashboard.sqlite`.
 
 ## 2. System Architecture
 - Top-level repo roles
@@ -506,12 +506,12 @@
   - Status: `DONE`
 
 - Name: Web UI / API server
-  - Description: Optional dependencies suggest planned FastAPI/Gradio/OpenAI-based UI surfaces.
+  - Description: Provides a localhost FastAPI benchmark dashboard for reading benchmark run outputs, reviewing per-record answers, comparing experiment groups, monitoring progress, and maintaining dashboard-only review metadata.
   - Input / Output:
-    - Input: UNKNOWN
-    - Output: UNKNOWN
-  - Implementation location: `workspace/pyproject.toml` only
-  - Status: `NOT_IMPLEMENTED`
+    - Input: `state/benchmark-runs/*` or configured run roots containing `results.json`, `runtime-manifest.json`, `waves/`, `progress/`, `per-record/`, `input-bundles/`, and `analysis/` artifacts.
+    - Output: Local HTTP API/static UI on `127.0.0.1`, plus review metadata in `state/benchmark-dashboard/dashboard.sqlite`.
+  - Implementation location: `workspace/benchmarking/dashboard/*`; script entrypoint `benchmark-dashboard` in `workspace/pyproject.toml`
+  - Status: `DONE`
 
 ## 4. Actual Behavior
 - Primary execution flow: three-group skills benchmark
@@ -522,6 +522,7 @@
   - It builds per-group run-scoped OpenClaw configs in `output_root/runtime-config/` through `benchmarking.runtime.config_pool.ConfigPool`; the ConfigPool receives the effective experiment specs after health filtering. `benchmarking.workflow.cli` exposes a small set of root-script facade wrappers for `benchmark_test.py`.
   - For OpenClaw subprocesses, `benchmarking.runtime.openclaw_env.build_openclaw_subprocess_env` prefixes the canonical workspace `.venv/bin` on `PATH`, sets `VIRTUAL_ENV` to the workspace `.venv`, sets `PYTHONNOUSERSITE=1`, preserves explicit proxy variables, and otherwise imports macOS system HTTP/HTTPS proxy settings from `scutil --proxy`, setting `NODE_USE_ENV_PROXY=1` so Node `fetch()` honors the proxy. The wrapper, judge client, and ChemQA launcher use this shared environment builder. The `.venv/bin` prefix is a compatibility fallback for legacy direct `python`/`python3` examples in skill docs; benchmark-managed `TOOLS.md` directs single-LLM skills-on agents to use `scripts/run_skill.py` for structured skill execution.
   - It runs `benchmarking.runtime.web_search_preflight.run_web_search_preflight` for every selected group with `websearch=True`, retrying failed probes up to three attempts with default `5s, 10s` exponential backoff between failed attempts, writes `output_root/web-search-preflight.json`, and includes the report in `results.json` and `runtime-manifest.json`. A failed preflight materializes all records in the affected group as failed execution results before wave dispatch, preventing repeated failed `web_search` attempts inside model trajectories.
+  - It creates `output_root/progress/events.jsonl` and `output_root/progress/state.json` through `benchmarking.dashboard.progress.ProgressWriter`. Events include run/group/record start and completion plus errors, so the local dashboard can report current record ids for active groups. Historical runs without progress artifacts remain readable by falling back to `waves/` status and `per-record/` counts.
   - After writing `results.json`, the CLI removes stale legacy `summary_by_group.csv` and `summary_by_group_and_subset.csv` files from the output root, writes the final `runtime-manifest.json`, starts the detached automated evaluation process, and then rewrites `runtime-manifest.json` with the `automated_evaluation` launch status. If launcher setup raises, the CLI writes a `launch_failed` status under `analysis/status.json` and still returns according to the benchmark run outcome.
   - Default groups are `single_llm_skills_on`, `single_llm_skills_off`, and `chemqa_skills_on`; all set `websearch=False`, so the old web-on/web-off matrix is no longer an experiment axis. A false benchmark web flag disables both OpenClaw `web_search` and the general `web_fetch` tool in the run-scoped config; the single-LLM skills-on/skills-off comparison therefore cannot use generic web retrieval unless a future experiment group explicitly opts into benchmark web access.
   - `BENCHMARK_SKILLS_ALLOWLIST` is loaded by `benchmarking.skills.tree.benchmark_skill_allowlist()` from entries in the historical `workspace/skills/chemistry-routing-matrix.json` inventory where `single_agent_exposure` is `true`. Startup health filtering writes only available skills to skills-on runner agents. Runtime/orchestration bundles such as `benchmark-cleanroom`, `debateclaw-v1`, and `chemqa-review` are not chemistry provider skills and are not included in the single-agent allowlist or rendered skill tree. `single_llm_skills_off` writes an explicit empty runner `skills: []`. Judge configs do not receive the benchmark allowlist.
@@ -611,7 +612,7 @@
 
 ## 5. Gap Analysis
 - Missing features
-  - `NOT_IMPLEMENTED`: No actual FastAPI/Gradio/uvicorn application code despite optional `web-ui` dependencies in `workspace/pyproject.toml`.
+  - No known missing web dashboard implementation surface for the current localhost-only review scope.
 
 - Incomplete implementations
   - No ChemQA native workflow package remains in the source tree; the previous inactive scaffold and unused loader were removed rather than implemented.
@@ -621,7 +622,7 @@
     - `benchmarking.workflow.cli` is still a broad package CLI/entrypoint with embedded scheduling and aggregation logic.
     - ChemQA runs are controlled through external state scripts.
   - `workspace/benchmarking/` is now the real benchmark implementation layer, and its old flat compatibility modules have been removed; the legacy root `benchmark_test.py` entrypoint is retained for compatibility.
-  - `workspace/pyproject.toml` advertises `web-ui` extras, but there is no corresponding app module.
+  - `workspace/pyproject.toml` keeps broad `web-ui` extras for dashboard/runtime tooling; the current implemented app surface is the localhost-only benchmark dashboard under `workspace/benchmarking/dashboard/`.
   - Top-level repo contains a mix of source, runtime state, generated artifacts, logs, and secret-bearing config in one tree; module boundaries are not clean at the repository level.
 
 ## 6. Risks & Technical Debt
@@ -651,8 +652,8 @@
   - Move more scheduling, result persistence, and aggregation glue from `workspace/benchmarking/workflow/cli.py` into smaller package modules once their contracts stabilize.
 - Separate source from runtime state:
   - Move generated workspaces, logs, DBs, and mutable OpenClaw runtime state outside the analyzed source tree or document them as runtime-only roots.
-- Remove or implement misleading declared surfaces:
-  - Either add a real web UI/API module for the `web-ui` extras or drop those extras from the project metadata.
+- Continue hardening the benchmark dashboard:
+  - Add richer transcript/trajectory views and optional launch controls only if those workflows become needed; the current dashboard intentionally reviews and monitors runs but does not start benchmark processes.
 - Harden artifact and cleanup flows:
   - Continue reducing filename/path guessing in legacy ChemQA artifact recovery paths now that canonical Artifact Flow paths exist.
   - Centralize run manifest/session/process metadata contracts used by runners, drivers, cleanup, and single-LLM session-isolation audits.
