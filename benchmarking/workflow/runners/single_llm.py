@@ -46,6 +46,7 @@ FINAL_MARKER_REQUIRED_EVAL_KINDS = {
     "superchem_multiple_choice_rpf",
     "chembench_open_ended",
     "frontierscience_olympiad",
+    "verifier_grounded",
 }
 BENCHMARK_SCRATCH_DIRNAME = ".benchmark-scratch"
 

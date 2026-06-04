@@ -4,6 +4,7 @@ import unittest
 
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.workflow.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
+from benchmarking.workflow.runners.single_llm import validate_candidate_answer_contract
 
 
 class BenchmarkPromptsTests(unittest.TestCase):
@@ -104,6 +105,55 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         self.assertIn("For HLE exact-match tasks, put only the final value, expression, or entity", prompt)
         self.assertIn("Do not add `FINAL ANSWER:`", prompt)
+
+    def test_verifier_grounded_prompt_uses_task_answer_schema(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit-logp",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Propose one valid single-component small-molecule SMILES.",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={
+                "verifier_grounded": {
+                    "task": {
+                        "answer_schema": {
+                            "format": "final_answer_line",
+                            "final_answer_prefix": "FINAL ANSWER:",
+                            "value_type": "smiles",
+                        },
+                    },
+                },
+            },
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+
+        self.assertIn("verifier-grounded generation task", prompt)
+        self.assertIn("FINAL ANSWER: <SMILES>", prompt)
+        self.assertIn("single valid candidate", prompt)
+
+    def test_verifier_grounded_candidate_contract_requires_final_answer_marker(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit-logp",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Q",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={},
+        )
+
+        result = validate_candidate_answer_contract(
+            record=record,
+            short_answer_text="",
+            full_response_text="The molecule is aspirin.",
+            runner_meta={},
+        )
+
+        self.assertFalse(result.valid)
+        self.assertEqual("candidate_answer_contract_invalid", result.code)
+        self.assertIn("FINAL ANSWER", result.message)
 
     def test_single_llm_prompt_respects_skills_enabled_flag(self) -> None:
         record = BenchmarkRecord(

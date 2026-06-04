@@ -291,6 +291,62 @@ def test_per_record_result_table_average_row_omits_score_for_answer_only_metrics
     assert "答案均值" not in markdown
 
 
+def test_per_record_result_table_renders_verifier_scores_without_pass_rate() -> None:
+    bundle = {
+        "run_summary": {
+            "summary": {
+                "group_order": ["single_llm_skills_on"],
+                "groups": {"single_llm_skills_on": {"count": 2, "pass_count": 0}},
+            }
+        },
+        "records": [
+            {
+                "record_id": "rdkit-1",
+                "eval_kind": "verifier_grounded",
+                "groups": [
+                    {
+                        "group_id": "single_llm_skills_on",
+                        "status_axes": {"evaluable": True, "scored": True},
+                        "evaluation": {
+                            "eval_kind": "verifier_grounded",
+                            "score": 0.7,
+                            "normalized_score": 0.7,
+                            "passed": None,
+                            "primary_metric": "verifier_score",
+                            "details": {"failure_type": None},
+                        },
+                    }
+                ],
+            },
+            {
+                "record_id": "rdkit-2",
+                "eval_kind": "verifier_grounded",
+                "groups": [
+                    {
+                        "group_id": "single_llm_skills_on",
+                        "status_axes": {"evaluable": True, "scored": True},
+                        "evaluation": {
+                            "eval_kind": "verifier_grounded",
+                            "score": 0.3,
+                            "normalized_score": 0.3,
+                            "passed": None,
+                            "primary_metric": "verifier_score",
+                            "details": {"failure_type": "domain_error"},
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    markdown = "\n".join(automated_evaluation.render_per_record_result_table(bundle))
+
+    assert "| rdkit-1 | verifier_grounded | 0.7 |" in markdown
+    assert "| rdkit-2 | verifier_grounded | 0.3 |" in markdown
+    assert "| 平均 | - | Verifier 平均分 0.5 |" in markdown
+    assert "正确率" not in markdown
+
+
 def test_single_llm_transcript_summary_skips_thinking_and_keeps_visible_evidence(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     write_jsonl(

@@ -30,6 +30,7 @@ def _grading_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "raw_subject": _deep_copy_jsonish(payload.get("raw_subject")),
         "image": _deep_copy_jsonish(payload.get("image")),
         "source_id": _deep_copy_jsonish(payload.get("source_id")),
+        "verifier_grounded": _deep_copy_jsonish(payload.get("verifier_grounded")),
     }
 
 
@@ -124,6 +125,8 @@ def classify_subset(record: BenchmarkRecord) -> str:
         return "superchem_multimodal"
     if record.dataset == "hle" and record.grading.kind == "hle":
         return "hle_chemistry"
+    if record.grading.kind == "verifier_grounded":
+        return record.dataset
     return f"{record.dataset}:{record.grading.kind}"
 
 

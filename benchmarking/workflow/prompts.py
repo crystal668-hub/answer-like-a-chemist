@@ -69,6 +69,35 @@ def _hle_answer_type(record: BenchmarkRecord) -> str:
     return "generic"
 
 
+def _verifier_grounded_answer_schema(record: BenchmarkRecord) -> dict[str, Any]:
+    payload = dict(getattr(record, "payload", {}) or {})
+    config = dict(getattr(getattr(record, "grading", None), "config", {}) or {})
+    verifier_config = payload.get("verifier_grounded") or config.get("verifier_grounded") or {}
+    if not isinstance(verifier_config, dict):
+        return {}
+    task = verifier_config.get("task") or {}
+    if not isinstance(task, dict):
+        return {}
+    schema = task.get("answer_schema") or {}
+    return schema if isinstance(schema, dict) else {}
+
+
+def _verifier_grounded_final_answer_instruction(record: BenchmarkRecord) -> str:
+    schema = _verifier_grounded_answer_schema(record)
+    value_type = str(schema.get("value_type") or "").strip().lower()
+    schema_format = str(schema.get("format") or "").strip()
+    prefix = str(schema.get("final_answer_prefix") or "FINAL ANSWER:").strip() or "FINAL ANSWER:"
+    if schema_format == "final_answer_line" and value_type == "smiles":
+        return f"End with exactly one line formatted as: {prefix} <SMILES>."
+    if schema_format == "final_answer_line" and value_type == "json":
+        return f"End with exactly one line formatted as: {prefix} <JSON>."
+    if schema_format == "final_answer_line" and value_type == "number":
+        return f"End with exactly one line formatted as: {prefix} <NUMBER>."
+    if schema_format == "final_answer_block" and value_type == "cif":
+        return f"End with exactly this block format: {prefix}\\n```cif\\n<CIF content>\\n```."
+    return f"End with the exact final answer format requested in the question, using the {prefix} marker."
+
+
 def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
     eval_kind = str(getattr(record, "eval_kind", "") or "").strip()
     dataset = str(getattr(record, "dataset", "") or "").strip()
@@ -91,6 +120,8 @@ def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
         if _hle_answer_type(record) == "multiple_choice":
             return "multiple_choice"
         return "generic_semantic_answer"
+    if eval_kind == "verifier_grounded":
+        return "verifier_grounded_candidate"
     return "generic_semantic_answer"
 
 
@@ -176,6 +207,11 @@ def build_single_llm_prompt(
             instructions.append(f"Read the question bundle file first: {input_bundle.question_markdown}")
             if input_bundle.image_files:
                 instructions.append("Inspect the local image files referenced in the bundle before answering.")
+    elif record.eval_kind == "verifier_grounded":
+        instructions.append("This is a verifier-grounded generation task scored by deterministic local verifier scripts.")
+        instructions.append("Propose one single valid candidate that satisfies the stated verifier constraints.")
+        instructions.append("Do not provide multiple candidate attempts in the final answer.")
+        instructions.append(_verifier_grounded_final_answer_instruction(record))
     else:
         instructions.append("Provide a complete answer. If you include a final answer line, use: FINAL ANSWER: <answer>.")
 

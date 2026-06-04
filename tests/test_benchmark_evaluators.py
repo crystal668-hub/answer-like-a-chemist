@@ -7,6 +7,7 @@ from benchmarking.scoring.evaluators import (
     evaluate_frontierscience_research,
     evaluate_generic_semantic,
     evaluate_hle,
+    evaluate_verifier_grounded,
     extract_candidate_short_answer,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
@@ -209,6 +210,95 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual("judge", result.details["method"])
         self.assertIn("The relevant final answer is benzene.", judge.prompts[0])
         self.assertNotIn("wrong-short-answer", judge.prompts[0])
+
+    def test_verifier_grounded_returns_continuous_score_without_pass_threshold(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit-logp",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Propose one valid single-component small-molecule SMILES.",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={
+                "verifier_grounded": {
+                    "source_repo": "/Users/xutao/verifier-grounded-benchmark",
+                    "task": {"task_id": "rdkit_logp_window_003"},
+                    "verifier_specs": [{"verifier_id": "rdkit_logp_v1"}],
+                }
+            },
+        )
+
+        def verifier_runner(*, record, answer_text):
+            self.assertEqual("Reasoning.\nFINAL ANSWER: c1ccccc1", answer_text)
+            return {
+                "task_id": "rdkit_logp_window_003",
+                "status": "ok",
+                "canonical_smiles": "c1ccccc1",
+                "properties": {"logp": 1.6866},
+                "scores": {
+                    "score": 0.73,
+                    "constraint_scores": [{"property": "logp", "score": 0.73}],
+                },
+                "failure_type": None,
+                "message": None,
+                "versions": {"rdkit": "2026.03.2"},
+                "raw_answer": "Reasoning.\nFINAL ANSWER: c1ccccc1",
+                "extracted_answer": "c1ccccc1",
+            }
+
+        result = evaluate_verifier_grounded(
+            record,
+            short_answer_text="c1ccccc1",
+            full_response_text="Reasoning.\nFINAL ANSWER: c1ccccc1",
+            answer_text="Reasoning.\nFINAL ANSWER: c1ccccc1",
+            judge=object(),
+            verifier_runner=verifier_runner,
+        )
+
+        self.assertEqual(0.73, result.score)
+        self.assertEqual(0.73, result.normalized_score)
+        self.assertIsNone(result.passed)
+        self.assertEqual("verifier_score", result.primary_metric)
+        self.assertEqual("script_verifier", result.details["method"])
+        self.assertEqual("c1ccccc1", result.details["canonical_smiles"])
+        self.assertEqual({"logp": 1.6866}, result.details["properties"])
+
+    def test_verifier_grounded_parse_error_is_scored_zero_but_not_threshold_passed(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit-logp",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Propose one valid single-component small-molecule SMILES.",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={"verifier_grounded": {"task": {"task_id": "rdkit_logp_window_003"}}},
+        )
+
+        def verifier_runner(*, record, answer_text):
+            return {
+                "task_id": "rdkit_logp_window_003",
+                "status": "error",
+                "failure_type": "parse_error",
+                "message": "missing final answer line",
+                "canonical_smiles": None,
+                "properties": {},
+                "scores": {"score": 0.0, "constraint_scores": []},
+                "versions": {},
+            }
+
+        result = evaluate_verifier_grounded(
+            record,
+            short_answer_text="",
+            full_response_text="No final marker.",
+            answer_text="No final marker.",
+            judge=object(),
+            verifier_runner=verifier_runner,
+        )
+
+        self.assertEqual(0.0, result.score)
+        self.assertIsNone(result.passed)
+        self.assertEqual("parse_error", result.details["failure_type"])
+        self.assertEqual("missing final answer line", result.details["message"])
 
     def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
         judge = JudgeStub(

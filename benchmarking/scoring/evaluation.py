@@ -25,6 +25,7 @@ def register_default_evaluators() -> None:
     register_evaluator("frontierscience_research", evaluators.evaluate_frontierscience_research)
     register_evaluator("superchem_multiple_choice_rpf", evaluators.evaluate_superchem_multiple_choice_rpf)
     register_evaluator("hle", evaluators.evaluate_hle)
+    register_evaluator("verifier_grounded", evaluators.evaluate_verifier_grounded)
     register_evaluator("generic_semantic", evaluators.evaluate_generic_semantic)
 
 

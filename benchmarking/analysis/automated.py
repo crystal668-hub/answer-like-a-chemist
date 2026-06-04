@@ -28,6 +28,7 @@ ANSWER_CORRECTNESS_METRICS = {
     "hle_judge_accuracy",
 }
 RUBRIC_SCORE_METRICS = {"rubric_points"}
+VERIFIER_SCORE_METRICS = {"verifier_score"}
 SUPER_CHEM_RPF_EVAL_KIND = "superchem_multiple_choice_rpf"
 
 
@@ -561,6 +562,22 @@ def average_superchem_detail_metric(bundle: dict[str, Any], group_id: str, metri
     return _average_values(values)
 
 
+def verifier_score_values(bundle: dict[str, Any], group_id: str) -> list[float]:
+    values: list[float] = []
+    for group in _group_entries(bundle, group_id):
+        evaluation = _scored_evaluation(group)
+        if not evaluation:
+            continue
+        primary_metric = str(evaluation.get("primary_metric") or "").strip()
+        if primary_metric not in VERIFIER_SCORE_METRICS:
+            continue
+        try:
+            values.append(float(evaluation.get("normalized_score")))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
 def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
     run_summary = bundle.get("run_summary") if isinstance(bundle, dict) else {}
     summary_payload = (run_summary or {}).get("summary") or {}
@@ -577,6 +594,10 @@ def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
     except (TypeError, ValueError):
         count_number = 0
         pass_number = 0
+    verifier_values = verifier_score_values(bundle, group_id)
+    if verifier_values and len(verifier_values) == count_number:
+        verifier_average = _average_values(verifier_values)
+        return f"Verifier 平均分 {verifier_average}" if verifier_average else "-"
     if count_number > 0:
         parts.append(f"正确率 {pass_number}/{count_number} ({format_percent(pass_number / count_number)})")
     avg_process_score = average_process_score(bundle, group_id)

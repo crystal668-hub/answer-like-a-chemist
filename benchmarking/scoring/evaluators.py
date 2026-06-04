@@ -4,7 +4,10 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
 from benchmarking.core.convergence import extract_final_answer_line
@@ -54,7 +57,7 @@ class EvaluationResult:
     score: float
     max_score: float
     normalized_score: float
-    passed: bool
+    passed: bool | None
     primary_metric: str
     primary_metric_direction: str
     details: dict[str, Any]
@@ -808,6 +811,108 @@ CANDIDATE ANSWER:
         primary_metric="semantic_match",
         primary_metric_direction="higher_is_better",
         details={"method": "judge", "judge": judged, "expected": expected, "candidate_answer_text": candidate_answer_text},
+    )
+
+
+def _verifier_grounded_config(record: BenchmarkRecord) -> dict[str, Any]:
+    payload = dict(getattr(record, "payload", {}) or {})
+    config = dict(getattr(getattr(record, "grading", None), "config", {}) or {})
+    value = payload.get("verifier_grounded") or config.get("verifier_grounded")
+    if not isinstance(value, dict):
+        raise EvaluationError("verifier_grounded records must include a verifier_grounded config object.")
+    return value
+
+
+def run_verifier_grounded_evaluation(*, record: BenchmarkRecord, answer_text: str) -> dict[str, Any]:
+    config = _verifier_grounded_config(record)
+    source_repo = Path(str(config.get("source_repo") or "")).expanduser()
+    if not source_repo.is_dir():
+        raise EvaluationError(f"verifier_grounded source_repo does not exist: {source_repo}")
+
+    task = config.get("task")
+    verifier_specs = config.get("verifier_specs")
+    if not isinstance(task, dict):
+        raise EvaluationError("verifier_grounded config must include task object.")
+    if not isinstance(verifier_specs, list):
+        raise EvaluationError("verifier_grounded config must include verifier_specs list.")
+
+    script = (
+        "import json, sys\n"
+        "from benchmark.evaluate import evaluate_one\n"
+        "payload = json.load(sys.stdin)\n"
+        "task = payload['task']\n"
+        "specs = {spec['verifier_id']: spec for spec in payload['verifier_specs']}\n"
+        "answer = {'task_id': task['task_id'], 'response': payload['answer_text']}\n"
+        "print(json.dumps(evaluate_one(answer, {task['task_id']: task}, specs), ensure_ascii=False))\n"
+    )
+    completed = subprocess.run(
+        ["uv", "run", "--project", str(source_repo), "python", "-c", script],
+        input=json.dumps({"task": task, "verifier_specs": verifier_specs, "answer_text": answer_text}),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=float(config.get("timeout_seconds") or 120.0),
+        cwd=str(source_repo),
+    )
+    if completed.returncode != 0:
+        raise EvaluationError(
+            "verifier_grounded evaluator subprocess failed: "
+            f"{completed.stderr.strip() or completed.stdout.strip() or completed.returncode}"
+        )
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise EvaluationError(f"verifier_grounded evaluator produced invalid JSON: {exc.msg}") from exc
+    if not isinstance(result, dict):
+        raise EvaluationError("verifier_grounded evaluator produced a non-object result.")
+    return result
+
+
+def evaluate_verifier_grounded(
+    record: BenchmarkRecord,
+    *,
+    short_answer_text: str,
+    full_response_text: str,
+    answer_text: str = "",
+    judge: Any,
+    verifier_runner: Any = run_verifier_grounded_evaluation,
+) -> EvaluationResult:
+    candidate_answer_text = resolve_candidate_answer_text(
+        answer_text=answer_text,
+        short_answer_text=short_answer_text,
+        full_response_text=full_response_text,
+    )
+    verifier_result = verifier_runner(record=record, answer_text=candidate_answer_text)
+    scores = verifier_result.get("scores") if isinstance(verifier_result, dict) else {}
+    raw_score = scores.get("score") if isinstance(scores, dict) else 0.0
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        score = 0.0
+    score = max(0.0, min(1.0, score))
+    details = {
+        "method": "script_verifier",
+        "task_id": verifier_result.get("task_id"),
+        "status": verifier_result.get("status"),
+        "failure_type": verifier_result.get("failure_type"),
+        "message": verifier_result.get("message"),
+        "canonical_smiles": verifier_result.get("canonical_smiles"),
+        "properties": verifier_result.get("properties") or {},
+        "constraint_scores": scores.get("constraint_scores", []) if isinstance(scores, dict) else [],
+        "versions": verifier_result.get("versions") or {},
+        "raw_answer": verifier_result.get("raw_answer"),
+        "extracted_answer": verifier_result.get("extracted_answer"),
+        "verifier_result": verifier_result,
+    }
+    return EvaluationResult(
+        eval_kind=record.eval_kind,
+        score=score,
+        max_score=1.0,
+        normalized_score=score,
+        passed=None,
+        primary_metric="verifier_score",
+        primary_metric_direction="higher_is_better",
+        details=details,
     )
 
 
