@@ -867,7 +867,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertFalse(convergence["finalization_rescue_attempted"])
         self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
 
-    def test_wrapper_recovers_research_conclusion_from_transcript_when_replay_invalid(self) -> None:
+    def test_wrapper_keeps_complete_replay_invalid_research_answer_native(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -946,10 +946,78 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         result = payload["result"]
         self.assertEqual(research_text, result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
-        self.assertTrue(convergence["agent_error_payload_detected"])
-        self.assertEqual("agent_response_unavailable", convergence["agent_error_kind"])
-        self.assertTrue(convergence["transcript_answer_recovered"])
-        self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
+        self.assertFalse(convergence["agent_error_payload_detected"])
+        self.assertEqual("", convergence["agent_error_kind"])
+        self.assertFalse(convergence["transcript_answer_recovered"])
+        self.assertNotIn("recovery_source", convergence)
+        self.assertEqual("replay_invalid", convergence["replay_invalid_diagnostics"]["reason"])
+
+    def test_wrapper_keeps_complete_replay_invalid_final_answer_native(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text("", encoding="utf-8")
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            answer_text = "Visible verification.\nFINAL ANSWER: CCO"
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                eval_kind="verifier_grounded",
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": answer_text}],
+                            "meta": {
+                                "replayInvalid": True,
+                                "stopReason": "stop",
+                                "completion": {"finishReason": "stop"},
+                                "livenessState": "working",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual(answer_text, result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertFalse(convergence["agent_error_payload_detected"])
+        self.assertEqual("", convergence["agent_error_kind"])
+        self.assertFalse(convergence["transcript_answer_recovered"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
         self.assertEqual("replay_invalid", convergence["replay_invalid_diagnostics"]["reason"])
 
     def test_wrapper_does_not_mark_complete_research_conclusion_as_agent_error(self) -> None:

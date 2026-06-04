@@ -245,7 +245,7 @@ def _classify_agent_error_payload(target: dict[str, Any], *, eval_kind: str = ""
         return "agent_stream_read_error"
     if (
         any(OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT in text for text in payload_texts)
-        or meta.get("replayInvalid") is True
+        or (meta.get("replayInvalid") is True and not has_complete_answer)
         or (liveness_state in {"abandoned", "blocked"} and (_has_error_payload_marker(target) or not has_complete_answer))
     ):
         return "agent_response_unavailable"

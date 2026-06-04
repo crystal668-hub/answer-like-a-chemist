@@ -338,7 +338,7 @@ def classify_agent_error_payload(
 
     if (
         any(OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT in text for text in payload_texts)
-        or runner_meta.get("replayInvalid") is True
+        or (runner_meta.get("replayInvalid") is True and not has_complete_answer)
         or (liveness_state in {"abandoned", "blocked"} and (error_payload or not has_complete_answer))
     ):
         message = "Single-LLM OpenClaw agent response was unavailable before producing a benchmark answer."

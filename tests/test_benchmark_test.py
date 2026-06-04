@@ -3212,6 +3212,52 @@ Points: 0.5, Item: Second criterion
             benchmark_test.run_subprocess = original_run_subprocess
             benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
 
+    def test_single_llm_runner_keeps_complete_replay_invalid_answer_native(self) -> None:
+        original_run_subprocess = benchmark_test.run_subprocess
+        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        try:
+            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return self._single_llm_completed_process(
+                    command,
+                    text="Visible verification.\nFINAL ANSWER: CCO",
+                    meta={
+                        "replayInvalid": True,
+                        "stopReason": "stop",
+                        "completion": {"finishReason": "stop"},
+                        "livenessState": "working",
+                        "convergence": {
+                            "transcript_answer_recovered": False,
+                            "replay_invalid_diagnostics": {"reason": "replay_invalid"},
+                        },
+                    },
+                )
+
+            benchmark_test.run_subprocess = fake_run_subprocess
+            runner = benchmark_test.SingleLLMRunner(
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+
+            out = runner.run(
+                self._single_llm_record(eval_kind="verifier_grounded"),
+                benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"],
+            )
+
+            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertIsNone(out.recovery)
+            self.assertTrue(out.should_score())
+            self.assertEqual("CCO", out.short_answer_text)
+            self.assertFalse(out.runner_meta.get("degraded_execution", False))
+            self.assertNotIn("agent_error", out.runner_meta)
+            self.assertEqual("replay_invalid", out.runner_meta["convergence"]["replay_invalid_diagnostics"]["reason"])
+        finally:
+            benchmark_test.run_subprocess = original_run_subprocess
+            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+
     def test_single_llm_runner_retries_structured_meta_timeout(self) -> None:
         original_run_subprocess = benchmark_test.run_subprocess
         original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
