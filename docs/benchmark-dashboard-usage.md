@@ -121,8 +121,10 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - record ID
 - dataset / subset
 - eval kind
-- 当前可用的分数或状态
+- `on` / `off` 并排分数预览，分别对应 `single_llm_skills_on` 和 `single_llm_skills_off`
 - 备注数量
+
+如果某个 run 缺少 `single_llm_skills_on` 或 `single_llm_skills_off`，题目目录只显示实际存在的组；如果两者都不存在，则回退显示第一个可用测试组的分数或状态。
 
 点击题目后，右侧会展示该题详情。
 

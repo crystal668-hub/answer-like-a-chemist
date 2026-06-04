@@ -29,6 +29,8 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "dataset-filter" in index
     assert "hide-run" in index
     assert "api/annotations" in script
+    assert "function renderRecordScoreBadges" in script
+    assert "score-badge-strip" in script
 
 
 def test_dashboard_api_supports_run_metadata_and_annotation_crud(tmp_path: Path) -> None:

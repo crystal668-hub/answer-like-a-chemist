@@ -248,6 +248,20 @@ select {
   border-color: #f2a4ab;
 }
 
+.score-badge-strip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 128px;
+}
+
+.mini-score {
+  height: 21px;
+  padding: 0 6px;
+  font-size: 10.5px;
+}
+
 .progress-strip {
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);

@@ -51,6 +51,25 @@ function badge(text, cls = "") {
   return `<span class="pill ${cls}">${escapeHtml(text || "unknown")}</span>`;
 }
 
+function compactScoreLabel(value) {
+  return String(value || "pending").replace(/^Verifier\s+/i, "");
+}
+
+function renderRecordScoreBadges(groupResults = []) {
+  const labels = {
+    single_llm_skills_on: "on",
+    single_llm_skills_off: "off",
+  };
+  const preferred = groupResults
+    .filter((item) => labels[item.group_id])
+    .map((item) => `<span class="pill mini-score ${escapeAttribute(item.outcome || "")}" title="${escapeAttribute(item.group_id)}">${labels[item.group_id]} ${escapeHtml(compactScoreLabel(item.score_label))}</span>`);
+  if (preferred.length) {
+    return `<span class="score-badge-strip">${preferred.join("")}</span>`;
+  }
+  const fallback = groupResults[0] || {};
+  return badge(fallback.score_label || "pending", fallback.outcome || "");
+}
+
 function pct(progress) {
   const total = Number(progress?.total || 0);
   const completed = Number(progress?.completed || 0);
@@ -178,11 +197,10 @@ function renderRecords() {
     })
     .map((record) => {
       const active = state.selectedRecord === record.record_id ? "active" : "";
-      const first = record.group_results?.[0] || {};
       return `<button class="record-row ${active}" data-record="${escapeHtml(record.record_id)}">
         <div class="row-top">
           <span class="id-text">${escapeHtml(record.record_id)}</span>
-          ${badge(first.score_label || "pending", first.outcome || "")}
+          ${renderRecordScoreBadges(record.group_results || [])}
         </div>
         <p class="muted">${escapeHtml(record.dataset)} · ${escapeHtml(record.subset)}</p>
         <p class="muted">${escapeHtml(record.eval_kind)} · notes ${record.annotation_count || 0}</p>
