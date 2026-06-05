@@ -122,7 +122,7 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert runs[0]["group_count"] == 1
     assert runs[0]["datasets"] == ["demo"]
     assert runs[0]["subsets"] == ["chembench"]
-    assert runs[0]["average_normalized_score"] == 1.0
+    assert "average_normalized_score" not in runs[0]
     assert runs[0]["progress"]["completed"] == 1
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
 

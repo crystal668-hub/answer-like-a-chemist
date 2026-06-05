@@ -89,7 +89,6 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - run 状态
 - 完成进度
 - 测试组数量
-- 平均分
 - dataset 信息
 
 顶部支持：

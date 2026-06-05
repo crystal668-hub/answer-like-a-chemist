@@ -109,18 +109,6 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
     return (preferred.get(group_id, 100), group_id)
 
 
-def _average_normalized_score(results: list[dict[str, Any]]) -> float | None:
-    values: list[float] = []
-    for result in results:
-        evaluation = result.get("evaluation") if isinstance(result.get("evaluation"), dict) else {}
-        value = evaluation.get("normalized_score", evaluation.get("score"))
-        if isinstance(value, (int, float)):
-            values.append(float(value))
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
 class BenchmarkDashboard:
     def __init__(
         self,
@@ -217,7 +205,6 @@ class BenchmarkDashboard:
                     "dataset_files": payload.get("dataset_files") or [],
                     "datasets": datasets,
                     "subsets": subsets,
-                    "average_normalized_score": _average_normalized_score(results),
                     "progress": progress,
                     "summary": summary,
                 }

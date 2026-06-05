@@ -136,7 +136,6 @@ function renderRuns() {
     })
     .map((run) => {
       const active = state.selectedRun === run.run_id ? "active" : "";
-      const score = run.average_normalized_score == null ? "-" : Number(run.average_normalized_score).toFixed(3);
       return `<button class="run-card ${active}" data-run="${escapeHtml(run.run_id)}">
         <div class="row-top">
           <span class="id-text">${run.favorite ? "★ " : ""}${escapeHtml(run.alias || run.run_id)}</span>
@@ -144,7 +143,7 @@ function renderRuns() {
         </div>
         <p class="muted">${escapeHtml(run.run_id)}</p>
         <div class="bar" aria-label="进度"><div style="width:${pct(run.progress)}%"></div></div>
-        <p class="muted">${run.progress?.completed || 0}/${run.progress?.total || 0} · ${run.group_count || 0} groups · avg ${score}</p>
+        <p class="muted">${run.progress?.completed || 0}/${run.progress?.total || 0} · ${run.group_count || 0} groups</p>
         <p class="muted">${escapeHtml((run.datasets || []).join(", ") || "unknown dataset")}</p>
       </button>`;
     })
