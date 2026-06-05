@@ -23,6 +23,7 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "Benchmark Dashboard" in index
     assert "run-list" in index
     assert "record-list" in index
+    assert "/static/app.js?v=20260605-no-run-avg" in index
     assert "setInterval(refreshProgress" in script
     assert "function renderInlineMarkdown" in script
     assert "asset-image" in script
@@ -33,6 +34,20 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "score-badge-strip" in script
     assert "average_normalized_score" not in script
     assert "avg ${score}" not in script
+
+
+def test_dashboard_static_assets_disable_browser_cache(tmp_path: Path) -> None:
+    testclient = pytest.importorskip("fastapi.testclient")
+    app = create_app(run_roots=[tmp_path], annotation_db=tmp_path / "dashboard.sqlite")
+    client = testclient.TestClient(app)
+
+    index = client.get("/")
+    script = client.get("/static/app.js")
+
+    assert index.status_code == 200
+    assert script.status_code == 200
+    assert "no-store" in index.headers.get("cache-control", "")
+    assert "no-store" in script.headers.get("cache-control", "")
 
 
 def test_dashboard_api_supports_run_metadata_and_annotation_crud(tmp_path: Path) -> None:

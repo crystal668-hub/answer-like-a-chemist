@@ -506,7 +506,7 @@
   - Status: `DONE`
 
 - Name: Web UI / API server
-  - Description: Provides a localhost FastAPI benchmark dashboard for reading benchmark run outputs, reviewing per-record answers, comparing experiment groups, monitoring progress, and maintaining dashboard-only review metadata. The run list intentionally does not compute or display an overall run average score; score review is kept at the per-record/per-group comparison level and original aggregate summaries remain available inside immutable result artifacts.
+  - Description: Provides a localhost FastAPI benchmark dashboard for reading benchmark run outputs, reviewing per-record answers, comparing experiment groups, monitoring progress, and maintaining dashboard-only review metadata. The run list intentionally does not compute or display an overall run average score; score review is kept at the per-record/per-group comparison level and original aggregate summaries remain available inside immutable result artifacts. Dashboard HTML/JS/CSS responses use `Cache-Control: no-store` so local UI changes are picked up on page refresh.
   - Input / Output:
     - Input: `state/benchmark-runs/*` or configured run roots containing `results.json`, `runtime-manifest.json`, `waves/`, `progress/`, `per-record/`, `input-bundles/`, and `analysis/` artifacts.
     - Output: Local HTTP API/static UI on `127.0.0.1`, plus review metadata in `state/benchmark-dashboard/dashboard.sqlite`.

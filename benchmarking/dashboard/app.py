@@ -22,6 +22,7 @@ FASTAPI_EXTRA_MESSAGE = (
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
+NO_STORE_CACHE_CONTROL = "no-store"
 
 
 def _import_fastapi() -> tuple[Any, ...]:
@@ -44,6 +45,13 @@ def create_app(
     store = AnnotationStore(annotation_db or runtime_paths.project_state_root / "benchmark-dashboard" / "dashboard.sqlite")
     dashboard = BenchmarkDashboard(run_roots=run_roots, annotation_store=store)
     app = FastAPI(title="OpenClaw Benchmark Dashboard")
+
+    @app.middleware("http")
+    async def disable_dashboard_static_cache(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = NO_STORE_CACHE_CONTROL
+        return response
 
     @app.get("/api/runs")
     def api_list_runs(include_hidden: bool = False) -> list[dict[str, Any]]:
