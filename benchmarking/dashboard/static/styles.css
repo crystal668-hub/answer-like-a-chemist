@@ -82,6 +82,22 @@ h3 {
   font-size: 13px;
 }
 
+.run-score-line {
+  line-height: 1.35;
+}
+
+.run-score-line .positive {
+  color: var(--ok);
+}
+
+.run-score-line .negative {
+  color: var(--bad);
+}
+
+.run-score-line .neutral {
+  color: var(--muted);
+}
+
 .toolbar,
 .pane-header {
   display: flex;

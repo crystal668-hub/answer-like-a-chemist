@@ -89,7 +89,10 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - run 状态
 - 完成进度
 - 测试组数量
+- `single_llm_skills_on` / `single_llm_skills_off` 的平均归一化分摘要，例如 `on 0.61 · off 0.54 · Δ +0.07`
 - dataset 信息
+
+这个摘要来自 `results.json.summary.groups.<group_id>.avg_normalized_score`，只用于快速比较 skills-on 与 skills-off；它不是 run 的整体平均分。如果只有 on 或 off 一组有可用分数，则只显示该组分数，不显示 `Δ`；如果没有可用分数，则整行不显示。
 
 顶部支持：
 

@@ -19,11 +19,12 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     static_root = Path(__file__).resolve().parents[1] / "benchmarking" / "dashboard" / "static"
     index = (static_root / "index.html").read_text(encoding="utf-8")
     script = (static_root / "app.js").read_text(encoding="utf-8")
+    styles = (static_root / "styles.css").read_text(encoding="utf-8")
 
     assert "Benchmark Dashboard" in index
     assert "run-list" in index
     assert "record-list" in index
-    assert "/static/app.js?v=20260605-diagnostic-display" in index
+    assert "/static/app.js?v=20260605-run-score-comparison" in index
     assert "setInterval(refreshProgress" in script
     assert "function renderInlineMarkdown" in script
     assert "asset-image" in script
@@ -34,6 +35,13 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "score-badge-strip" in script
     assert "average_normalized_score" not in script
     assert "avg ${score}" not in script
+    assert "function renderRunScoreComparison" in script
+    assert "single_llm_skills_on" in script
+    assert "single_llm_skills_off" in script
+    assert "run-score-line" in script
+    assert "Δ" in script
+    assert ".run-score-line .positive" in styles
+    assert ".run-score-line .negative" in styles
     assert "Exec calls:" in script
     assert "${!group.skills_enabled ? `<span>Exec calls:" in script
     assert "group.skills_enabled" in script

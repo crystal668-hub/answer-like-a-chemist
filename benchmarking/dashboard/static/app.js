@@ -70,6 +70,28 @@ function renderRecordScoreBadges(groupResults = []) {
   return badge(fallback.score_label || "pending", fallback.outcome || "");
 }
 
+function formatRunScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return number.toFixed(2);
+}
+
+function renderRunScoreComparison(run) {
+  const groups = run.summary?.groups || {};
+  const onScore = formatRunScore(groups.single_llm_skills_on?.avg_normalized_score);
+  const offScore = formatRunScore(groups.single_llm_skills_off?.avg_normalized_score);
+  const parts = [];
+  if (onScore !== null) parts.push(`<span>on ${escapeHtml(onScore)}</span>`);
+  if (offScore !== null) parts.push(`<span>off ${escapeHtml(offScore)}</span>`);
+  if (onScore !== null && offScore !== null) {
+    const delta = Number(onScore) - Number(offScore);
+    const deltaText = delta === 0 ? "0.00" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)}`;
+    const deltaClass = delta > 0 ? "positive" : delta < 0 ? "negative" : "neutral";
+    parts.push(`<span class="delta ${deltaClass}">Δ ${escapeHtml(deltaText)}</span>`);
+  }
+  return parts.length ? `<p class="muted run-score-line">${parts.join(" · ")}</p>` : "";
+}
+
 function pct(progress) {
   const total = Number(progress?.total || 0);
   const completed = Number(progress?.completed || 0);
@@ -144,6 +166,7 @@ function renderRuns() {
         <p class="muted">${escapeHtml(run.run_id)}</p>
         <div class="bar" aria-label="进度"><div style="width:${pct(run.progress)}%"></div></div>
         <p class="muted">${run.progress?.completed || 0}/${run.progress?.total || 0} · ${run.group_count || 0} groups</p>
+        ${renderRunScoreComparison(run)}
         <p class="muted">${escapeHtml((run.datasets || []).join(", ") || "unknown dataset")}</p>
       </button>`;
     })
