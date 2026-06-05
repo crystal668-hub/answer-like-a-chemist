@@ -23,7 +23,7 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "Benchmark Dashboard" in index
     assert "run-list" in index
     assert "record-list" in index
-    assert "/static/app.js?v=20260605-exec-diagnostics" in index
+    assert "/static/app.js?v=20260605-diagnostic-display" in index
     assert "setInterval(refreshProgress" in script
     assert "function renderInlineMarkdown" in script
     assert "asset-image" in script
@@ -35,6 +35,7 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "average_normalized_score" not in script
     assert "avg ${score}" not in script
     assert "Exec calls:" in script
+    assert "${!group.skills_enabled ? `<span>Exec calls:" in script
     assert "group.skills_enabled" in script
     assert "Skill calls:" in script
     assert "Skill failures:" in script

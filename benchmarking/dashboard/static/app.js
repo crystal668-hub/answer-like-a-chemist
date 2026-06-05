@@ -262,9 +262,9 @@ function renderGroups(record) {
         <div class="answer-block">${escapeHtml(group.answer_text || "无答案")}</div>
         <div class="diag-grid">
           <span>OpenClaw tools: ${escapeHtml(group.diagnostics?.openclaw_tool_call_count ?? "-")}</span>
-          <span>Exec calls: ${escapeHtml(group.diagnostics?.exec_tool_call_count ?? "-")}</span>
           ${group.skills_enabled ? `<span>Skill calls: ${escapeHtml(group.diagnostics?.skill_tool_call_count ?? "-")}</span>` : ""}
           ${group.skills_enabled ? `<span>Skill failures: ${escapeHtml(group.diagnostics?.skill_tool_failure_count ?? "-")}</span>` : ""}
+          ${!group.skills_enabled ? `<span>Exec calls: ${escapeHtml(group.diagnostics?.exec_tool_call_count ?? "-")}</span>` : ""}
           ${!group.skills_enabled ? `<span>Exec failures: ${escapeHtml(group.diagnostics?.exec_tool_failure_count ?? "-")}</span>` : ""}
           <span>Recovery: ${escapeHtml(group.status_axes?.recovery_mode || "none")}</span>
         </div>
