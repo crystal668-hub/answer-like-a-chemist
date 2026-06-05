@@ -76,12 +76,39 @@ def skill_audit(item: GroupRecordResult) -> dict[str, Any]:
 
 
 def skill_tool_call_count(item: GroupRecordResult) -> int:
+    if not item.skills_enabled:
+        return 0
     value = skill_audit(item).get("skill_tool_call_count")
     return int(value) if isinstance(value, (int, float)) else 0
 
 
-def skill_audit_int(item: GroupRecordResult, key: str) -> int:
+def skill_tool_failure_count(item: GroupRecordResult) -> int:
+    if not item.skills_enabled:
+        return 0
+    value = skill_audit(item).get("skill_tool_failure_count")
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def skill_audit_int(item: GroupRecordResult, key: str, *, skill_enabled_only: bool = False) -> int:
+    if skill_enabled_only and not item.skills_enabled:
+        return 0
     value = skill_audit(item).get(key)
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def exec_tool_call_count(item: GroupRecordResult) -> int:
+    audit = skill_audit(item)
+    value = audit.get("exec_tool_call_count")
+    if not isinstance(value, (int, float)) and not item.skills_enabled:
+        value = audit.get("skill_tool_call_count")
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def exec_tool_failure_count(item: GroupRecordResult) -> int:
+    audit = skill_audit(item)
+    value = audit.get("exec_tool_failure_count")
+    if not isinstance(value, (int, float)) and not item.skills_enabled:
+        value = audit.get("skill_tool_failure_count")
     return int(value) if isinstance(value, (int, float)) else 0
 
 
@@ -134,14 +161,16 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "native_evaluable_count": sum(1 for item in items if item.evaluable and item.recovery_mode == "none"),
         "non_evaluable_count": sum(1 for item in items if not item.evaluable),
         "degraded_execution_count": sum(1 for item in items if item.degraded_execution),
-        "skill_tool_executed_count": sum(1 for item in items if skill_audit(item).get("skill_tool_executed")),
-        "skill_model_declared_skip_count": sum(1 for item in items if skill_audit(item).get("model_declared_skip")),
-        "skill_no_tool_call_count": sum(1 for item in items if skill_audit(item).get("no_skill_tool_call")),
+        "skill_tool_executed_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("skill_tool_executed")),
+        "skill_model_declared_skip_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("model_declared_skip")),
+        "skill_no_tool_call_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("no_skill_tool_call")),
+        "exec_tool_call_total": sum(exec_tool_call_count(item) for item in items),
+        "exec_tool_failure_total": sum(exec_tool_failure_count(item) for item in items),
         "skill_tool_call_total": sum(skill_tool_call_count(item) for item in items),
-        "skill_tool_failure_total": sum(skill_audit_int(item, "skill_tool_failure_count") for item in items),
+        "skill_tool_failure_total": sum(skill_tool_failure_count(item) for item in items),
         "openclaw_tool_call_total": sum(openclaw_tool_call_count(item) for item in items),
         "openclaw_tool_failure_total": sum(openclaw_tool_failure_count(item) for item in items),
-        "missing_skill_doc_read_total": sum(skill_audit_int(item, "missing_skill_doc_read_count") for item in items),
+        "missing_skill_doc_read_total": sum(skill_audit_int(item, "missing_skill_doc_read_count", skill_enabled_only=True) for item in items),
         "tool_result_error_total": sum(skill_audit_int(item, "tool_result_error_count") for item in items),
         "request_shape_error_total": sum(skill_audit_int(item, "request_shape_error_count") for item in items),
         "coverage_checklist_present_count": sum(1 for item in items if skill_audit(item).get("coverage_checklist_present")),

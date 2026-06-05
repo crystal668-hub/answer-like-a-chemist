@@ -24,8 +24,13 @@ def build_skill_use_audit(
     convergence = runner_meta.get("convergence") if isinstance(runner_meta, dict) else {}
     convergence = convergence if isinstance(convergence, dict) else {}
     convergence_tool_names = _tool_names_from_convergence(convergence)
-    skill_tool_names = [name for name in convergence_tool_names if name == "exec"]
-    skill_tool_call_count = len(skill_tool_names)
+    exec_tool_names = [name for name in convergence_tool_names if name == "exec"]
+    exec_tool_call_count = len(exec_tool_names)
+    exec_tool_failure_count = _int_meta(convergence.get("exec_tool_result_error_count"))
+    skill_tools_available = bool(skills_enabled and configured)
+    skill_tool_names = exec_tool_names if skill_tools_available else []
+    skill_tool_call_count = exec_tool_call_count if skill_tools_available else 0
+    skill_tool_failure_count = exec_tool_failure_count if skill_tools_available else 0
     openclaw_tool_call_count = _int_meta(convergence.get("tool_call_count"))
     if openclaw_tool_call_count == 0 and convergence_tool_names:
         openclaw_tool_call_count = len(convergence_tool_names)
@@ -40,9 +45,12 @@ def build_skill_use_audit(
         "tool_call_count": calls,
         "tool_names": tool_names,
         "tool_failure_count": int(tool_summary.get("failures") or 0) if isinstance(tool_summary, dict) else 0,
+        "exec_tool_call_count": exec_tool_call_count,
+        "exec_tool_names": exec_tool_names,
+        "exec_tool_failure_count": exec_tool_failure_count,
         "skill_tool_call_count": skill_tool_call_count,
         "skill_tool_names": skill_tool_names,
-        "skill_tool_failure_count": _int_meta(convergence.get("exec_tool_result_error_count")),
+        "skill_tool_failure_count": skill_tool_failure_count,
         "missing_skill_doc_read_count": _int_meta(convergence.get("missing_skill_doc_read_count")),
         "tool_result_error_count": _int_meta(convergence.get("tool_result_error_count")),
         "request_shape_error_count": _int_meta(convergence.get("request_shape_error_count")),

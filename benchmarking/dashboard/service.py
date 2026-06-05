@@ -109,6 +109,34 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
     return (preferred.get(group_id, 100), group_id)
 
 
+def _audit_int(audit: dict[str, Any], key: str) -> int:
+    value = audit.get(key)
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def _diagnostics_payload(result: dict[str, Any], skill_audit: dict[str, Any]) -> dict[str, Any]:
+    skills_enabled = bool(result.get("skills_enabled", False))
+    legacy_skill_calls = _audit_int(skill_audit, "skill_tool_call_count")
+    legacy_skill_failures = _audit_int(skill_audit, "skill_tool_failure_count")
+    has_exec_call_count = isinstance(skill_audit.get("exec_tool_call_count"), (int, float))
+    has_exec_failure_count = isinstance(skill_audit.get("exec_tool_failure_count"), (int, float))
+    exec_call_count = _audit_int(skill_audit, "exec_tool_call_count")
+    exec_failure_count = _audit_int(skill_audit, "exec_tool_failure_count")
+    if not has_exec_call_count:
+        exec_call_count = legacy_skill_calls
+    if not has_exec_failure_count:
+        exec_failure_count = legacy_skill_failures
+    return {
+        "elapsed_seconds": result.get("elapsed_seconds"),
+        "openclaw_tool_call_count": skill_audit.get("openclaw_tool_call_count", skill_audit.get("tool_call_count")),
+        "exec_tool_call_count": exec_call_count,
+        "exec_tool_failure_count": exec_failure_count,
+        "skill_tool_call_count": legacy_skill_calls if skills_enabled else 0,
+        "skill_tool_failure_count": legacy_skill_failures if skills_enabled else 0,
+        "coverage_checklist_present": skill_audit.get("coverage_checklist_present"),
+    }
+
+
 class BenchmarkDashboard:
     def __init__(
         self,
@@ -355,13 +383,7 @@ class BenchmarkDashboard:
                         "execution_error_kind": result.get("execution_error_kind"),
                         "error": result.get("error"),
                     },
-                    "diagnostics": {
-                        "elapsed_seconds": result.get("elapsed_seconds"),
-                        "openclaw_tool_call_count": skill_audit.get("openclaw_tool_call_count", skill_audit.get("tool_call_count")),
-                        "skill_tool_call_count": skill_audit.get("skill_tool_call_count"),
-                        "skill_tool_failure_count": skill_audit.get("skill_tool_failure_count"),
-                        "coverage_checklist_present": skill_audit.get("coverage_checklist_present"),
-                    },
+                    "diagnostics": _diagnostics_payload(result, skill_audit),
                     "annotations": self.annotation_store.list_annotations(
                         run_id=run_id,
                         record_id=str(result.get("record_id") or record_id),

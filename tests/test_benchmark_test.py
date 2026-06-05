@@ -1955,6 +1955,7 @@ Points: 0.5, Item: Second criterion
                 scored=True,
                 recovery_mode="none",
                 degraded_execution=False,
+                skills_enabled=True,
                 execution_error_kind=None,
             ),
             benchmark_test.GroupRecordResult(
@@ -2015,6 +2016,7 @@ Points: 0.5, Item: Second criterion
                 scored=True,
                 recovery_mode="none",
                 degraded_execution=False,
+                skills_enabled=True,
                 execution_error_kind=None,
             ),
         ]
@@ -2026,6 +2028,8 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["skill_tool_executed_count"])
         self.assertEqual(1, summary["groups"]["g1"]["skill_model_declared_skip_count"])
         self.assertEqual(1, summary["groups"]["g1"]["skill_no_tool_call_count"])
+        self.assertEqual(0, summary["groups"]["g1"]["exec_tool_call_total"])
+        self.assertEqual(0, summary["groups"]["g1"]["exec_tool_failure_total"])
         self.assertEqual(2, summary["groups"]["g1"]["skill_tool_call_total"])
         self.assertEqual(1, summary["groups"]["g1"]["skill_tool_failure_total"])
         self.assertEqual(8, summary["groups"]["g1"]["openclaw_tool_call_total"])

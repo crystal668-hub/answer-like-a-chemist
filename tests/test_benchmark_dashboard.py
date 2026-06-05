@@ -168,6 +168,54 @@ def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Pa
     assert group["verifier"]["properties"]["qed"] == 0.92
 
 
+def test_get_record_relabels_legacy_skill_off_exec_diagnostics(tmp_path: Path) -> None:
+    run_root = tmp_path / "legacy-exec-run"
+    on_payload = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="r1",
+        runner_meta={
+            "skill_use_audit": {
+                "openclaw_tool_call_count": 3,
+                "skill_tool_call_count": 1,
+                "skill_tool_failure_count": 0,
+            }
+        },
+    )
+    off_payload = result_payload(
+        group_id="single_llm_skills_off",
+        record_id="r1",
+        runner_meta={
+            "skill_use_audit": {
+                "openclaw_tool_call_count": 2,
+                "skill_tool_call_count": 1,
+                "skill_tool_failure_count": 1,
+            }
+        },
+    )
+    write_json(
+        run_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-06-04T12:00:00+0800",
+            "records": 1,
+            "groups": [{"id": "single_llm_skills_on"}, {"id": "single_llm_skills_off"}],
+            "results": [on_payload, off_payload],
+            "summary": {},
+        },
+    )
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    record = dashboard.get_record("legacy-exec-run", "r1")
+
+    diagnostics_by_group = {group["group_id"]: group["diagnostics"] for group in record["groups"]}
+    assert diagnostics_by_group["single_llm_skills_on"]["exec_tool_call_count"] == 1
+    assert diagnostics_by_group["single_llm_skills_on"]["skill_tool_call_count"] == 1
+    assert diagnostics_by_group["single_llm_skills_off"]["exec_tool_call_count"] == 1
+    assert diagnostics_by_group["single_llm_skills_off"]["exec_tool_failure_count"] == 1
+    assert diagnostics_by_group["single_llm_skills_off"]["skill_tool_call_count"] == 0
+    assert diagnostics_by_group["single_llm_skills_off"]["skill_tool_failure_count"] == 0
+
+
 def test_get_record_uses_runtime_bundle_question_markdown_and_assets(tmp_path: Path) -> None:
     run_root = tmp_path / "superchem-run"
     bundle_root = run_root / "input-bundles" / "superchem-r1"

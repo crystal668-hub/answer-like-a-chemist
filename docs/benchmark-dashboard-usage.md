@@ -163,9 +163,12 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - degraded execution 标记
 - 被测试者答案
 - OpenClaw tool call 数
-- skill call 数
-- skill failure 数
+- exec tool call 数
+- skills-on 组的 skill call 数
+- skills-on 组的 skill failure 数
 - recovery mode
+
+`OpenClaw tools` 表示当前题目回答过程中 OpenClaw 工具调用总数。`Exec calls` 表示其中 `exec` 工具调用次数。只有 `skills_enabled=true` 的测试组才会把 `exec` 解释为 benchmark 化学 skill 脚本调用，并显示 `Skill calls` / `Skill failures`；`single_llm_skills_off` 不展示这两个 skill 指标。
 
 对于 verifier-grounded benchmark，卡片还会展示：
 
