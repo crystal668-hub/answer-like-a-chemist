@@ -51,7 +51,7 @@
   - `openclaw.json`
     - Base OpenClaw config used and rewritten into run-scoped configs by benchmark launchers.
     - Defines global Anthropic-compatible MiniMax routes `minimax/MiniMax-M2.7` and `minimax/MiniMax-M2.7-highspeed` through `${MINIMAX_ANTHROPIC_BASE_URL}/v1` and `${MINIMAX_API_KEY}` with `authHeader: true`, `api: anthropic-messages`, a 204800-token context window, and a 65536-token single-turn output cap. Defines global OpenAI-compatible `openai/gpt-5.5`, `openai/gpt-5.4`, and `openai/gpt-5.2` routes through `${SU8_BASE_URL}` and `${SU8_API_KEY}` with `api: openai-responses`, replacing the historical `su8/gpt-5.4` provider route; `openai/gpt-5.5` remains the default primary model.
-    - Defines global OpenAI-compatible Qwen route `qwen/qwen3.6-plus` through `${QWEN_BASE_URL}` and `${QWEN_API_KEY}` with `api: openai-completions`, Qwen thinking-format compatibility, a 1000000-token context window, and a 65536-token single-turn output cap.
+    - Defines global OpenAI-compatible Qwen routes `qwen/qwen3.6-plus`, `qwen/deepseek-v4-pro`, `qwen/qwen3.7-max`, and `qwen/qwen3.7-plus` through `${QWEN_BASE_URL}` and `${QWEN_API_KEY}` with `api: openai-completions`, Qwen thinking-format compatibility, a 1000000-token context window, and a 65536-token single-turn output cap. `workspace/scripts/sync_openclaw_qwen_provider.py` keeps the global runtime config and token-plan managed agent model caches aligned for these Qwen routes.
     - Defines global OpenAI-compatible Kimi route `kimi/kimi-k2.6` through `${KIMI_BASE_URL}` and `${KIMI_API_KEY}` with `api: openai-completions` and text/image input metadata; the historical `dashscope-compatible` provider route has been removed from the runtime config and managed agent model caches.
 
 - Source modules
@@ -644,6 +644,7 @@
 
 - Operational risks
   - `openclaw.json` at repo root contains live gateway/auth/provider configuration and is reused as a mutable base for runtime configs.
+  - `workspace/scripts/sync_openclaw_qwen_provider.py` updates the live Qwen provider routes in `openclaw.json` plus token-plan-backed `agents/*/agent/models.json` caches; caches with a different Qwen base URL are intentionally skipped.
   - Repo root stores live runtime state, backups, SQLite DBs, session logs, and generated artifacts beside source.
   - Optional dependencies listed in `pyproject.toml` may imply capabilities that do not actually exist in code.
 
