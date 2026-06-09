@@ -133,6 +133,33 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("FINAL ANSWER: <SMILES>", prompt)
         self.assertIn("single valid candidate", prompt)
 
+    def test_verifier_grounded_xyz_prompt_uses_fenced_block_schema(self) -> None:
+        record = BenchmarkRecord(
+            record_id="xtb-gap",
+            dataset="verifier_grounded_xtb_xyz",
+            source_file="/tmp/verifier_grounded_xtb_xyz.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Propose one neutral closed-shell small molecule as an XYZ geometry.",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={
+                "verifier_grounded": {
+                    "task": {
+                        "answer_schema": {
+                            "format": "final_answer_block",
+                            "final_answer_prefix": "FINAL ANSWER:",
+                            "value_type": "xyz",
+                            "fence_language": "xyz",
+                        },
+                    },
+                },
+            },
+        )
+
+        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+
+        self.assertIn("FINAL ANSWER:\\n```xyz\\n<XYZ content>\\n```", prompt)
+        self.assertIn("single valid candidate", prompt)
+
     def test_verifier_grounded_candidate_contract_requires_final_answer_marker(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",

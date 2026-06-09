@@ -101,6 +101,46 @@ class BenchmarkDatasetsTests(unittest.TestCase):
             self.assertEqual("verifier_grounded_rdkit", record.grading.subset)
             self.assertEqual(verifier_config, record.grading.config["verifier_grounded"])
 
+    def test_load_records_builds_xtb_xyz_verifier_grounded_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "verifier_grounded_xtb_xyz" / "data" / "sample.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            verifier_config = {
+                "source_repo": "/Users/xutao/verifier-grounded-benchmark",
+                "task_set": "xtb_xyz",
+                "task": {
+                    "task_id": "xtb_gap_window_001",
+                    "answer_schema": {
+                        "format": "final_answer_block",
+                        "final_answer_prefix": "FINAL ANSWER:",
+                        "value_type": "xyz",
+                        "fence_language": "xyz",
+                    },
+                },
+                "verifier_specs": [{"verifier_id": "xtb_gap_gfn2_v1"}],
+                "timeout_seconds": 540.0,
+            }
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "xtb_gap_window_001",
+                        "prompt": "Propose one neutral closed-shell small molecule as an XYZ geometry.",
+                        "answer": "Verifier-grounded task; score is computed by local verifier scripts.",
+                        "eval_kind": "verifier_grounded",
+                        "verifier_grounded": verifier_config,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            record = load_records([path])[0]
+
+            self.assertEqual("verifier_grounded_xtb_xyz", record.dataset)
+            self.assertEqual("verifier_grounded", record.grading.kind)
+            self.assertEqual("verifier_grounded_xtb_xyz", record.grading.subset)
+            self.assertEqual(verifier_config, record.grading.config["verifier_grounded"])
+
     def test_load_records_missing_prompt_raises_value_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "chembench" / "data" / "sample.jsonl"

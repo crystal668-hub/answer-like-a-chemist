@@ -35,7 +35,22 @@ def verifier_specs_for_task(task: dict[str, Any], specs_by_id: dict[str, dict[st
     return selected
 
 
-def build_record(*, task: dict[str, Any], verifier_specs: list[dict[str, Any]], source_root: Path) -> dict[str, Any]:
+def verifier_timeout_seconds(verifier_specs: list[dict[str, Any]], *, buffer_seconds: float = 60.0) -> float:
+    if not verifier_specs:
+        return 120.0
+    total = 0.0
+    for spec in verifier_specs:
+        total += float(spec.get("timeout_seconds", 60.0))
+    return total + buffer_seconds
+
+
+def build_record(
+    *,
+    task: dict[str, Any],
+    verifier_specs: list[dict[str, Any]],
+    source_root: Path,
+    task_set: str,
+) -> dict[str, Any]:
     task_id = str(task.get("task_id") or "").strip()
     if not task_id:
         raise ValueError("verifier-grounded task is missing task_id")
@@ -49,18 +64,32 @@ def build_record(*, task: dict[str, Any], verifier_specs: list[dict[str, Any]], 
         "eval_kind": "verifier_grounded",
         "verifier_grounded": {
             "source_repo": str(source_root),
-            "task_set": "rdkit_baseline",
+            "task_set": task_set,
             "task": task,
             "verifier_specs": verifier_specs,
-            "timeout_seconds": max(float(spec.get("timeout_seconds", 60.0)) for spec in verifier_specs) if verifier_specs else 120.0,
+            "timeout_seconds": verifier_timeout_seconds(verifier_specs),
         },
     }
 
 
-def export_rdkit_dataset(*, source_root: Path, output_path: Path) -> Path:
+def export_verifier_grounded_dataset(
+    *,
+    source_root: Path,
+    task_set: str,
+    dataset_name: str,
+    output_path: Path,
+) -> Path:
     source_root = source_root.expanduser().resolve()
-    tasks_payload = load_yaml(source_root / "tasks" / "rdkit_baseline" / "tasks.yaml")
-    specs_payload = load_yaml(source_root / "tasks" / "rdkit_baseline" / "verifier_specs.yaml")
+    task_set = task_set.strip()
+    dataset_name = dataset_name.strip()
+    if not task_set:
+        raise ValueError("task_set must be non-empty")
+    if not dataset_name:
+        raise ValueError("dataset_name must be non-empty")
+
+    task_dir = source_root / "tasks" / task_set
+    tasks_payload = load_yaml(task_dir / "tasks.yaml")
+    specs_payload = load_yaml(task_dir / "verifier_specs.yaml")
     specs_by_id = {
         str(spec.get("verifier_id")): spec
         for spec in specs_payload.get("verifiers") or []
@@ -71,6 +100,7 @@ def export_rdkit_dataset(*, source_root: Path, output_path: Path) -> Path:
             task=task,
             verifier_specs=verifier_specs_for_task(task, specs_by_id),
             source_root=source_root,
+            task_set=task_set,
         )
         for task in tasks_payload.get("tasks") or []
         if isinstance(task, dict)
@@ -83,14 +113,26 @@ def export_rdkit_dataset(*, source_root: Path, output_path: Path) -> Path:
     return output_path
 
 
-def parse_args() -> argparse.Namespace:
-    default_output = (
-        runtime_paths.benchmarks_root
-        / "verifier_grounded_rdkit"
-        / "data"
-        / "verifier_grounded_rdkit.jsonl"
+def export_rdkit_dataset(*, source_root: Path, output_path: Path) -> Path:
+    return export_verifier_grounded_dataset(
+        source_root=source_root,
+        task_set="rdkit_baseline",
+        dataset_name="verifier_grounded_rdkit",
+        output_path=output_path,
     )
-    parser = argparse.ArgumentParser(description="Export verifier-grounded RDKit tasks as an OpenClaw benchmark JSONL.")
+
+
+def export_xtb_xyz_dataset(*, source_root: Path, output_path: Path) -> Path:
+    return export_verifier_grounded_dataset(
+        source_root=source_root,
+        task_set="xtb_xyz",
+        dataset_name="verifier_grounded_xtb_xyz",
+        output_path=output_path,
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Export verifier-grounded tasks as an OpenClaw benchmark JSONL.")
     parser.add_argument(
         "--source-root",
         default="/Users/xutao/verifier-grounded-benchmark",
@@ -98,8 +140,17 @@ def parse_args() -> argparse.Namespace:
         help="Path to the verifier-grounded-benchmark repository.",
     )
     parser.add_argument(
+        "--task-set",
+        default="rdkit_baseline",
+        help="Verifier-grounded task set directory under source-root/tasks.",
+    )
+    parser.add_argument(
+        "--dataset-name",
+        default="verifier_grounded_rdkit",
+        help="OpenClaw formal benchmark dataset directory name.",
+    )
+    parser.add_argument(
         "--output",
-        default=default_output,
         type=Path,
         help="Output JSONL path.",
     )
@@ -108,7 +159,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    path = export_rdkit_dataset(source_root=args.source_root, output_path=args.output)
+    output = args.output or (
+        runtime_paths.benchmarks_root
+        / args.dataset_name
+        / "data"
+        / f"{args.dataset_name}.jsonl"
+    )
+    path = export_verifier_grounded_dataset(
+        source_root=args.source_root,
+        task_set=args.task_set,
+        dataset_name=args.dataset_name,
+        output_path=output,
+    )
     print(path)
 
 

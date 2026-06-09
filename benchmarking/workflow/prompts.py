@@ -95,6 +95,8 @@ def _verifier_grounded_final_answer_instruction(record: BenchmarkRecord) -> str:
         return f"End with exactly one line formatted as: {prefix} <NUMBER>."
     if schema_format == "final_answer_block" and value_type == "cif":
         return f"End with exactly this block format: {prefix}\\n```cif\\n<CIF content>\\n```."
+    if schema_format == "final_answer_block" and value_type == "xyz":
+        return f"End with exactly this block format: {prefix}\\n```xyz\\n<XYZ content>\\n```."
     return f"End with the exact final answer format requested in the question, using the {prefix} marker."
 
 
