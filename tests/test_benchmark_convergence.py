@@ -9,6 +9,7 @@ from benchmarking.core.convergence import (
     ConvergencePolicy,
     extract_latest_complete_answer_from_transcript,
     extract_latest_complete_answer_from_transcript_for_eval,
+    is_complete_answer_for_eval,
     is_complete_benchmark_answer,
     is_complete_rescue_answer,
     summarize_transcript_convergence,
@@ -16,6 +17,13 @@ from benchmarking.core.convergence import (
 
 
 class BenchmarkConvergenceTests(unittest.TestCase):
+    XYZ_ANSWER_SCHEMA = {
+        "format": "final_answer_block",
+        "final_answer_prefix": "FINAL ANSWER:",
+        "value_type": "xyz",
+        "fence_language": "xyz",
+    }
+
     def test_policy_serializes_to_metadata(self) -> None:
         policy = ConvergencePolicy(timeout_seconds=900)
 
@@ -428,6 +436,54 @@ class BenchmarkConvergenceTests(unittest.TestCase):
 
     def test_empty_markdown_final_answer_marker_is_not_complete(self) -> None:
         self.assertFalse(is_complete_benchmark_answer("Reasoning\n**FINAL ANSWER:**"))
+
+    def test_verifier_grounded_xyz_block_is_complete_only_with_matching_schema(self) -> None:
+        text = (
+            "Visible verification.\n"
+            "FINAL ANSWER:\n"
+            "```xyz\n"
+            "3\n"
+            "water\n"
+            "O 0.0 0.0 0.0\n"
+            "H 0.0 0.0 1.0\n"
+            "H 0.0 1.0 0.0\n"
+            "```"
+        )
+
+        self.assertFalse(is_complete_answer_for_eval(text, eval_kind="verifier_grounded"))
+        self.assertFalse(
+            is_complete_answer_for_eval(
+                text,
+                eval_kind="verifier_grounded",
+                answer_schema={**self.XYZ_ANSWER_SCHEMA, "fence_language": "cif"},
+            )
+        )
+        self.assertFalse(is_complete_answer_for_eval(text, eval_kind="chembench_open_ended", answer_schema=self.XYZ_ANSWER_SCHEMA))
+        self.assertTrue(is_complete_answer_for_eval(text, eval_kind="verifier_grounded", answer_schema=self.XYZ_ANSWER_SCHEMA))
+
+    def test_extract_latest_complete_answer_from_transcript_uses_latest_verifier_grounded_xyz_block(self) -> None:
+        first = "FINAL ANSWER:\n```xyz\n2\nold\nH 0 0 0\nH 0 0 1\n```"
+        latest = "Reasoning.\nFINAL ANSWER:\n```xyz\n3\nnew\nO 0 0 0\nH 0 0 1\nH 0 1 0\n```"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = Path(tmpdir) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": first}]}}),
+                        json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": latest}]}}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            answer = extract_latest_complete_answer_from_transcript_for_eval(
+                transcript,
+                eval_kind="verifier_grounded",
+                answer_schema=self.XYZ_ANSWER_SCHEMA,
+            )
+
+        self.assertEqual(latest, answer)
 
     def test_rescue_accepts_next_line_final_answer_for_research_only(self) -> None:
         text = "Visible derivation.\n**FINAL ANSWER:**\nA=11.3, B=100.0, C=7.9"

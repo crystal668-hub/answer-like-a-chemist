@@ -8,6 +8,13 @@ from benchmarking.workflow.runners.single_llm import validate_candidate_answer_c
 
 
 class BenchmarkPromptsTests(unittest.TestCase):
+    XYZ_ANSWER_SCHEMA = {
+        "format": "final_answer_block",
+        "final_answer_prefix": "FINAL ANSWER:",
+        "value_type": "xyz",
+        "fence_language": "xyz",
+    }
+
     def test_frontierscience_olympiad_uses_numeric_answer_kind(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
@@ -181,6 +188,40 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertEqual("candidate_answer_contract_invalid", result.code)
         self.assertIn("FINAL ANSWER", result.message)
+
+    def test_verifier_grounded_xyz_block_candidate_contract_uses_answer_schema(self) -> None:
+        record = BenchmarkRecord(
+            record_id="xtb-gap",
+            dataset="verifier_grounded_xtb_xyz",
+            source_file="/tmp/verifier_grounded_xtb_xyz.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Q",
+            reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
+            payload={
+                "verifier_grounded": {
+                    "task": {
+                        "task_id": "xtb_gap_window_001",
+                        "answer_schema": self.XYZ_ANSWER_SCHEMA,
+                    }
+                }
+            },
+        )
+        full_response_text = "Visible verification.\nFINAL ANSWER:\n```xyz\n3\nwater\nO 0 0 0\nH 0 0 1\nH 0 1 0\n```"
+
+        result = validate_candidate_answer_contract(
+            record=record,
+            short_answer_text="",
+            full_response_text=full_response_text,
+            runner_meta={},
+        )
+
+        self.assertTrue(result.valid)
+        self.assertEqual("", result.code)
+        self.assertFalse(result.details["has_final_answer_marker"])
+        self.assertTrue(result.details["has_complete_answer_for_eval"])
+        self.assertEqual("final_answer_block", result.details["answer_schema_format"])
+        self.assertEqual("xyz", result.details["answer_schema_value_type"])
+        self.assertEqual("xyz", result.details["answer_schema_fence_language"])
 
     def test_single_llm_prompt_respects_skills_enabled_flag(self) -> None:
         record = BenchmarkRecord(

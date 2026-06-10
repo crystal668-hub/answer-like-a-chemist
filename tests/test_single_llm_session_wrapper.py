@@ -14,6 +14,13 @@ from benchmarking.runtime import single_llm_openclaw_wrapper as wrapper
 
 
 class SingleLLMSessionWrapperTests(unittest.TestCase):
+    XYZ_ANSWER_SCHEMA = {
+        "format": "final_answer_block",
+        "final_answer_prefix": "FINAL ANSWER:",
+        "value_type": "xyz",
+        "fence_language": "xyz",
+    }
+
     def test_wrapper_script_help_runs_from_file_path(self) -> None:
         wrapper_path = Path(wrapper.__file__).resolve()
 
@@ -783,6 +790,89 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertTrue(convergence["finalization_rescue_succeeded"])
         self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
 
+    def test_wrapper_finalization_rescue_accepts_verifier_grounded_xyz_block_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Reasoning without final marker."}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                eval_kind="verifier_grounded",
+                answer_schema_json=json.dumps(self.XYZ_ANSWER_SCHEMA),
+            )
+            first = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": "stream_read_error", "isError": True}],
+                            "meta": {
+                                "stopReason": "error",
+                                "completion": {"finishReason": "error"},
+                                "livenessState": "blocked",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+            rescue_text = "FINAL ANSWER:\n```xyz\n3\nwater\nO 0 0 0\nH 0 0 1\nH 0 1 0\n```"
+            rescue = self.agent_result(rescue_text)
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", side_effect=[first, rescue]) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(2, run_mock.call_count)
+        rescue_kwargs = run_mock.call_args_list[1].kwargs
+        self.assertIn("FINAL ANSWER:\n```xyz\n<XYZ content>\n```", rescue_kwargs["message_override"])
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual(rescue_text, result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertTrue(convergence["agent_error_payload_detected"])
+        self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
+        self.assertTrue(convergence["finalization_rescue_attempted"])
+        self.assertTrue(convergence["finalization_rescue_succeeded"])
+        self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
+
     def test_wrapper_recovers_research_final_answer_heading_from_transcript(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -983,6 +1073,75 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 timeout=30,
                 json=True,
                 eval_kind="verifier_grounded",
+            )
+            completed = subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {
+                        "result": {
+                            "payloads": [{"text": answer_text}],
+                            "meta": {
+                                "replayInvalid": True,
+                                "stopReason": "stop",
+                                "completion": {"finishReason": "stop"},
+                                "livenessState": "working",
+                            },
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+            with mock.patch.object(wrapper, "parse_args", return_value=fake_args), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed) as run_mock, \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(1, run_mock.call_count)
+        payload = json.loads(stdout.getvalue())
+        result = payload["result"]
+        self.assertEqual(answer_text, result["payloads"][0]["text"])
+        convergence = result["meta"]["convergence"]
+        self.assertFalse(convergence["agent_error_payload_detected"])
+        self.assertEqual("", convergence["agent_error_kind"])
+        self.assertFalse(convergence["transcript_answer_recovered"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
+        self.assertEqual("replay_invalid", convergence["replay_invalid_diagnostics"]["reason"])
+
+    def test_wrapper_keeps_complete_replay_invalid_verifier_grounded_xyz_block_native(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            session_path = store_path.parent / "session-a.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+            session_path.write_text("", encoding="utf-8")
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(session_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            answer_text = "Visible verification.\nFINAL ANSWER:\n```xyz\n3\nwater\nO 0 0 0\nH 0 0 1\nH 0 1 0\n```"
+            fake_args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=30,
+                json=True,
+                eval_kind="verifier_grounded",
+                answer_schema_json=json.dumps(self.XYZ_ANSWER_SCHEMA),
             )
             completed = subprocess.CompletedProcess(
                 ["openclaw"],

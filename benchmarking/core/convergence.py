@@ -43,6 +43,7 @@ RESCUE_RESEARCH_SECTION_MARKER_RE = re.compile(
 HLE_ANSWER_RE = re.compile(r"(?ims)^\s*Explanation\s*:.+^\s*Answer\s*:.+^\s*Confidence\s*:\s*\S+")
 MARKDOWN_BOLD_MARKER = "**"
 FRONTIERSCIENCE_RESEARCH_EVAL_KIND = "frontierscience_research"
+VERIFIER_GROUNDED_EVAL_KIND = "verifier_grounded"
 RESEARCH_RESCUE_PROCESS_ONLY_HEADINGS = (
     "reference",
     "references",
@@ -363,6 +364,53 @@ def has_final_answer_marker(text: str) -> bool:
     return bool(extract_final_answer_line(text))
 
 
+def _answer_schema_dict(answer_schema: dict[str, Any] | None) -> dict[str, Any]:
+    return answer_schema if isinstance(answer_schema, dict) else {}
+
+
+def _schema_text(schema: dict[str, Any], key: str, default: str = "") -> str:
+    return str(schema.get(key) or default).strip()
+
+
+def _is_supported_final_answer_block_schema(schema: dict[str, Any]) -> bool:
+    schema_format = _schema_text(schema, "format")
+    value_type = _schema_text(schema, "value_type").lower()
+    fence_language = _schema_text(schema, "fence_language", value_type).lower()
+    return bool(
+        schema_format == "final_answer_block"
+        and value_type in {"xyz", "cif"}
+        and fence_language in {"xyz", "cif"}
+    )
+
+
+def extract_final_answer_block_value(text: str, *, answer_schema: dict[str, Any] | None = None) -> str:
+    schema = _answer_schema_dict(answer_schema)
+    if not _is_supported_final_answer_block_schema(schema):
+        return ""
+    prefix = _schema_text(schema, "final_answer_prefix", "FINAL ANSWER:")
+    if not prefix:
+        return ""
+    raw_text = str(text or "")
+    prefix_index = raw_text.rfind(prefix)
+    if prefix_index < 0:
+        return ""
+    block_text = raw_text[prefix_index + len(prefix) :]
+    value_type = _schema_text(schema, "value_type").lower()
+    fence_language = _schema_text(schema, "fence_language", value_type).lower()
+    match = re.search(
+        rf"^[ \t]*```{re.escape(fence_language)}[ \t]*\r?\n(?P<value>.*?)(?:\r?\n)?^[ \t]*```[ \t]*$",
+        block_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        return ""
+    return str(match.group("value") or "").strip()
+
+
+def has_schema_final_answer_block(text: str, *, answer_schema: dict[str, Any] | None = None) -> bool:
+    return bool(extract_final_answer_block_value(text, answer_schema=answer_schema))
+
+
 def has_research_final_marker(text: str) -> bool:
     return any(RESEARCH_FINAL_MARKER_RE.match(line) for line in str(text or "").splitlines())
 
@@ -444,18 +492,28 @@ def _is_complete_frontierscience_research_rescue_answer(text: str) -> bool:
     return False
 
 
-def is_complete_rescue_answer(text: str, *, eval_kind: str = "") -> bool:
+def is_complete_rescue_answer(text: str, *, eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> bool:
     candidate = str(text or "").strip()
     if is_complete_benchmark_answer(candidate):
+        return True
+    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND and has_schema_final_answer_block(
+        candidate,
+        answer_schema=answer_schema,
+    ):
         return True
     if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
         return False
     return _is_complete_frontierscience_research_rescue_answer(candidate)
 
 
-def is_complete_answer_for_eval(text: str, *, eval_kind: str = "") -> bool:
+def is_complete_answer_for_eval(text: str, *, eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> bool:
     candidate = str(text or "").strip()
     if is_complete_benchmark_answer(candidate):
+        return True
+    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND and has_schema_final_answer_block(
+        candidate,
+        answer_schema=answer_schema,
+    ):
         return True
     if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
         return False
@@ -466,11 +524,16 @@ def extract_latest_complete_answer_from_transcript(transcript_path: Path) -> str
     return extract_latest_complete_answer_from_transcript_for_eval(transcript_path, eval_kind="")
 
 
-def extract_latest_complete_answer_from_transcript_for_eval(transcript_path: Path, *, eval_kind: str = "") -> str:
+def extract_latest_complete_answer_from_transcript_for_eval(
+    transcript_path: Path,
+    *,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> str:
     for message in reversed(_iter_transcript_messages(transcript_path)):
         if message.get("role") != "assistant":
             continue
         text = _text_from_content(message.get("content"))
-        if is_complete_answer_for_eval(text, eval_kind=eval_kind):
+        if is_complete_answer_for_eval(text, eval_kind=eval_kind, answer_schema=answer_schema):
             return text
     return ""

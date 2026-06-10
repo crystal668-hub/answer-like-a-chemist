@@ -51,6 +51,29 @@ FINAL_MARKER_REQUIRED_EVAL_KINDS = {
 BENCHMARK_SCRATCH_DIRNAME = ".benchmark-scratch"
 
 
+def verifier_grounded_answer_schema_from_record(record: Any) -> dict[str, Any]:
+    if str(getattr(record, "eval_kind", "") or "").strip() != "verifier_grounded":
+        return {}
+    candidates: list[Any] = []
+    payload = getattr(record, "payload", None)
+    if isinstance(payload, dict):
+        candidates.append(payload.get("verifier_grounded"))
+    grading = getattr(record, "grading", None)
+    config = getattr(grading, "config", None)
+    if isinstance(config, dict):
+        candidates.append(config.get("verifier_grounded"))
+    for verifier_config in candidates:
+        if not isinstance(verifier_config, dict):
+            continue
+        task = verifier_config.get("task")
+        if not isinstance(task, dict):
+            continue
+        schema = task.get("answer_schema")
+        if isinstance(schema, dict):
+            return dict(schema)
+    return {}
+
+
 @dataclass(frozen=True)
 class CandidateAnswerContract:
     valid: bool
@@ -273,7 +296,13 @@ def is_runner_meta_timeout_family(runner_meta: dict[str, Any]) -> bool:
     return any(is_timeout_family_text(candidate) for candidate in candidates if candidate is not None)
 
 
-def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_text: str) -> bool:
+def is_openclaw_timeout_result(
+    *,
+    runner_meta: dict[str, Any],
+    full_response_text: str,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> bool:
     if is_runner_meta_timeout_family(runner_meta):
         return True
     text = str(full_response_text or "")
@@ -285,7 +314,7 @@ def is_openclaw_timeout_result(*, runner_meta: dict[str, Any], full_response_tex
         runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
     ):
         return True
-    if has_final_answer_marker(text) or HLE_ANSWER_RE.search(text):
+    if is_complete_answer_for_eval(text, eval_kind=str(eval_kind or ""), answer_schema=answer_schema) or HLE_ANSWER_RE.search(text):
         return False
     return is_timeout_family_text(text)
 
@@ -296,8 +325,14 @@ def classify_agent_error_payload(
     runner_meta: dict[str, Any],
     full_response_text: str,
     eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
 ) -> AgentErrorClassification | None:
-    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_response_text):
+    if is_openclaw_timeout_result(
+        runner_meta=runner_meta,
+        full_response_text=full_response_text,
+        eval_kind=eval_kind,
+        answer_schema=answer_schema,
+    ):
         return None
     payload_texts = [str(item.get("text") or "").strip() for item in payloads if isinstance(item, dict)]
     error_payload = any(item.get("isError") is True for item in payloads if isinstance(item, dict))
@@ -306,7 +341,11 @@ def classify_agent_error_payload(
     finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
     liveness_state = str(runner_meta.get("livenessState") or "").strip()
     has_complete_answer = bool(
-        is_complete_answer_for_eval(full_response_text, eval_kind=str(eval_kind or ""))
+        is_complete_answer_for_eval(
+            full_response_text,
+            eval_kind=str(eval_kind or ""),
+            answer_schema=answer_schema,
+        )
         or HLE_ANSWER_RE.search(full_response_text)
     )
     replay_invalid_diagnostics = _replay_invalid_diagnostics(
@@ -416,6 +455,10 @@ def _candidate_contract_meta(
     message: str = "",
     missing_fields: list[str] | None = None,
 ) -> dict[str, Any]:
+    answer_schema = verifier_grounded_answer_schema_from_record(record)
+    schema_format = str(answer_schema.get("format") or "")
+    schema_value_type = str(answer_schema.get("value_type") or "")
+    schema_fence_language = str(answer_schema.get("fence_language") or schema_value_type or "")
     meta: dict[str, Any] = {
         "valid": valid,
         "eval_kind": str(getattr(record, "eval_kind", "") or ""),
@@ -423,6 +466,14 @@ def _candidate_contract_meta(
         "short_answer_text_present": bool(str(short_answer_text or "").strip()),
         "full_response_text_present": bool(str(full_response_text or "").strip()),
         "has_final_answer_marker": has_final_answer_marker(str(full_response_text or "")),
+        "has_complete_answer_for_eval": is_complete_answer_for_eval(
+            str(full_response_text or ""),
+            eval_kind=str(getattr(record, "eval_kind", "") or ""),
+            answer_schema=answer_schema,
+        ),
+        "answer_schema_format": schema_format,
+        "answer_schema_value_type": schema_value_type,
+        "answer_schema_fence_language": schema_fence_language,
         "has_hle_answer_field": bool(HLE_ANSWER_RE.search(str(full_response_text or ""))),
     }
     if code:
@@ -450,7 +501,18 @@ def validate_candidate_answer_contract(
     full_text = str(full_response_text or "").strip()
     short_text = str(short_answer_text or "").strip()
     eval_kind = str(getattr(record, "eval_kind", "") or "").strip()
-    if is_openclaw_timeout_result(runner_meta=runner_meta, full_response_text=full_text):
+    answer_schema = verifier_grounded_answer_schema_from_record(record)
+    has_complete_answer = is_complete_answer_for_eval(
+        full_text,
+        eval_kind=eval_kind,
+        answer_schema=answer_schema,
+    )
+    if is_openclaw_timeout_result(
+        runner_meta=runner_meta,
+        full_response_text=full_text,
+        eval_kind=eval_kind,
+        answer_schema=answer_schema,
+    ):
         message = "Single-LLM OpenClaw agent response timed out before producing a benchmark answer."
         return CandidateAnswerContract(
             valid=False,
@@ -481,7 +543,7 @@ def validate_candidate_answer_contract(
                 missing_fields=["full_response_text"],
             ),
         )
-    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not has_final_answer_marker(full_text):
+    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not has_complete_answer:
         message = "Single-LLM candidate answer contract invalid: required `FINAL ANSWER:` marker is missing."
         return CandidateAnswerContract(
             valid=False,
@@ -620,6 +682,9 @@ class SingleLLMRunner:
         ]
         if not self.no_timeout:
             command.extend(["--timeout", str(self.convergence_policy.timeout_seconds)])
+        answer_schema = verifier_grounded_answer_schema_from_record(record)
+        if answer_schema:
+            command.extend(["--answer-schema-json", json.dumps(answer_schema, sort_keys=True)])
         return command
 
     @staticmethod
@@ -1078,6 +1143,7 @@ class SingleLLMRunner:
             runner_meta=runner_meta,
             full_response_text=full_response_text,
             eval_kind=str(getattr(record, "eval_kind", "") or ""),
+            answer_schema=verifier_grounded_answer_schema_from_record(record),
         )
         if agent_error is not None and not transcript_answer_recovered and not finalization_rescue_recovered:
             runner_meta["agent_error"] = dict(agent_error.details)

@@ -55,7 +55,34 @@ TIME_REMINDER_PROMPT = """TIME REMINDER:
 Less than one third of the answer budget remains. Please quickly organize the reasoning chain already available in this session.
 Converge on a complete final answer in the required format.
 Do not start new tool chains or skill exploration unless one short decisive check is clearly necessary."""
-def build_finalization_rescue_prompt(eval_kind: str = "") -> str:
+def _answer_schema_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    raw = str(getattr(args, "answer_schema_json", "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _verifier_grounded_rescue_instruction(answer_schema: dict[str, Any] | None) -> list[str]:
+    schema = answer_schema if isinstance(answer_schema, dict) else {}
+    schema_format = str(schema.get("format") or "").strip()
+    value_type = str(schema.get("value_type") or "").strip().lower()
+    fence_language = str(schema.get("fence_language") or value_type).strip().lower()
+    prefix = str(schema.get("final_answer_prefix") or "FINAL ANSWER:").strip() or "FINAL ANSWER:"
+    if schema_format != "final_answer_block" or value_type not in {"xyz", "cif"} or fence_language not in {"xyz", "cif"}:
+        return []
+    placeholder = "<XYZ content>" if value_type == "xyz" else "<CIF content>"
+    return [
+        "This is a verifier-grounded generation task scored by deterministic local verifier scripts.",
+        "Provide one single valid candidate in the schema-required final answer block.",
+        f"End with exactly this block format: {prefix}\n```{fence_language}\n{placeholder}\n```.",
+    ]
+
+
+def build_finalization_rescue_prompt(eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> str:
     kind = str(eval_kind or "").strip()
     common = [
         "The previous turn did not organize a final answer that satisfies the benchmark output requirements.",
@@ -99,6 +126,11 @@ def build_finalization_rescue_prompt(eval_kind: str = "") -> str:
             "Confidence: <your confidence score between 0% and 100%>",
             "Do not add `FINAL ANSWER:` to HLE responses.",
         ]
+    elif kind == "verifier_grounded":
+        specific = _verifier_grounded_rescue_instruction(answer_schema) or [
+            "Provide a complete verifier-grounded answer based on the existing session reasoning.",
+            "End with the exact final answer format requested in the original question.",
+        ]
     else:
         specific = [
             "Provide a complete answer based on the existing session reasoning.",
@@ -116,6 +148,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--thinking", help="Forward OpenClaw thinking override.")
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw timeout override in seconds.")
     parser.add_argument("--eval-kind", default="", help="Benchmark eval kind for rescue-only answer recovery.")
+    parser.add_argument("--answer-schema-json", default="", help="Optional benchmark answer schema JSON for schema-aware recovery.")
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output and attach isolation audit.")
     return parser.parse_args()
 
@@ -151,12 +184,17 @@ def _target_result_payload(payload: Any) -> dict[str, Any] | None:
     return payload
 
 
-def _is_timeout_like_payload(target: dict[str, Any], *, eval_kind: str = "") -> bool:
+def _is_timeout_like_payload(
+    target: dict[str, Any],
+    *,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> bool:
     payload_texts = _payload_texts(target)
     for text in payload_texts:
         if any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS):
             return True
-    if any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in payload_texts):
+    if any(is_complete_answer_for_eval(text, eval_kind=eval_kind, answer_schema=answer_schema) for text in payload_texts):
         return False
     meta = target.get("meta") if isinstance(target.get("meta"), dict) else {}
     return bool(meta.get("aborted") is True or str(meta.get("livenessState") or "") == "blocked")
@@ -226,7 +264,12 @@ def _replay_invalid_diagnostics(target: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _classify_agent_error_payload(target: dict[str, Any], *, eval_kind: str = "") -> str:
+def _classify_agent_error_payload(
+    target: dict[str, Any],
+    *,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> str:
     payload_texts = _payload_texts(target)
     if _has_timeout_sentinel_payload(target):
         return ""
@@ -235,7 +278,10 @@ def _classify_agent_error_payload(target: dict[str, Any], *, eval_kind: str = ""
     stop_reason = str(meta.get("stopReason") or "").strip().lower()
     finish_reason = str(completion.get("finishReason") or completion.get("stopReason") or "").strip().lower()
     liveness_state = str(meta.get("livenessState") or "").strip()
-    has_complete_answer = any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in payload_texts)
+    has_complete_answer = any(
+        is_complete_answer_for_eval(text, eval_kind=eval_kind, answer_schema=answer_schema)
+        for text in payload_texts
+    )
 
     if (
         any(text == OPENCLAW_STREAM_READ_ERROR_TEXT for text in payload_texts)
@@ -300,25 +346,40 @@ def _time_reminder_meta_from_result(result: subprocess.CompletedProcess[str], ar
     return _base_time_reminder_meta(args)
 
 
-def _has_complete_answer_in_payload(payload: Any, *, eval_kind: str = "") -> bool:
+def _has_complete_answer_in_payload(
+    payload: Any,
+    *,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> bool:
     target = _target_result_payload(payload)
     if target is None:
         return False
-    return any(is_complete_answer_for_eval(text, eval_kind=eval_kind) for text in _payload_texts(target))
+    return any(is_complete_answer_for_eval(text, eval_kind=eval_kind, answer_schema=answer_schema) for text in _payload_texts(target))
 
 
-def _has_complete_answer_in_result(result: subprocess.CompletedProcess[str], audit: dict[str, Any], *, eval_kind: str = "") -> bool:
+def _has_complete_answer_in_result(
+    result: subprocess.CompletedProcess[str],
+    audit: dict[str, Any],
+    *,
+    eval_kind: str = "",
+    answer_schema: dict[str, Any] | None = None,
+) -> bool:
     output = (result.stdout or "").strip() or (result.stderr or "").strip()
     if output:
         try:
-            if _has_complete_answer_in_payload(parse_openclaw_json_output(output), eval_kind=eval_kind):
+            if _has_complete_answer_in_payload(parse_openclaw_json_output(output), eval_kind=eval_kind, answer_schema=answer_schema):
                 return True
         except Exception:
             pass
     transcript_path = transcript_path_from_audit(audit)
     return bool(
         transcript_path is not None
-        and extract_latest_complete_answer_from_transcript_for_eval(transcript_path, eval_kind=eval_kind)
+        and extract_latest_complete_answer_from_transcript_for_eval(
+            transcript_path,
+            eval_kind=eval_kind,
+            answer_schema=answer_schema,
+        )
     )
 
 
@@ -334,12 +395,16 @@ def _try_finalization_rescue(
     *,
     args: argparse.Namespace,
     env: dict[str, str],
+    answer_schema: dict[str, Any] | None = None,
 ) -> bool:
     try:
         result = run_openclaw(
             args,
             env=env,
-            message_override=build_finalization_rescue_prompt(str(getattr(args, "eval_kind", "") or "")),
+            message_override=build_finalization_rescue_prompt(
+                str(getattr(args, "eval_kind", "") or ""),
+                answer_schema=answer_schema,
+            ),
         )
     except Exception as exc:
         _merge_convergence(
@@ -366,7 +431,11 @@ def _try_finalization_rescue(
 
     rescue_payload = parse_openclaw_json_output((result.stdout or "").strip() or (result.stderr or "").strip())
     rescue_text = _rescue_output_text(rescue_payload)
-    if not is_complete_rescue_answer(rescue_text, eval_kind=str(getattr(args, "eval_kind", "") or "")):
+    if not is_complete_rescue_answer(
+        rescue_text,
+        eval_kind=str(getattr(args, "eval_kind", "") or ""),
+        answer_schema=answer_schema,
+    ):
         _merge_convergence(
             target,
             {
@@ -396,6 +465,7 @@ def merge_convergence_metadata(
     audit: dict[str, Any],
     env: dict[str, str] | None = None,
     time_reminder_meta: dict[str, Any] | None = None,
+    answer_schema: dict[str, Any] | None = None,
 ) -> Any:
     target = _target_result_payload(payload)
     if target is None:
@@ -416,7 +486,7 @@ def merge_convergence_metadata(
     if transcript_path is not None:
         convergence_meta.update(summarize_transcript_convergence(transcript_path))
     eval_kind = str(getattr(args, "eval_kind", "") or "")
-    agent_error_kind = _classify_agent_error_payload(target, eval_kind=eval_kind)
+    agent_error_kind = _classify_agent_error_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
     if agent_error_kind:
         convergence_meta["agent_error_payload_detected"] = True
         convergence_meta["agent_error_kind"] = agent_error_kind
@@ -432,11 +502,12 @@ def merge_convergence_metadata(
         meta["convergence"] = merged
 
     error_like = bool(agent_error_kind)
-    timeout_like = _is_timeout_like_payload(target, eval_kind=eval_kind)
+    timeout_like = _is_timeout_like_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
     if transcript_path is not None and (timeout_like or error_like):
         recovered = extract_latest_complete_answer_from_transcript_for_eval(
             transcript_path,
             eval_kind=eval_kind,
+            answer_schema=answer_schema,
         )
         if recovered:
             target["payloads"] = [{"text": recovered}]
@@ -453,11 +524,11 @@ def merge_convergence_metadata(
         and transcript_path is not None
         and _session_isolation_ok(audit)
         and not any(
-            is_complete_answer_for_eval(text, eval_kind=eval_kind)
+            is_complete_answer_for_eval(text, eval_kind=eval_kind, answer_schema=answer_schema)
             for text in _payload_texts(target)
         )
     ):
-        _try_finalization_rescue(target, args=args, env=env)
+        _try_finalization_rescue(target, args=args, env=env, answer_schema=answer_schema)
     return payload
 
 
@@ -552,6 +623,7 @@ def _maybe_run_time_reminder(
     args: argparse.Namespace,
     env: dict[str, str],
     audit: dict[str, Any],
+    answer_schema: dict[str, Any] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     reminder_meta = _time_reminder_meta_from_result(primary_result, args)
     if not reminder_meta.get("enabled"):
@@ -560,7 +632,12 @@ def _maybe_run_time_reminder(
     if not reminder_meta.get("due_before_primary_return"):
         reminder_meta["skipped_reason"] = "threshold_not_reached"
         return primary_result, reminder_meta
-    if _has_complete_answer_in_result(primary_result, audit, eval_kind=str(getattr(args, "eval_kind", "") or "")):
+    if _has_complete_answer_in_result(
+        primary_result,
+        audit,
+        eval_kind=str(getattr(args, "eval_kind", "") or ""),
+        answer_schema=answer_schema,
+    ):
         reminder_meta["skipped_reason"] = "complete_answer_available"
         return primary_result, reminder_meta
     remaining_seconds = _parse_remaining_seconds(reminder_meta.get("remaining_seconds_at_primary_return"))
@@ -585,6 +662,7 @@ def _maybe_run_time_reminder(
 
 def main() -> int:
     args = parse_args()
+    answer_schema = _answer_schema_from_args(args)
     config_path = Path(args.config_file).expanduser().resolve()
     env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=config_path)
     try:
@@ -596,13 +674,26 @@ def main() -> int:
             return result.returncode
         primary_postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
         primary_audit = merge_preflight_postflight_audit(preflight_audit, primary_postflight_audit)
-        result, time_reminder_meta = _maybe_run_time_reminder(result, args=args, env=env, audit=primary_audit)
+        result, time_reminder_meta = _maybe_run_time_reminder(
+            result,
+            args=args,
+            env=env,
+            audit=primary_audit,
+            answer_schema=answer_schema,
+        )
         postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
         audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
         if args.json:
             output = result.stdout.strip() or result.stderr.strip()
             payload = parse_openclaw_json_output(output)
-            payload = merge_convergence_metadata(payload, args=args, audit=audit, env=env, time_reminder_meta=time_reminder_meta)
+            payload = merge_convergence_metadata(
+                payload,
+                args=args,
+                audit=audit,
+                env=env,
+                time_reminder_meta=time_reminder_meta,
+                answer_schema=answer_schema,
+            )
             payload = merge_isolation_audit(payload, audit)
             print(json.dumps(payload, ensure_ascii=False))
         else:
