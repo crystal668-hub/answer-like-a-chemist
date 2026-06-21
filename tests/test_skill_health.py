@@ -63,6 +63,14 @@ def test_paper_parse_health_uses_pdf_backend_without_pdfinfo() -> None:
     assert "pdfinfo" not in requirement.executables
 
 
+def test_xtb_cli_health_requires_skill_doc_and_xtb_executable() -> None:
+    requirements = health_requirements_for_allowlist(["xtb-cli"])
+    requirement = requirements["xtb-cli"]
+
+    assert requirement.data_files == ("skills/xtb-cli/SKILL.md",)
+    assert requirement.executables == ("xtb",)
+
+
 def test_network_timeout_is_passed_to_probe_command() -> None:
     commands: list[list[str]] = []
     timeouts: list[int] = []

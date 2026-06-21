@@ -1279,6 +1279,7 @@ class ChemProviderIntegrationTest(unittest.TestCase):
         self.assertIn("pubchem", required_skills)
         self.assertIn("opsin", required_skills)
         self.assertIn("chem-calculator", required_skills)
+        self.assertIn("xtb-cli", required_skills)
         self.assertIn("Skill discovery policy", required_skills)
         self.assertIn("capability domain and family", required_skills)
         self.assertIn("paper-pipeline", required_skills)

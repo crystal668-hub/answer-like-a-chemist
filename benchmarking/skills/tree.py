@@ -162,6 +162,11 @@ SKILL_TREE: tuple[dict[str, Any], ...] = (
                 ),
             },
             {
+                "id": "local-xtb-cli",
+                "label": "Local xTB CLI calculations and property extraction",
+                "skills": ("xtb-cli",),
+            },
+            {
                 "id": "quantum-output-analysis",
                 "label": "Quantum output parsing and benchmark references",
                 "skills": ("cclib", "qc-output-analysis", "cccbdb", "molssi-qca"),

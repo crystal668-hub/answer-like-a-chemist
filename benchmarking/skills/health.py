@@ -68,6 +68,7 @@ REQUIREMENT_OVERRIDES: dict[str, HealthRequirement] = {
     "pymatgen": HealthRequirement(skill="pymatgen", python_modules=("pymatgen",), data_files=("skills/pymatgen/SKILL.md",)),
     "ase": HealthRequirement(skill="ase", python_modules=("ase",), data_files=("skills/ase/SKILL.md",)),
     "cclib": HealthRequirement(skill="cclib", python_modules=("cclib",), data_files=("skills/cclib/SKILL.md",)),
+    "xtb-cli": HealthRequirement(skill="xtb-cli", executables=("xtb",), data_files=("skills/xtb-cli/SKILL.md",)),
     "chembl-database": HealthRequirement(
         skill="chembl-database",
         python_modules=("chembl_webresource_client",),

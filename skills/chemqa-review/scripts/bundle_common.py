@@ -45,6 +45,7 @@ REQUIRED_SKILLS = (
     "hpc-gaussian",
     "hpc-pyscf",
     "hpc-xtb",
+    "xtb-cli",
     "hpc-vasp",
     "hpc-nwchem",
     "hpc-cp2k",

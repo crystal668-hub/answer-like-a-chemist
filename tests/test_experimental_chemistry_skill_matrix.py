@@ -47,6 +47,7 @@ EXPECTED_EXPERIMENTAL_SKILLS = {
     "hpc-orca",
     "hpc-pyscf",
     "hpc-xtb",
+    "xtb-cli",
     "hpc-vasp",
     "hpc-gaussian",
     "q-chem",
@@ -114,7 +115,7 @@ def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
     inventory = load_chemistry_skill_inventory()
     skill_names = set(benchmark_skill_allowlist())
 
-    assert len(inventory["skills"]) == 85
+    assert len(inventory["skills"]) == 86
     assert len(skill_names) == len(inventory["skills"])
     assert "act-like-a-chemist" in skill_names
     assert EXPECTED_EXPERIMENTAL_SKILLS <= skill_names
@@ -159,6 +160,7 @@ def test_experimental_matrix_entries_define_provider_inventory_contract() -> Non
         "materials-project": "materials_database",
         "cclib": "numeric_calculation",
         "qc-output-analysis": "numeric_calculation",
+        "xtb-cli": "numeric_calculation",
         "matminer": "ml",
         "tooluniverse-chemical-safety": "drug_safety",
     }
@@ -189,6 +191,7 @@ def test_core_new_skill_wrappers_are_installed() -> None:
         "pymatgen": "scripts/structure_summary.py",
         "molecular-dynamics": "scripts/trajectory_summary.py",
         "open-forcefield-toolkit": "scripts/parameterize_molecule.py",
+        "xtb-cli": "scripts/xtb_runner.py",
     }
 
     for skill, wrapper in expected_wrappers.items():

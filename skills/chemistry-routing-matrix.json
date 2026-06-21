@@ -562,6 +562,30 @@
       ]
     },
     {
+      "skill": "xtb-cli",
+      "tier": "core",
+      "capability_domain": "numeric_calculation",
+      "provider_role": "specialized",
+      "single_agent_exposure": true,
+      "route_summary": "Local xTB executable provider for XYZ-based GFN-xTB single points, optimization, Hessian, implicit solvation, orbital gap, dipole, polarizability, electrophilicity, and Fukui-index extraction.",
+      "primary_triggers": [
+        "local xtb",
+        "xTB calculation",
+        "gfn2-xtb",
+        "xyz energy",
+        "homo lumo gap",
+        "xtb dipole",
+        "xtb polarizability",
+        "xtb hessian",
+        "xtb solvation",
+        "fukui indices"
+      ],
+      "avoid_when": [
+        "HPC scheduler templates; use hpc-xtb",
+        "ordinary formula or unit arithmetic; use chem-calculator"
+      ]
+    },
+    {
       "skill": "hpc-vasp",
       "tier": "software",
       "capability_domain": "hpc",

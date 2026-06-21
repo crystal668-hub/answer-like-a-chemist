@@ -24,12 +24,13 @@ def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline
     inventory = load_chemistry_skill_inventory()
     allowlist = benchmark_skill_allowlist()
 
-    assert len(allowlist) == 85
+    assert len(allowlist) == 86
     assert len(allowlist) == len(set(allowlist))
     assert allowlist == tuple(
         str(entry["skill"]) for entry in inventory["skills"] if entry["single_agent_exposure"] is True
     )
     assert "act-like-a-chemist" in allowlist
+    assert "xtb-cli" in allowlist
     assert {"paper-retrieval", "paper-access", "paper-parse", "paper-rerank"} <= set(allowlist)
     assert {"chem-calculator", "rdkit", "opsin", "pubchem"} <= set(allowlist)
     assert not (RUNTIME_OR_ORCHESTRATION_SKILLS & set(allowlist))
@@ -55,6 +56,9 @@ def test_skill_tree_has_three_layers_and_paper_pipeline_family() -> None:
     family = lookup_skill_family("paper-pipeline")
     assert family["id"] == "paper-pipeline"
     assert family["skills"] == ("paper-retrieval", "paper-access", "paper-rerank", "paper-parse")
+    family = lookup_skill_family("local-xtb-cli")
+    assert family["id"] == "local-xtb-cli"
+    assert "xtb-cli" in family["skills"]
 
 
 def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
