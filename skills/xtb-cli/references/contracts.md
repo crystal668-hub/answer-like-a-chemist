@@ -5,12 +5,12 @@
 Run through the workspace skill runner:
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root <workspace-root> \
   --execution-cwd "$PWD" \
   --script skills/xtb-cli/scripts/xtb_runner.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/xtb-cli-out \
+  --request-json <request-json> \
+  --output-dir <output-dir> \
   --json
 ```
 

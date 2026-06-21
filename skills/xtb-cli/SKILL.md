@@ -33,12 +33,12 @@ Treat a missing executable or unusable installation as an environment problem, n
 Use the benchmark-managed runner pattern:
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
+python scripts/run_skill.py \
+  --workspace-root <workspace-root> \
   --execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" \
   --script skills/xtb-cli/scripts/xtb_runner.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /path/to/output-dir \
+  --request-json <request-json> \
+  --output-dir <output-dir> \
   --json
 ```
 

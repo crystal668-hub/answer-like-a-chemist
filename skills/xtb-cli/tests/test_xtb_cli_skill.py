@@ -102,6 +102,18 @@ class XtbCliSkillTests(unittest.TestCase):
         for path in expected:
             self.assertTrue(path.is_file(), f"missing required file: {path}")
 
+    def test_skill_docs_are_self_contained_without_host_absolute_paths(self) -> None:
+        forbidden_fragments = ("/Users/", ".openclaw", "/opt/homebrew/")
+        docs = [
+            SKILL_ROOT / "SKILL.md",
+            SKILL_ROOT / "references" / "contracts.md",
+        ]
+
+        for path in docs:
+            text = path.read_text(encoding="utf-8")
+            for fragment in forbidden_fragments:
+                self.assertNotIn(fragment, text, f"{path} contains host-specific path fragment {fragment!r}")
+
     def test_invalid_request_returns_structured_error_and_writes_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env = fake_xtb_env(Path(tmpdir))
