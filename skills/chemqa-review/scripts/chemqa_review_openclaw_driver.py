@@ -233,6 +233,8 @@ class ChemQAReviewDriver:
             args.session_id,
             config_path=explicit_config,
         )
+        self._resolve_slot_workspace = wrapper_module.resolve_slot_workspace
+        self._openclaw_config_path = explicit_config
         self.workspace = wrapper_module.resolve_slot_workspace(args.slot, config_path=explicit_config)
         self.workspace_root = self.workspace.parent
 
@@ -970,10 +972,6 @@ class ChemQAReviewDriver:
             candidate = str(command[index + 1] or "").strip()
             if candidate:
                 return candidate
-        for key in ("cwd", "workspace"):
-            candidate = str(entry.get(key) or "").strip()
-            if candidate:
-                return Path(candidate).name
         return ""
 
     @staticmethod
@@ -1014,6 +1012,29 @@ class ChemQAReviewDriver:
             return action in {"propose", "review"}
         return False
 
+    def _workspace_for_respawn(self, slot: str, entry: dict[str, Any]) -> Path | None:
+        workspace_root = self.workspace_root.expanduser().resolve()
+        for key in ("workspace", "cwd"):
+            candidate = str(entry.get(key) or "").strip()
+            if not candidate:
+                continue
+            workspace = Path(candidate).expanduser().resolve()
+            if workspace.parent != workspace_root or not workspace.is_dir():
+                return None
+            return workspace
+        resolver = getattr(self, "_resolve_slot_workspace", None)
+        if resolver is None:
+            return None
+        try:
+            workspace = Path(
+                resolver(slot, config_path=getattr(self, "_openclaw_config_path", None))
+            ).expanduser().resolve()
+        except (Exception, SystemExit):
+            return None
+        if workspace.parent != workspace_root or not workspace.is_dir():
+            return None
+        return workspace
+
     def respawn_role_from_registry(self, role: str, entry: dict[str, Any], *, reason: str) -> bool:
         now = time.time()
         cooldown = max(0, int(self.args.respawn_cooldown_seconds))
@@ -1023,8 +1044,9 @@ class ChemQAReviewDriver:
         if not command:
             return False
         slot = self._slot_from_registry_entry(entry) or self.slot_for_role(role)
-        cwd = self.workspace_root / slot
-        cwd.mkdir(parents=True, exist_ok=True)
+        cwd = self._workspace_for_respawn(slot, entry)
+        if cwd is None:
+            return False
         team_dir = self.team_dir()
         if team_dir is None:
             return False

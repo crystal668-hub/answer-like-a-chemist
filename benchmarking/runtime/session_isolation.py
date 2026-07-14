@@ -38,6 +38,17 @@ def main_session_keys_for_agent(agent_id: str) -> list[str]:
     return keys
 
 
+def explicit_session_keys_for_agent(agent_id: str, session_id: str) -> list[str]:
+    keys: list[str] = []
+    for candidate in (agent_id.strip(), agent_id.strip().lower(), sanitize_agent_id(agent_id)):
+        if not candidate:
+            continue
+        key = f"agent:{candidate}:explicit:{session_id}"
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
@@ -211,17 +222,35 @@ def inspect_postflight_session(
     requested_session_id: str,
     *,
     config_path: Path,
+    session_store_path: Path | None = None,
 ) -> dict[str, Any]:
-    store_path = session_store_path_for_agent(agent_id, config_path=config_path)
+    store_path = (
+        session_store_path.expanduser().resolve()
+        if session_store_path is not None
+        else session_store_path_for_agent(agent_id, config_path=config_path)
+    )
     audit = base_audit(agent_id, requested_session_id, store_path)
     store = load_json_object(store_path, label="OpenClaw session store")
     requested_provider, requested_model = requested_model_for_agent(agent_id, config_path=config_path)
     audit["requested_model_provider"] = requested_provider or ""
     audit["requested_model"] = requested_model or ""
-    for key in main_session_keys_for_agent(agent_id):
-        entry = store.get(key)
-        if not isinstance(entry, dict):
-            continue
+    keys = [
+        *explicit_session_keys_for_agent(agent_id, requested_session_id),
+        *main_session_keys_for_agent(agent_id),
+    ]
+    entries = [store[key] for key in keys if isinstance(store.get(key), dict)]
+    if entries:
+        entry = next(
+            (
+                candidate
+                for candidate in entries
+                if entry_matches_requested_session_identity(
+                    candidate,
+                    requested_session_id=requested_session_id,
+                )
+            ),
+            entries[0],
+        )
         session_id = str(entry.get("sessionId") or "")
         session_file = str(entry.get("sessionFile") or "")
         model_provider = str(entry.get("modelProvider") or "")
@@ -238,7 +267,6 @@ def inspect_postflight_session(
             entry,
             requested_session_id=requested_session_id,
         )
-        return audit
     return audit
 
 

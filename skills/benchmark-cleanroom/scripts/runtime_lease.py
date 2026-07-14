@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -14,6 +16,8 @@ LEASE_KIND = "benchmark-cleanroom-lease"
 LEASE_VERSION = 1
 MANIFEST_KIND = "benchmark-cleanroom-manifest"
 MANIFEST_VERSION = 1
+LEASE_FILENAME_MAX_CHARS = 200
+LEASE_FILENAME_COMPONENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def iso_now(epoch: float | None = None) -> str:
@@ -80,11 +84,35 @@ def cleanup_report_filename_for_run(run_id: str) -> str:
     return f"{run_id}.cleanup-report.json"
 
 
+def lease_filename_component(value: str, *, fallback: str, limit: int) -> str:
+    normalized = LEASE_FILENAME_COMPONENT_RE.sub("-", value.strip()).strip("-._") or fallback
+    if len(normalized) <= limit:
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{normalized[: limit - len(digest) - 1]}-{digest}"
+
+
 def lease_filename_for_identity(*, run_id: str, role: str, slot: str, session_id: str, pid: int) -> str:
-    safe_role = role.strip() or "unknown-role"
-    safe_slot = slot.strip() or "unknown-slot"
-    safe_session = session_id.strip() or "unknown-session"
-    return f"{run_id}--{safe_role}--{safe_slot}--{safe_session}--{pid}.lease.json"
+    safe_run = lease_filename_component(run_id, fallback="unknown-run", limit=60)
+    safe_role = lease_filename_component(role, fallback="unknown-role", limit=24)
+    safe_slot = lease_filename_component(slot, fallback="unknown-slot", limit=24)
+    safe_session = lease_filename_component(session_id, fallback="unknown-session", limit=32)
+    identity = json.dumps(
+        {
+            "run_id": run_id,
+            "role": role,
+            "slot": slot,
+            "session_id": session_id,
+            "pid": int(pid),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    filename = f"{safe_run}--{safe_role}--{safe_slot}--{safe_session}--{pid}--{identity_hash}.lease.json"
+    if len(filename) > LEASE_FILENAME_MAX_CHARS:
+        raise ValueError(f"Generated cleanroom lease filename exceeds {LEASE_FILENAME_MAX_CHARS} characters")
+    return filename
 
 
 def build_manifest_payload(

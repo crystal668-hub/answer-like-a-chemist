@@ -29,25 +29,14 @@ from benchmarking.core.reporting import build_error_group_record_result as share
 
 @contextmanager
 def patched_benchmark_runtime_paths() -> Iterator[None]:
-    original_baseline_root = benchmark_test.BASELINE_WORKSPACE_ROOT
-    original_chemqa_roots = benchmark_test.CHEMQA_WORKSPACE_ROOTS
     original_agents_root = benchmark_test.runtime_paths.agents_root
-    original_load_slot_agents_template = benchmark_test.load_slot_agents_template
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        benchmark_test.BASELINE_WORKSPACE_ROOT = root / "benchmark-runtime"
-        benchmark_test.CHEMQA_WORKSPACE_ROOTS = {
-            "A": benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on",
-        }
         benchmark_test.runtime_paths.agents_root = root / "agents"
-        benchmark_test.load_slot_agents_template = lambda: "# test slot template\n"
         try:
             yield
         finally:
-            benchmark_test.BASELINE_WORKSPACE_ROOT = original_baseline_root
-            benchmark_test.CHEMQA_WORKSPACE_ROOTS = original_chemqa_roots
             benchmark_test.runtime_paths.agents_root = original_agents_root
-            benchmark_test.load_slot_agents_template = original_load_slot_agents_template
 
 
 class JudgeStub:
@@ -976,10 +965,16 @@ Points: 0.5, Item: Second criterion
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-            expected_root = benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on"
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
-        self.assertEqual(str((expected_root / "debateA-coordinator").resolve()), agents["debateA-coordinator"]["workspace"])
-        self.assertEqual(str((expected_root / "debateA-1").resolve()), agents["debateA-1"]["workspace"])
+        coordinator_workspace = Path(agents["debateA-coordinator"]["workspace"])
+        proposer_workspace = Path(agents["debateA-1"]["workspace"])
+        self.assertIn("runs", coordinator_workspace.parts)
+        self.assertIn("active", coordinator_workspace.parts)
+        self.assertNotEqual(coordinator_workspace, proposer_workspace)
+        self.assertNotIn(
+            str(benchmark_test.runtime_paths.benchmark_runtime_root / "chemqa_skills_on"),
+            str(coordinator_workspace),
+        )
 
     def test_build_run_scoped_config_payload_raises_benchmark_error_when_agents_list_invalid(self) -> None:
         base = {
@@ -1150,13 +1145,31 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("proposer-1-proposal", meta["fallback_source"])
             self.assertEqual(str(proposal_path.resolve()), str(Path(meta["proposal_path"]).resolve()))
 
-    def test_candidate_protocol_dirs_include_new_benchmark_coordinator_workspace(self) -> None:
+    def test_candidate_protocol_dirs_include_only_active_managed_coordinator_workspace(self) -> None:
         runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
         runner.chemqa_root = Path("/tmp/chemqa-root")
         runner.slot_set = "A"
-        candidates = benchmark_test.ChemQARunner._candidate_protocol_dirs(runner, "demo-run", {})
+        runner._active_slot_workspaces = {
+            "debateA-coordinator": Path("/tmp/managed/run/invocation/active/chemqa/debateA-coordinator")
+        }
+        legacy_protocol = (
+            benchmark_test.runtime_paths.benchmark_runtime_root
+            / "chemqa_skills_on"
+            / "debateA-coordinator"
+            / "chemqa_review_protocol.yaml"
+        )
+        candidates = benchmark_test.ChemQARunner._candidate_protocol_dirs(
+            runner,
+            "demo-run",
+            {"workspace_protocol_path": str(legacy_protocol)},
+        )
         self.assertIn(
-            benchmark_test.BASELINE_WORKSPACE_ROOT / "chemqa_skills_on" / "debateA-coordinator",
+            runner._active_slot_workspaces["debateA-coordinator"],
+            candidates,
+        )
+        self.assertNotIn(legacy_protocol.parent, candidates)
+        self.assertNotIn(
+            benchmark_test.runtime_paths.benchmark_runtime_root / "chemqa_skills_on" / "debateA-coordinator",
             candidates,
         )
 
@@ -1943,6 +1956,12 @@ Points: 0.5, Item: Second criterion
                         "session_isolation_ok": True,
                         "preflight_removed_stale_main_entry": True,
                     },
+                    "workspace_isolation": {
+                        "preflight_ok": True,
+                        "audit_status": "clean",
+                        "archive_ok": True,
+                        "contaminated": False,
+                    },
                 },
                 raw={},
                 elapsed_seconds=2.0,
@@ -2004,6 +2023,12 @@ Points: 0.5, Item: Second criterion
                         "preflight_removed_stale_main_entry": False,
                         "postflight_entry_session_id": "old-session",
                     },
+                    "workspace_isolation": {
+                        "preflight_ok": True,
+                        "audit_status": "contaminated",
+                        "archive_ok": False,
+                        "contaminated": True,
+                    },
                 },
                 raw={},
                 elapsed_seconds=4.0,
@@ -2040,6 +2065,15 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["session_isolation_ok_count"])
         self.assertEqual(1, summary["groups"]["g1"]["session_isolation_failed_count"])
         self.assertEqual(1, summary["groups"]["g1"]["session_contaminated_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["workspace_isolation_ok_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["workspace_isolation_failed_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["workspace_contaminated_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["workspace_archive_failed_count"])
+
+        sample[0].runner_meta["workspace_isolation"]["audit_status"] = "unavailable"
+        unavailable_summary = benchmark_test.aggregate_results(sample)
+        self.assertEqual(0, unavailable_summary["groups"]["g1"]["workspace_isolation_ok_count"])
+        self.assertEqual(2, unavailable_summary["groups"]["g1"]["workspace_isolation_failed_count"])
 
     def test_aggregate_results_tracks_evaluable_and_degraded_counts(self) -> None:
         sample = [
@@ -2568,8 +2602,59 @@ Points: 0.5, Item: Second criterion
                 assert isinstance(command, list)
                 self.assertIn("--thinking", command)
                 self.assertEqual("minimal", command[command.index("--thinking") + 1])
+                isolation = client.last_workspace_isolation
+                self.assertTrue(isolation["archive_ok"])
+                self.assertTrue(Path(isolation["archive_manifest"]).is_file())
+                self.assertFalse(Path(isolation["active_workspace"]).exists())
+                env = captured["env"]
+                assert isinstance(env, dict)
+                self.assertIn("BENCHMARK_WORKSPACE_DIR", env)
+                self.assertIn("BENCHMARK_SKILL_SCRATCH_DIR", env)
             finally:
                 benchmark_test.run_subprocess = original_run_subprocess
+
+    def test_judge_client_rejects_contaminated_verdict_after_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "openclaw.json"
+            config_path.write_text('{"agents":{"list":[]}}\n', encoding="utf-8")
+            completed = benchmark_test.subprocess.CompletedProcess(
+                ["openclaw"],
+                0,
+                stdout=json.dumps(
+                    {"result": {"payloads": [{"text": '{"items": [], "summary": "must-discard"}'}], "meta": {}}}
+                ),
+                stderr="",
+            )
+            client = benchmark_test.JudgeClient(
+                judge_agent="benchmark-judge",
+                timeout_seconds=30,
+                config_path=config_path,
+                contamination_auditor=lambda **_kwargs: benchmark_test.ContaminationAudit(
+                    status="contaminated",
+                    findings=(
+                        {
+                            "rule_id": "forbidden_workspace_path",
+                            "tool_name": "read",
+                            "command_excerpt": "../old/verdict.json",
+                        },
+                    ),
+                ),
+            )
+            session_audit = {
+                "requested_session_id": "",
+                "postflight_entry_session_id": "",
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": True,
+            }
+            with mock.patch.object(benchmark_test, "reset_agent_main_session_if_stale", return_value=session_audit):
+                with mock.patch.object(benchmark_test, "inspect_postflight_session", return_value=session_audit):
+                    with mock.patch.object(benchmark_test, "run_subprocess", return_value=completed):
+                        with self.assertRaisesRegex(benchmark_test.BenchmarkError, "contamination"):
+                            client.evaluate_json("score this")
+
+            self.assertTrue(client.last_workspace_isolation["archive_ok"])
+            self.assertTrue(client.last_workspace_isolation["contaminated"])
 
     def test_judge_client_clears_stale_main_session_before_openclaw_call(self) -> None:
         captured: dict[str, object] = {}

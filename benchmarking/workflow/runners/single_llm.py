@@ -20,6 +20,14 @@ from benchmarking.core.convergence import (
     is_timeout_family_text,
 )
 from benchmarking.skills.audit import build_skill_use_audit
+from benchmarking.runtime.agent_workspace import (
+    AttemptIdentity,
+    AttemptOutcome,
+    AttemptWorkspaceLease,
+    AttemptWorkspaceManager,
+    ContaminationAudit,
+    WorkspaceIsolationError,
+)
 
 
 OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
@@ -48,7 +56,6 @@ FINAL_MARKER_REQUIRED_EVAL_KINDS = {
     "frontierscience_olympiad",
     "verifier_grounded",
 }
-BENCHMARK_SCRATCH_DIRNAME = ".benchmark-scratch"
 
 
 def verifier_grounded_answer_schema_from_record(record: Any) -> dict[str, Any]:
@@ -606,6 +613,9 @@ class SingleLLMRunner:
         build_single_llm_prompt,
         slugify,
         benchmark_agent_thinking: str,
+        workspace_manager: AttemptWorkspaceManager,
+        allowed_workspace_roots: tuple[Path, ...] | list[Path] = (),
+        contamination_auditor: Callable[..., ContaminationAudit] | None = None,
         configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
         convergence_policy: ConvergencePolicy | None = None,
@@ -629,6 +639,9 @@ class SingleLLMRunner:
         self._build_single_llm_prompt = build_single_llm_prompt
         self._slugify = slugify
         self._benchmark_agent_thinking = benchmark_agent_thinking
+        self.workspace_manager = workspace_manager
+        self.allowed_workspace_roots = tuple(Path(path).expanduser().resolve() for path in allowed_workspace_roots)
+        self._contamination_auditor = contamination_auditor
         self.skill_health_summary = dict(skill_health_summary or {})
         self.timeout_retries = max(0, int(timeout_retries))
         self.no_timeout = bool(no_timeout)
@@ -699,34 +712,16 @@ class SingleLLMRunner:
             return base_prompt
         return base_prompt.rstrip() + "\n\n" + SKILLS_ON_RETRY_FOCUS_PROMPT
 
-    def _skill_scratch_dir(self, *, record: Any, session_id: str) -> Path:
-        record_slug = self._slugify(str(getattr(record, "record_id", "") or "record"), limit=80)
-        agent_workspace = self._configured_agent_workspace()
-        return agent_workspace / BENCHMARK_SCRATCH_DIRNAME / record_slug / session_id
-
-    def _configured_agent_workspace(self) -> Path:
-        try:
-            payload = json.loads(self.config_path.read_text(encoding="utf-8"))
-            entries = ((payload.get("agents") or {}).get("list") or [])
-            for entry in entries:
-                if isinstance(entry, dict) and str(entry.get("id") or "") == self.agent_id:
-                    workspace = str(entry.get("workspace") or "").strip()
-                    if workspace:
-                        return Path(workspace).expanduser().resolve()
-        except Exception:
-            pass
-        return (self.config_path.parent / self.agent_id).resolve()
-
     @staticmethod
-    def _attach_skill_scratch_prompt(prompt: str, *, scratch_dir: Path, request_dir: Path, output_dir: Path) -> str:
+    def _attach_scratch_prompt(prompt: str, *, scratch_dir: Path, request_dir: Path, output_dir: Path) -> str:
         return "\n".join(
             [
                 prompt.rstrip(),
                 "",
                 "BENCHMARK SCRATCH DIRECTORY:",
-                f"- Use this absolute directory for all local skill request files, outputs, downloaded papers, temporary scripts, and notes: {scratch_dir}",
-                f"- Request JSON files must be written under: {request_dir}",
-                f"- Skill output directories must be created under: {output_dir}",
+                f"- Use this absolute directory for all request files, outputs, downloads, generated structures, temporary scripts, and notes: {scratch_dir}",
+                f"- Request files must be written under: {request_dir}",
+                f"- Output directories must be created under: {output_dir}",
                 "- Do not write benchmark exploration artifacts in the workspace root.",
             ]
         )
@@ -869,7 +864,258 @@ class SingleLLMRunner:
                 entry["exception_type"] = str(execution_error.get("exception_type") or "")
             if "exception_message" in execution_error:
                 entry["exception_message"] = str(execution_error.get("exception_message") or "")[:1000]
+        isolation = result.runner_meta.get("workspace_isolation")
+        if isinstance(isolation, dict):
+            entry["workspace_isolation"] = dict(isolation)
         return entry
+
+    def _workspace_failure_result(
+        self,
+        *,
+        error: WorkspaceIsolationError,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        session_id: str,
+        isolation_meta: dict[str, Any],
+        original_result: RunnerResult | None = None,
+    ) -> RunnerResult:
+        runner_meta = dict(original_result.runner_meta if original_result is not None else {})
+        runner_meta.update(
+            {
+                "error": error.message,
+                "execution_error": dict(error.details),
+                "session_id": session_id,
+                "workspace_isolation": isolation_meta,
+                "convergence_policy": self.convergence_policy.to_meta(),
+                "timeout_mode": self._timeout_mode(),
+            }
+        )
+        runner_meta["skill_use_audit"] = build_skill_use_audit(
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            configured_skills=self.configured_skills,
+            runner_meta=runner_meta,
+            final_response_text="",
+            skill_health_summary=self.skill_health_summary,
+        )
+        if input_bundle is not None:
+            runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        raw: dict[str, Any] = {"workspace_isolation_error": dict(error.details)}
+        if original_result is not None:
+            raw["discarded_runner_raw"] = original_result.raw
+            raw["discarded_status"] = original_result.status.value
+        return RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw=raw,
+            runner_meta=runner_meta,
+            failure=error.to_failure_info(),
+        )
+
+    def _unexpected_attempt_failure_result(
+        self,
+        *,
+        exc: Exception,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        session_id: str,
+    ) -> RunnerResult:
+        classification = ExecutionErrorClassification(
+            code="runner_attempt_exception",
+            message=f"Single-LLM attempt failed before producing a terminal runner result: {exc}",
+            layer="runner",
+            retryable=False,
+            source="exception",
+            details={
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc)[:1000],
+                "session_id": session_id,
+            },
+        )
+        return self._execution_error_result(
+            classification=classification,
+            record=record,
+            group=group,
+            input_bundle=input_bundle,
+            session_id=session_id,
+        )
+
+    def _audit_attempt(
+        self,
+        *,
+        lease: AttemptWorkspaceLease,
+        result: RunnerResult,
+        input_bundle: Any,
+        environment: dict[str, str],
+    ) -> ContaminationAudit:
+        allowed_roots = list(self.allowed_workspace_roots)
+        bundle_dir = getattr(input_bundle, "bundle_dir", None)
+        if bundle_dir is not None:
+            allowed_roots.append(Path(bundle_dir).expanduser().resolve())
+        if self._contamination_auditor is not None:
+            return self._contamination_auditor(
+                lease=lease,
+                runner_meta=result.runner_meta,
+                allowed_roots=allowed_roots,
+                environment=environment,
+            )
+        return self.workspace_manager.audit_attempt(
+            lease,
+            result.runner_meta,
+            allowed_roots=allowed_roots,
+            environment=environment,
+        )
+
+    def _run_isolated_attempt(
+        self,
+        *,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        prompt: str,
+        session_id: str,
+        attempt_index: int,
+        wrapper_path: Path,
+        environment: dict[str, str],
+    ) -> RunnerResult:
+        skills_enabled = bool(getattr(group, "skills_enabled", True))
+        identity = AttemptIdentity(
+            run_id=self.workspace_manager.run_id,
+            invocation_id=self.workspace_manager.invocation_id,
+            group_id=str(group.id),
+            runner_kind="single_llm",
+            agent_id=self.agent_id,
+            record_id=str(record.record_id),
+            attempt_index=attempt_index,
+            session_id=session_id,
+            template_id="single-llm-skills-on-v1" if skills_enabled else "single-llm-skills-off-v1",
+        )
+        try:
+            lease = self.workspace_manager.prepare(identity)
+        except WorkspaceIsolationError as error:
+            return self._workspace_failure_result(
+                error=error,
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+                isolation_meta={
+                    "schema_version": 1,
+                    **identity.sentinel_fields(),
+                    "active_workspace": str(
+                        self.workspace_manager.active_workspace_path(group_id=identity.group_id, agent_id=identity.agent_id)
+                    ),
+                    "preflight_ok": False,
+                    "archive_ok": False,
+                    "contaminated": False,
+                    "findings": [],
+                },
+            )
+
+        attempt_env = dict(environment)
+        attempt_env["BENCHMARK_WORKSPACE_DIR"] = str(lease.active_workspace)
+        attempt_env["BENCHMARK_SKILL_SCRATCH_DIR"] = str(lease.scratch_dir)
+        attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(lease.request_dir)
+        attempt_env["BENCHMARK_SKILL_OUTPUT_DIR"] = str(lease.output_dir)
+        attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(lease.notes_dir)
+        attempt_prompt = self._attach_scratch_prompt(
+            prompt,
+            scratch_dir=lease.scratch_dir,
+            request_dir=lease.request_dir,
+            output_dir=lease.output_dir,
+        )
+        scratch_meta = {
+            "workspace_dir": str(lease.active_workspace),
+            "scratch_dir": str(lease.scratch_dir),
+            "request_dir": str(lease.request_dir),
+            "output_dir": str(lease.output_dir),
+            "notes_dir": str(lease.notes_dir),
+            "record_slug": lease.scratch_dir.parent.name,
+            "session_id": session_id,
+            "group_id": str(group.id),
+        }
+        try:
+            result = self._run_attempt(
+                record,
+                group,
+                input_bundle=input_bundle,
+                prompt=attempt_prompt,
+                session_id=session_id,
+                wrapper_path=wrapper_path,
+                env=attempt_env,
+            )
+        except Exception as exc:
+            result = self._unexpected_attempt_failure_result(
+                exc=exc,
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+            )
+        result.runner_meta["workspace_scratch"] = scratch_meta
+        if skills_enabled:
+            result.runner_meta["skill_scratch"] = scratch_meta
+        archive_reason = "timeout_retry" if self._timeout_retry_decision(result).retryable else "attempt_terminal"
+        audit = self._audit_attempt(
+            lease=lease,
+            result=result,
+            input_bundle=input_bundle,
+            environment=attempt_env,
+        )
+        isolation_meta = lease.to_meta()
+        isolation_meta.update(
+            {
+                "contaminated": audit.status == "contaminated",
+                "audit_status": audit.status,
+                "findings": [dict(finding) for finding in audit.findings],
+            }
+        )
+        if audit.status != "clean":
+            message = (
+                "Benchmark workspace contamination was detected."
+                if audit.status == "contaminated"
+                else "Benchmark workspace contamination audit was unavailable."
+            )
+            result = self._workspace_failure_result(
+                error=WorkspaceIsolationError(
+                    "benchmark_workspace_contamination",
+                    message,
+                    details={"audit_status": audit.status, "findings": isolation_meta["findings"]},
+                ),
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+                isolation_meta=isolation_meta,
+                original_result=result,
+            )
+        else:
+            result.runner_meta["workspace_isolation"] = isolation_meta
+        try:
+            archive = self.workspace_manager.seal(
+                lease,
+                AttemptOutcome(
+                    runner_status=result.status.value,
+                    archive_reason=archive_reason,
+                    contamination_audit=audit,
+                ),
+            )
+        except WorkspaceIsolationError as error:
+            isolation_meta["archive_ok"] = False
+            isolation_meta["archive_error"] = dict(error.details)
+            return self._workspace_failure_result(
+                error=error,
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+                isolation_meta=isolation_meta,
+                original_result=result,
+            )
+        isolation_meta.update(archive.to_meta())
+        result.runner_meta["workspace_isolation"] = isolation_meta
+        return result
 
     def _timeout_retry_decision(self, result: RunnerResult) -> TimeoutRetryDecision:
         failure = result.failure
@@ -949,45 +1195,16 @@ class SingleLLMRunner:
                 attempt_index=attempt_index,
                 skills_enabled=skills_enabled,
             )
-            attempt_env = dict(env)
-            skill_scratch_meta: dict[str, str] | None = None
-            if skills_enabled:
-                scratch_dir = self._skill_scratch_dir(record=record, session_id=session_id)
-                request_dir = scratch_dir / "requests"
-                output_dir = scratch_dir / "outputs"
-                notes_dir = scratch_dir / "notes"
-                for path in (request_dir, output_dir, notes_dir):
-                    path.mkdir(parents=True, exist_ok=True)
-                attempt_env["BENCHMARK_SKILL_SCRATCH_DIR"] = str(scratch_dir)
-                attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(request_dir)
-                attempt_env["BENCHMARK_SKILL_OUTPUT_DIR"] = str(output_dir)
-                attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(notes_dir)
-                attempt_prompt = self._attach_skill_scratch_prompt(
-                    attempt_prompt,
-                    scratch_dir=scratch_dir,
-                    request_dir=request_dir,
-                    output_dir=output_dir,
-                )
-                skill_scratch_meta = {
-                    "scratch_dir": str(scratch_dir),
-                    "request_dir": str(request_dir),
-                    "output_dir": str(output_dir),
-                    "notes_dir": str(notes_dir),
-                    "record_slug": self._slugify(str(getattr(record, "record_id", "") or "record"), limit=80),
-                    "session_id": session_id,
-                    "group_id": str(getattr(group, "id", "") or ""),
-                }
-            result = self._run_attempt(
-                record,
-                group,
+            result = self._run_isolated_attempt(
+                record=record,
+                group=group,
                 input_bundle=input_bundle,
                 prompt=attempt_prompt,
                 session_id=session_id,
+                attempt_index=attempt_index,
                 wrapper_path=wrapper_path,
-                env=attempt_env,
+                environment=env,
             )
-            if skill_scratch_meta is not None:
-                result.runner_meta.setdefault("skill_scratch", skill_scratch_meta)
             last_result = result
             decision = self._timeout_retry_decision(result)
             can_retry = decision.retryable and attempt_index < self.timeout_retries

@@ -7,8 +7,15 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.runtime.agent_workspace import (
+    AttemptWorkspaceManager,
+    ContaminationAudit,
+    WorkspaceTemplate,
+    WorkspaceIsolationError,
+)
 from benchmarking.workflow.runners.single_llm import SingleLLMRunner
 from benchmarking.workflow.prompts import build_single_llm_prompt
 
@@ -28,6 +35,26 @@ class CompletedProcess:
 
 
 class SingleLLMTimeoutRetryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        root = Path(self.temporary.name)
+        templates = {}
+        for template_id in ("single-llm-skills-on-v1", "single-llm-skills-off-v1"):
+            template_root = root / "templates" / template_id
+            template_root.mkdir(parents=True)
+            (template_root / "AGENTS.md").write_text("# test\n", encoding="utf-8")
+            templates[template_id] = WorkspaceTemplate(template_id=template_id, source_dir=template_root)
+        self.workspace_manager = AttemptWorkspaceManager(
+            runtime_root=root / "runtime" / "runs",
+            output_root=root / "output",
+            run_id="run-1",
+            invocation_id="invocation-1",
+            templates=templates,
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
     def _record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="record-1",
@@ -49,6 +76,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         no_timeout: bool = False,
         build_prompt: Any | None = None,
         config_path: Path = Path("/tmp/openclaw.json"),
+        write_attempt_marker: bool = False,
+        observed_old_marker: list[bool] | None = None,
+        contamination_auditor: Any | None = None,
     ) -> SingleLLMRunner:
         calls = {"count": 0}
         prompt_builder = build_prompt or (lambda *args, **kwargs: "BASE PROMPT")
@@ -60,6 +90,11 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
                 captured_envs.append(dict(env))
             if captured_timeouts is not None:
                 captured_timeouts.append(timeout)
+            if write_attempt_marker:
+                workspace = Path(env["BENCHMARK_WORKSPACE_DIR"])
+                if observed_old_marker is not None:
+                    observed_old_marker.append((workspace / "attempt-marker.txt").exists())
+                (workspace / "attempt-marker.txt").write_text(str(calls["count"]), encoding="utf-8")
             if timeout_once and calls["count"] == 1:
                 raise subprocess.TimeoutExpired(command, timeout)
             return CompletedProcess()
@@ -80,6 +115,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             build_single_llm_prompt=prompt_builder,
             slugify=lambda value, **kwargs: str(value),
             benchmark_agent_thinking="high",
+            workspace_manager=self.workspace_manager,
+            contamination_auditor=contamination_auditor or (lambda **_kwargs: ContaminationAudit(status="clean")),
             timeout_retries=1,
             timeout_retry_backoff_seconds=(0,),
             sleep_fn=lambda seconds: None,
@@ -109,13 +146,22 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
 
     def test_skills_off_timeout_retry_keeps_original_prompt(self) -> None:
         captured_commands: list[list[str]] = []
-        runner = self._runner(captured_commands=captured_commands)
+        captured_envs: list[dict[str, str]] = []
+        runner = self._runner(captured_commands=captured_commands, captured_envs=captured_envs)
 
         result = runner.run(self._record(), Group(id="single_llm_skills_off", skills_enabled=False))
 
         self.assertEqual(2, len(captured_commands))
-        self.assertEqual("BASE PROMPT", self._message_from_command(captured_commands[0]))
-        self.assertEqual("BASE PROMPT", self._message_from_command(captured_commands[1]))
+        self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[0]))
+        self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[0]))
+        self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[1]))
+        self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[1]))
+        for environment in captured_envs:
+            self.assertIn("BENCHMARK_WORKSPACE_DIR", environment)
+            self.assertIn("BENCHMARK_SKILL_SCRATCH_DIR", environment)
+            self.assertIn("BENCHMARK_SKILL_REQUEST_DIR", environment)
+            self.assertIn("BENCHMARK_SKILL_OUTPUT_DIR", environment)
+            self.assertIn("BENCHMARK_SKILL_NOTES_DIR", environment)
         self.assertFalse(result.runner_meta["timeout_retry"]["attempt_history"][0]["retry_focus_prompt_applied"])
         self.assertFalse(result.runner_meta["timeout_retry"]["attempt_history"][1]["retry_focus_prompt_applied"])
 
@@ -157,17 +203,14 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(1, len(captured_commands))
         session_id = captured_commands[0][captured_commands[0].index("--session-id") + 1]
         scratch_dir = Path(captured_envs[0]["BENCHMARK_SKILL_SCRATCH_DIR"])
-        expected = (
-            Path("/tmp/openclaw.json").parent / "benchmark-single-skills-on" / ".benchmark-scratch" / "record-1" / session_id
-        ).resolve()
-        self.assertEqual(expected, scratch_dir)
-        self.assertTrue(scratch_dir.is_dir())
+        self.assertFalse(scratch_dir.exists())
+        self.assertTrue(str(scratch_dir).startswith(str(self.workspace_manager.runtime_root)))
         self.assertEqual(str(scratch_dir / "requests"), captured_envs[0]["BENCHMARK_SKILL_REQUEST_DIR"])
         self.assertEqual(str(scratch_dir / "outputs"), captured_envs[0]["BENCHMARK_SKILL_OUTPUT_DIR"])
         self.assertIn(str(scratch_dir), self._message_from_command(captured_commands[0]))
         scratch_meta = result.runner_meta["skill_scratch"]
         self.assertEqual(str(scratch_dir), scratch_meta["scratch_dir"])
-        self.assertEqual("record-1", scratch_meta["record_slug"])
+        self.assertTrue(scratch_meta["record_slug"].startswith("record-1-"))
         self.assertEqual(session_id, scratch_meta["session_id"])
         self.assertEqual("single_llm_skills_on", scratch_meta["group_id"])
 
@@ -206,7 +249,67 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
 
             session_id = captured_commands[0][captured_commands[0].index("--session-id") + 1]
             scratch_dir = Path(captured_envs[0]["BENCHMARK_SKILL_SCRATCH_DIR"])
-            self.assertEqual((workspace / ".benchmark-scratch" / "record-1" / session_id).resolve(), scratch_dir)
+            self.assertNotEqual((workspace / ".benchmark-scratch" / "record-1" / session_id).resolve(), scratch_dir)
+            self.assertTrue(str(scratch_dir).startswith(str(self.workspace_manager.runtime_root)))
+
+    def test_timeout_retry_archives_each_attempt_and_rebuilds_clean_workspace(self) -> None:
+        captured_commands: list[list[str]] = []
+        observed_old_marker: list[bool] = []
+        runner = self._runner(
+            captured_commands=captured_commands,
+            write_attempt_marker=True,
+            observed_old_marker=observed_old_marker,
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual([False, False], observed_old_marker)
+        history = result.runner_meta["timeout_retry"]["attempt_history"]
+        self.assertEqual(2, len(history))
+        first_workspace = Path(history[0]["workspace_isolation"]["archive_workspace"])
+        second_workspace = Path(history[1]["workspace_isolation"]["archive_workspace"])
+        self.assertNotEqual(first_workspace, second_workspace)
+        self.assertEqual("1", (first_workspace / "attempt-marker.txt").read_text(encoding="utf-8"))
+        self.assertEqual("2", (second_workspace / "attempt-marker.txt").read_text(encoding="utf-8"))
+        self.assertFalse(Path(history[1]["workspace_isolation"]["active_workspace"]).exists())
+
+    def test_contamination_finding_discards_scoreable_answer(self) -> None:
+        runner = self._runner(
+            captured_commands=[],
+            timeout_once=False,
+            contamination_auditor=lambda **_kwargs: ContaminationAudit(
+                status="contaminated",
+                findings=(
+                    {
+                        "rule_id": "forbidden_workspace_path",
+                        "tool_name": "read",
+                        "command_excerpt": "../old/answer.xyz",
+                    },
+                ),
+            ),
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertFalse(result.should_score())
+        self.assertEqual("benchmark_workspace_contamination", result.failure.code)
+        self.assertTrue(result.runner_meta["workspace_isolation"]["contaminated"])
+        self.assertTrue(Path(result.runner_meta["workspace_isolation"]["archive_manifest"]).is_file())
+
+    def test_seal_failure_discards_scoreable_answer(self) -> None:
+        runner = self._runner(captured_commands=[], timeout_once=False)
+        failure = WorkspaceIsolationError(
+            "workspace_archive_failed",
+            "archive failed",
+            details={"forced": True},
+        )
+
+        with mock.patch.object(self.workspace_manager, "seal", side_effect=failure):
+            result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertFalse(result.should_score())
+        self.assertEqual("workspace_archive_failed", result.failure.code)
+        self.assertFalse(result.runner_meta["workspace_isolation"]["archive_ok"])
 
 
 if __name__ == "__main__":

@@ -2,13 +2,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import uuid
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
+from benchmarking.runtime.session_isolation import sanitize_agent_id
+from benchmarking.runtime.agent_workspace import (
+    AttemptIdentity,
+    AttemptOutcome,
+    AttemptWorkspaceLease,
+    AttemptWorkspaceManager,
+    ContaminationAudit,
+    WorkspaceIsolationError,
+    WorkspaceLeaseSet,
+)
 
 
 class ConvergenceLimitExceeded(RuntimeError):
@@ -64,7 +77,11 @@ class ChemQARunner:
         default_chemqa_preset: str,
         default_openclaw_env_file: Path,
         actual_slot_ids,
-        chemqa_workspace_roots,
+        workspace_manager: AttemptWorkspaceManager,
+        session_audit_resolver: Callable[..., dict[str, Any]] | None = None,
+        contamination_auditor: Callable[..., ContaminationAudit] | None = None,
+        allowed_workspace_roots: tuple[Path, ...] | list[Path] = (),
+        unique_run_suffix: bool = True,
         normalize_chemqa_run_status,
         is_chemqa_terminal_status,
         is_chemqa_success_status,
@@ -109,7 +126,17 @@ class ChemQARunner:
         self._default_chemqa_preset = default_chemqa_preset
         self._default_openclaw_env_file = default_openclaw_env_file
         self._actual_slot_ids = actual_slot_ids
-        self._chemqa_workspace_roots = chemqa_workspace_roots
+        self.workspace_manager = workspace_manager
+        self._session_audit_resolver = session_audit_resolver
+        self._contamination_auditor = contamination_auditor
+        self.allowed_workspace_roots = tuple(Path(path).expanduser().resolve() for path in allowed_workspace_roots)
+        self._active_slot_workspaces: dict[str, Path] = {}
+        self._current_group_id = ""
+        self._unique_run_suffix = bool(unique_run_suffix)
+        self._current_lease_set: WorkspaceLeaseSet | None = None
+        self._current_input_bundle: Any = None
+        self._current_launch_home: Path | None = None
+        self._workspace_attempt_archives: list[dict[str, Any]] = []
         self._normalize_chemqa_run_status = normalize_chemqa_run_status
         self._is_chemqa_terminal_status = is_chemqa_terminal_status
         self._is_chemqa_success_status = is_chemqa_success_status
@@ -147,6 +174,7 @@ class ChemQARunner:
         return json.dumps(progress_payload, sort_keys=True, ensure_ascii=False, default=str)
 
     def _recover_stalled_run(self, run_id: str, last_status: dict[str, Any]) -> dict[str, Any]:
+        self._rotate_workspaces_for_recovery(run_id)
         recover_script = self.chemqa_root / "scripts" / "recover_run.py"
         if not recover_script.is_file():
             return {"status": "skipped", "reason": f"missing recover script: {recover_script}"}
@@ -160,8 +188,10 @@ class ChemQARunner:
             run_id,
             "--runtime-dir",
             str(self.runtime_dir),
+            "--config-file",
+            str(self.config_path),
             "--workspace-root",
-            str(self._chemqa_workspace_roots[self.slot_set]),
+            str(self._managed_slot_workspace_root()),
             "--max-steps",
             "6",
             "--max-respawns-per-role-phase-signature",
@@ -235,15 +265,20 @@ class ChemQARunner:
         explicit_protocol = str(run_status.get("protocol_path") or "").strip()
         explicit_workspace_protocol = str(run_status.get("workspace_protocol_path") or "").strip()
         if explicit_protocol:
-            candidates.append(Path(explicit_protocol).expanduser().resolve().parent)
+            explicit_parent = Path(explicit_protocol).expanduser().resolve().parent
+            if self._is_allowed_protocol_source(explicit_parent, run_id=run_id):
+                candidates.append(explicit_parent)
         if explicit_workspace_protocol:
-            candidates.append(Path(explicit_workspace_protocol).expanduser().resolve().parent)
+            workspace_parent = Path(explicit_workspace_protocol).expanduser().resolve().parent
+            if self._is_allowed_protocol_source(workspace_parent, run_id=run_id):
+                candidates.append(workspace_parent)
 
         protocol_dir = self.chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id
         candidates.append(protocol_dir)
         coordinator_slot = self._actual_slot_ids(self.slot_set)["debate-coordinator"]
-        coordinator_workspace = self._chemqa_workspace_roots[self.slot_set] / coordinator_slot
-        candidates.append(coordinator_workspace)
+        coordinator_workspace = getattr(self, "_active_slot_workspaces", {}).get(coordinator_slot)
+        if coordinator_workspace is not None:
+            candidates.append(coordinator_workspace)
 
         deduped: list[Path] = []
         seen: set[str] = set()
@@ -254,6 +289,20 @@ class ChemQARunner:
             seen.add(key)
             deduped.append(candidate)
         return deduped
+
+    def _is_allowed_protocol_source(self, path: Path, *, run_id: str) -> bool:
+        candidate = path.expanduser().resolve(strict=False)
+        allowed_roots = [
+            self.chemqa_root / "generated" / "clawteam-data" / "runs" / run_id,
+            *getattr(self, "_active_slot_workspaces", {}).values(),
+        ]
+        for root in allowed_roots:
+            try:
+                candidate.relative_to(Path(root).expanduser().resolve(strict=False))
+                return True
+            except ValueError:
+                continue
+        return False
 
     def _resolve_existing_qa_result(self, run_id: str, run_status: dict[str, Any]) -> Path | None:
         explicit_qa_result = str(run_status.get("qa_result_path") or "").strip()
@@ -291,9 +340,13 @@ class ChemQARunner:
         explicit_protocol = str(run_status.get("protocol_path") or "").strip()
         explicit_workspace_protocol = str(run_status.get("workspace_protocol_path") or "").strip()
         if explicit_protocol:
-            explicit_candidates.append(Path(explicit_protocol).expanduser().resolve())
+            candidate = Path(explicit_protocol).expanduser().resolve()
+            if self._is_allowed_protocol_source(candidate.parent, run_id=run_id):
+                explicit_candidates.append(candidate)
         if explicit_workspace_protocol:
-            explicit_candidates.append(Path(explicit_workspace_protocol).expanduser().resolve())
+            candidate = Path(explicit_workspace_protocol).expanduser().resolve()
+            if self._is_allowed_protocol_source(candidate.parent, run_id=run_id):
+                explicit_candidates.append(candidate)
 
         seen: set[str] = set()
         for candidate in explicit_candidates:
@@ -723,14 +776,13 @@ class ChemQARunner:
             raise self._benchmark_error_factory(error_message)
         raise RuntimeError(error_message)
 
-    def run(self, record: Any, group: Any) -> RunnerResult:
+    def _run_prepared(self, record: Any, group: Any, *, run_id: str, input_bundle: Any) -> RunnerResult:
         payload: dict[str, Any] = {}
-        run_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{self._now_stamp()}"
-        input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
         answer_kind = self._resolve_chemqa_answer_kind(record)
         goal = self._build_chemqa_goal(record, websearch_enabled=group.websearch, input_bundle=input_bundle)
         launch_root = self.launch_workspace_root / group.id / self._slugify(record.record_id, limit=80)
         launch_home = launch_root / "home"
+        self._current_launch_home = launch_home
         template_dir = launch_home / ".clawteam" / "templates"
         command_map_dir = launch_root / "command-maps"
         template_dir.mkdir(parents=True, exist_ok=True)
@@ -1059,3 +1111,425 @@ class ChemQARunner:
                 self._unregister_pending_cleanup_manifest(manifest_path)
                 if payload:
                     payload.setdefault("cleanup_report", cleanup_report)
+
+    @staticmethod
+    def _safe_session_id(*parts: str) -> str:
+        raw = "-".join(part for part in parts if part)
+        normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", raw)
+        return re.sub(r"-{2,}", "-", normalized).strip("-")
+
+    def _slot_identities(self, *, record: Any, group: Any, run_id: str) -> list[AttemptIdentity]:
+        slots = self._actual_slot_ids(self.slot_set)
+        suffixes = {
+            "debate-coordinator": "coordinator",
+            "debate-1": "proposer-1",
+            "debate-2": "proposer-2",
+            "debate-3": "proposer-3",
+            "debate-4": "proposer-4",
+            "debate-5": "proposer-5",
+        }
+        identities: list[AttemptIdentity] = []
+        for logical_slot, agent_id in slots.items():
+            identities.append(
+                AttemptIdentity(
+                    run_id=self.workspace_manager.run_id,
+                    invocation_id=self.workspace_manager.invocation_id,
+                    group_id=str(group.id),
+                    runner_kind="chemqa",
+                    agent_id=agent_id,
+                    record_id=str(record.record_id),
+                    attempt_index=0,
+                    session_id=self._safe_session_id("chemqa-review", run_id, suffixes[logical_slot]),
+                    template_id="chemqa-role-v1",
+                )
+            )
+        return identities
+
+    def _managed_slot_workspace_root(self) -> Path:
+        if not self._active_slot_workspaces:
+            raise RuntimeError("ChemQA managed slot workspace set is not active.")
+        roots = {workspace.parent for workspace in self._active_slot_workspaces.values()}
+        if len(roots) != 1:
+            raise RuntimeError("ChemQA managed slot workspaces do not share one group root.")
+        return next(iter(roots))
+
+    def _install_lease_set(self, lease_set: WorkspaceLeaseSet) -> None:
+        self._current_lease_set = lease_set
+        self._active_slot_workspaces = {
+            lease.identity.agent_id: lease.active_workspace for lease in lease_set.leases
+        }
+        workspace_root = self._managed_slot_workspace_root()
+        for lease in lease_set.leases:
+            debate_sentinel = {
+                "kind": "debateclaw-slot-workspace",
+                "version": 1,
+                "slot": lease.identity.agent_id,
+                "workspace": str(lease.active_workspace),
+                "workspace_root": str(workspace_root),
+                "last_session_id": lease.identity.session_id,
+                "managed_by": "debateclaw",
+            }
+            (lease.active_workspace / ".debateclaw-slot.json").write_text(
+                json.dumps(debate_sentinel, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+    def _rotate_workspaces_for_recovery(self, run_id: str) -> None:
+        lease_set = self._current_lease_set
+        if lease_set is None:
+            raise WorkspaceIsolationError(
+                "workspace_recovery_failed",
+                "ChemQA recovery requested without an active workspace lease set.",
+            )
+        manifest_path = self._cleanup_manifest_path(self.launch_workspace_root.parent, run_id)
+        try:
+            cleanup_report = self._invoke_cleanroom_cleanup(manifest_path=manifest_path)
+        except Exception as exc:
+            raise WorkspaceIsolationError(
+                "workspace_recovery_failed",
+                f"ChemQA recovery could not stop the previous attempt processes: {exc}",
+                details={"exception_type": type(exc).__name__},
+            ) from exc
+
+        diagnostic_result = RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw={"run_id": run_id},
+            runner_meta={"run_id": run_id, "recovery_rotation": True},
+            failure=FailureInfo(
+                code="chemqa_recovery_rotation",
+                message="ChemQA stalled attempt is being rotated before recovery.",
+            ),
+        )
+        audits = {
+            lease.identity.agent_id: self._audit_slot(
+                lease=lease,
+                result=diagnostic_result,
+                input_bundle=self._current_input_bundle,
+            )
+            for lease in lease_set.leases
+        }
+        archive_meta: dict[str, Any] = {
+            "attempt_index": lease_set.leases[0].identity.attempt_index,
+            "cleanup_report": cleanup_report,
+            "slots": {},
+        }
+        errors: list[WorkspaceIsolationError] = []
+        for lease in lease_set.leases:
+            audit = audits[lease.identity.agent_id]
+            try:
+                archive = self.workspace_manager.seal(
+                    lease,
+                    AttemptOutcome(
+                        runner_status="failed",
+                        archive_reason="timeout_retry",
+                        contamination_audit=audit,
+                    ),
+                )
+                archive_meta["slots"][lease.identity.agent_id] = archive.to_meta()
+            except WorkspaceIsolationError as error:
+                errors.append(error)
+                archive_meta["slots"][lease.identity.agent_id] = {"archive_ok": False, "error": dict(error.details)}
+        self._workspace_attempt_archives.append(archive_meta)
+        self._current_lease_set = None
+        self._active_slot_workspaces = {}
+        contaminated = any(audit.status != "clean" for audit in audits.values())
+        if contaminated:
+            raise WorkspaceIsolationError(
+                "benchmark_workspace_contamination",
+                "ChemQA recovery workspace audit was contaminated or unavailable.",
+                details={
+                    "audits": {
+                        agent_id: audit.to_payload() for agent_id, audit in audits.items()
+                    }
+                },
+            )
+        if errors:
+            raise WorkspaceIsolationError(
+                "workspace_recovery_failed",
+                "ChemQA recovery could not archive all previous attempt workspaces.",
+                details={"archive_errors": [dict(error.details) for error in errors]},
+            )
+
+        next_identities = [
+            replace(identity, attempt_index=identity.attempt_index + 1)
+            for identity in (lease.identity for lease in lease_set.leases)
+        ]
+        try:
+            next_lease_set = self.workspace_manager.prepare_set(next_identities)
+        except WorkspaceIsolationError as exc:
+            raise WorkspaceIsolationError(
+                "workspace_recovery_failed",
+                f"ChemQA recovery could not prepare a fresh workspace lease set: {exc.message}",
+                details={"prepare_error": dict(exc.details)},
+            ) from exc
+        self._install_lease_set(next_lease_set)
+
+    def _chemqa_attempt_failure(self, *, exc: Exception, run_id: str) -> RunnerResult:
+        message = f"ChemQA attempt failed before returning a terminal result: {exc}"
+        return RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+            runner_meta={
+                "run_id": run_id,
+                "error": message,
+                "execution_error": {
+                    "code": "chemqa_attempt_exception",
+                    "layer": "runner",
+                    "source": "exception",
+                    "retryable": False,
+                    "exception_type": type(exc).__name__,
+                },
+            },
+            failure=FailureInfo(
+                code="chemqa_attempt_exception",
+                message=message,
+                details={"exception_type": type(exc).__name__, "exception_message": str(exc)},
+            ),
+        )
+
+    def _workspace_failure_result(
+        self,
+        *,
+        error: WorkspaceIsolationError,
+        isolation_meta: dict[str, Any],
+        run_id: str,
+        original_result: RunnerResult | None = None,
+    ) -> RunnerResult:
+        runner_meta = dict(original_result.runner_meta if original_result is not None else {})
+        runner_meta.update(
+            {
+                "run_id": run_id,
+                "error": error.message,
+                "execution_error": dict(error.details),
+                "workspace_isolation": isolation_meta,
+            }
+        )
+        raw: dict[str, Any] = {"workspace_isolation_error": dict(error.details)}
+        if original_result is not None:
+            raw["discarded_runner_raw"] = original_result.raw
+            raw["discarded_status"] = original_result.status.value
+        return RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(),
+            raw=raw,
+            runner_meta=runner_meta,
+            failure=error.to_failure_info(),
+        )
+
+    def _audit_slot(
+        self,
+        *,
+        lease: AttemptWorkspaceLease,
+        result: RunnerResult,
+        input_bundle: Any,
+    ) -> ContaminationAudit:
+        if self._session_audit_resolver is None:
+            session_audit: dict[str, Any] = {}
+        else:
+            try:
+                session_store_path = None
+                if self._current_launch_home is not None:
+                    session_store_path = (
+                        self._current_launch_home
+                        / ".openclaw"
+                        / "agents"
+                        / sanitize_agent_id(lease.identity.agent_id)
+                        / "sessions"
+                        / "sessions.json"
+                    )
+                session_audit = self._session_audit_resolver(
+                    lease.identity.agent_id,
+                    lease.identity.session_id,
+                    session_store_path=session_store_path,
+                )
+            except Exception as exc:
+                session_audit = {
+                    "session_isolation_ok": False,
+                    "audit_error": type(exc).__name__,
+                }
+        runner_meta = {**result.runner_meta, "session_isolation": session_audit}
+        allowed_roots = [*self.allowed_workspace_roots]
+        bundle_dir = getattr(input_bundle, "bundle_dir", None)
+        if bundle_dir is not None:
+            allowed_roots.append(Path(bundle_dir).expanduser().resolve())
+        if self._contamination_auditor is not None:
+            return self._contamination_auditor(
+                lease=lease,
+                runner_meta=runner_meta,
+                allowed_roots=allowed_roots,
+                environment=os.environ,
+            )
+        return self.workspace_manager.audit_attempt(
+            lease,
+            runner_meta,
+            allowed_roots=allowed_roots,
+            environment=os.environ,
+        )
+
+    def run(self, record: Any, group: Any) -> RunnerResult:
+        run_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{self._now_stamp()}"
+        if self._unique_run_suffix:
+            run_id = f"{run_id}-{uuid.uuid4().hex[:8]}"
+        input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
+        identities = self._slot_identities(record=record, group=group, run_id=run_id)
+        try:
+            lease_set = self.workspace_manager.prepare_set(identities)
+        except WorkspaceIsolationError as error:
+            return self._workspace_failure_result(
+                error=error,
+                isolation_meta={
+                    "schema_version": 1,
+                    "run_id": self.workspace_manager.run_id,
+                    "invocation_id": self.workspace_manager.invocation_id,
+                    "group_id": str(group.id),
+                    "record_id": str(record.record_id),
+                    "attempt_index": 0,
+                    "preflight_ok": False,
+                    "archive_ok": False,
+                    "contaminated": False,
+                    "findings": [],
+                    "slots": {},
+                },
+                run_id=run_id,
+            )
+
+        self._install_lease_set(lease_set)
+        self._current_group_id = str(group.id)
+        self._current_input_bundle = input_bundle
+        self._current_launch_home = (
+            self.launch_workspace_root
+            / str(group.id)
+            / self._slugify(record.record_id, limit=80)
+            / "home"
+        )
+        self._workspace_attempt_archives = []
+        try:
+            try:
+                result = self._run_prepared(record, group, run_id=run_id, input_bundle=input_bundle)
+            except WorkspaceIsolationError as error:
+                result = self._workspace_failure_result(
+                    error=error,
+                    isolation_meta={
+                        "schema_version": 1,
+                        "preflight_ok": True,
+                        "archive_ok": False,
+                        "contaminated": error.code == "benchmark_workspace_contamination",
+                        "findings": list(error.details.get("audits") or []),
+                        "slots": {},
+                        "attempt_archives": list(self._workspace_attempt_archives),
+                    },
+                    run_id=run_id,
+                )
+            except Exception as exc:
+                result = self._chemqa_attempt_failure(exc=exc, run_id=run_id)
+
+            final_lease_set = self._current_lease_set
+            if final_lease_set is None:
+                execution_error = result.runner_meta.get("execution_error")
+                if isinstance(execution_error, dict) and execution_error.get("source") == "workspace_isolation":
+                    result.runner_meta["workspace_isolation"]["attempt_archives"] = list(
+                        self._workspace_attempt_archives
+                    )
+                    return result
+                return self._workspace_failure_result(
+                    error=WorkspaceIsolationError(
+                        "workspace_recovery_failed",
+                        "ChemQA attempt ended without an active workspace lease set to archive.",
+                    ),
+                    isolation_meta={
+                        "schema_version": 1,
+                        "preflight_ok": False,
+                        "archive_ok": False,
+                        "contaminated": False,
+                        "findings": [],
+                        "slots": {},
+                        "attempt_archives": list(self._workspace_attempt_archives),
+                    },
+                    run_id=run_id,
+                    original_result=result,
+                )
+            audits = {
+                lease.identity.agent_id: self._audit_slot(
+                    lease=lease,
+                    result=result,
+                    input_bundle=input_bundle,
+                )
+                for lease in final_lease_set.leases
+            }
+            isolation_meta = final_lease_set.to_meta()
+            all_findings = [
+                {"agent_id": agent_id, **dict(finding)}
+                for agent_id, audit in audits.items()
+                for finding in audit.findings
+            ]
+            contaminated = any(audit.status == "contaminated" for audit in audits.values())
+            audit_unavailable = any(audit.status == "unavailable" for audit in audits.values())
+            isolation_meta.update(
+                {
+                    "run_id": self.workspace_manager.run_id,
+                    "invocation_id": self.workspace_manager.invocation_id,
+                    "group_id": str(group.id),
+                    "record_id": str(record.record_id),
+                    "attempt_index": 0,
+                    "contaminated": contaminated,
+                    "audit_status": "unavailable" if audit_unavailable else ("contaminated" if contaminated else "clean"),
+                    "findings": all_findings,
+                    "attempt_archives": list(self._workspace_attempt_archives),
+                }
+            )
+            if contaminated or audit_unavailable:
+                result = self._workspace_failure_result(
+                    error=WorkspaceIsolationError(
+                        "benchmark_workspace_contamination",
+                        "ChemQA workspace contamination was detected."
+                        if contaminated
+                        else "ChemQA workspace contamination audit was unavailable.",
+                        details={"audit_status": isolation_meta["audit_status"], "findings": all_findings},
+                    ),
+                    isolation_meta=isolation_meta,
+                    run_id=run_id,
+                    original_result=result,
+                )
+            else:
+                result.runner_meta["workspace_isolation"] = isolation_meta
+
+            seal_errors: list[WorkspaceIsolationError] = []
+            for lease in final_lease_set.leases:
+                slot_meta = isolation_meta["slots"][lease.identity.agent_id]
+                try:
+                    archive = self.workspace_manager.seal(
+                        lease,
+                        AttemptOutcome(
+                            runner_status=result.status.value,
+                            archive_reason="attempt_terminal",
+                            contamination_audit=audits[lease.identity.agent_id],
+                        ),
+                    )
+                    slot_meta.update(archive.to_meta())
+                except WorkspaceIsolationError as error:
+                    slot_meta["archive_ok"] = False
+                    slot_meta["archive_error"] = dict(error.details)
+                    seal_errors.append(error)
+            isolation_meta["archive_ok"] = not seal_errors
+            result.runner_meta["workspace_isolation"] = isolation_meta
+            if seal_errors:
+                return self._workspace_failure_result(
+                    error=WorkspaceIsolationError(
+                        "workspace_archive_failed",
+                        "One or more ChemQA role workspaces could not be archived.",
+                        details={"slot_errors": [dict(error.details) for error in seal_errors]},
+                    ),
+                    isolation_meta=isolation_meta,
+                    run_id=run_id,
+                    original_result=result,
+                )
+            return result
+        finally:
+            self._active_slot_workspaces = {}
+            self._current_group_id = ""
+            self._current_lease_set = None
+            self._current_input_bundle = None
+            self._current_launch_home = None
+            self._workspace_attempt_archives = []

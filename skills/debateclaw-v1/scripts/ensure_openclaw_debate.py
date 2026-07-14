@@ -61,14 +61,10 @@ def load_slot_agents_template() -> str:
 def validate_slot_workspace_path(workspace: Path, *, slot_id: str, workspace_root: Path) -> Path:
     resolved_workspace = workspace.expanduser().resolve()
     resolved_root = workspace_root.expanduser().resolve()
-    if resolved_workspace.name != slot_id:
-        raise SystemExit(
-            f"Refusing DebateClaw slot workspace operation: workspace name `{resolved_workspace.name}` does not match slot `{slot_id}`."
-        )
     if resolved_workspace.parent != resolved_root:
         raise SystemExit(
             "Refusing DebateClaw slot workspace operation: workspace is not a direct child of the configured workspace root. "
-            f"workspace={resolved_workspace} root={resolved_root}"
+            f"workspace={resolved_workspace} root={resolved_root} slot={slot_id}"
         )
     return resolved_workspace
 
@@ -351,12 +347,20 @@ def ensure_slots(
         config["agents"]["defaults"]["model"]["primary"] = model_ref_for(FAMILY_SPECS[coordinator_family])
     dump_json_file(config_file, config)
 
+    current = agent_entries_by_id(config)
+
+    def workspace_for_slot(slot_id: str) -> str:
+        existing = current.get(slot_id) or {}
+        configured = str(existing.get("workspace") or "").strip()
+        workspace = Path(configured) if configured else workspace_root / slot_id
+        return str(validate_slot_workspace_path(workspace, slot_id=slot_id, workspace_root=workspace_root))
+
     slots = [
         {
             "role": "debate-coordinator",
             "slot": coordinator_slot,
             "family": coordinator_family,
-            "workspace": str((workspace_root / coordinator_slot).expanduser().resolve()),
+            "workspace": workspace_for_slot(coordinator_slot),
         }
     ]
     for index, family in enumerate(proposer_families, start=1):
@@ -366,11 +370,10 @@ def ensure_slots(
                 "role": f"proposer-{index}",
                 "slot": slot_id,
                 "family": family,
-                "workspace": str((workspace_root / slot_id).expanduser().resolve()),
+                "workspace": workspace_for_slot(slot_id),
             }
         )
 
-    current = agent_entries_by_id(ensure_base_config(config_file))
     created_slots: list[str] = []
     for slot in slots:
         workspace = Path(slot["workspace"])

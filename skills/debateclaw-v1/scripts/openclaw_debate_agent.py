@@ -66,6 +66,17 @@ def main_session_keys_for_slot(slot: str) -> list[str]:
     return keys
 
 
+def explicit_session_keys_for_slot(slot: str, session_id: str) -> list[str]:
+    keys: list[str] = []
+    for candidate in (slot.strip(), slot.strip().lower()):
+        if not candidate:
+            continue
+        key = f"agent:{candidate}:explicit:{session_id}"
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
 SLOT_SENTINEL_FILENAME = ".debateclaw-slot.json"
 SLOT_SENTINEL_KIND = "debateclaw-slot-workspace"
 SLOT_SENTINEL_VERSION = 1
@@ -261,7 +272,7 @@ def validate_slot_sentinel(workspace: Path, *, slot: str) -> tuple[dict[str, Any
             f"DebateClaw slot sentinel workspace mismatch for `{slot}`: recorded={recorded_workspace} actual={workspace}"
         )
     workspace_root = Path(str(data.get("workspace_root", ""))).expanduser().resolve()
-    if workspace.parent != workspace_root or workspace.name != slot:
+    if workspace.parent != workspace_root:
         raise SystemExit(
             "Refusing DebateClaw slot workspace reset because the workspace is not a direct child of the recorded root. "
             f"workspace={workspace} root={workspace_root} slot={slot}"
@@ -369,11 +380,17 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             tmp_path.unlink()
 
 
-def load_session_entry_for_slot(slot: str) -> dict[str, Any]:
+def load_session_entry_for_slot(slot: str, requested_session_id: str = "") -> dict[str, Any]:
     store = load_session_store(session_store_path_for_slot(slot))
-    for session_key in main_session_keys_for_slot(slot):
+    session_keys = [
+        *explicit_session_keys_for_slot(slot, requested_session_id),
+        *main_session_keys_for_slot(slot),
+    ]
+    for session_key in session_keys:
         entry = store.get(session_key)
-        if isinstance(entry, dict):
+        if isinstance(entry, dict) and (
+            not requested_session_id or str(entry.get("sessionId") or "") == requested_session_id
+        ):
             return entry
     return {}
 
@@ -591,7 +608,7 @@ def main() -> int:
         turn_result_file = getattr(args, "turn_result_file", None)
         if not turn_result_file:
             return
-        session_entry = load_session_entry_for_slot(effective_slot)
+        session_entry = load_session_entry_for_slot(effective_slot, str(args.session_id or ""))
         transcript_path = Path(str(session_entry.get("sessionFile") or "")).expanduser().resolve() if session_entry.get("sessionFile") else None
         transcript_summary = summarize_turn_transcript(transcript_path) if transcript_path is not None else {}
         payload = {

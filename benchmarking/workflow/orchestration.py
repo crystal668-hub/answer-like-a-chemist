@@ -80,6 +80,7 @@ def run_group(
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str,
     no_timeout: bool = False,
+    workspace_manager: Any | None = None,
     progress_writer: Any | None = None,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
@@ -97,6 +98,7 @@ def run_group(
                 runtime_bundle_root=runtime_bundle_root,
                 launch_workspace_root=output_root / "chemqa-launch",
                 convergence_policy=chemqa_convergence_policy or ConvergencePolicy(timeout_seconds=chemqa_timeout),
+                workspace_manager=workspace_manager,
             )
         else:
             runner = build_runner_fn(
@@ -112,6 +114,7 @@ def run_group(
                 timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
                 benchmark_agent_thinking=single_agent_thinking,
                 no_timeout=no_timeout,
+                workspace_manager=workspace_manager,
             )
     except Exception as exc:
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"

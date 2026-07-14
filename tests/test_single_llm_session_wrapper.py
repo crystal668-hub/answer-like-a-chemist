@@ -270,6 +270,77 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("session-a", audit["postflight_entry_session_id"])
             self.assertTrue(audit["postflight_entry_session_file"].endswith("session-a.jsonl"))
 
+    def test_postflight_prefers_matching_explicit_session_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            explicit_file = store_path.parent / "session-a.jsonl"
+            explicit_file.write_text("{}\n", encoding="utf-8")
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:main": {
+                            "sessionId": "old-session",
+                            "sessionFile": str(store_path.parent / "old-session.jsonl"),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        },
+                        "agent:benchmark-single:explicit:session-a": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(explicit_file),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            audit = wrapper.inspect_postflight_session(
+                "benchmark-single",
+                "session-a",
+                config_path=config_path,
+            )
+
+            self.assertTrue(audit["session_isolation_ok"])
+            self.assertEqual("session-a", audit["postflight_entry_session_id"])
+            self.assertEqual(str(explicit_file), audit["postflight_entry_session_file"])
+
+    def test_postflight_reads_explicit_session_from_run_local_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            store_path = root / "launch-home" / ".openclaw" / "agents" / "benchmark-single" / "sessions" / "sessions.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            transcript_path = store_path.parent / "session-a.jsonl"
+            transcript_path.write_text("{}\n", encoding="utf-8")
+            store_path.write_text(
+                json.dumps(
+                    {
+                        "agent:benchmark-single:explicit:session-a": {
+                            "sessionId": "session-a",
+                            "sessionFile": str(transcript_path),
+                            "modelProvider": "openai",
+                            "model": "gpt-5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            audit = wrapper.inspect_postflight_session(
+                "benchmark-single",
+                "session-a",
+                config_path=config_path,
+                session_store_path=store_path,
+            )
+
+            self.assertTrue(audit["session_isolation_ok"])
+            self.assertEqual(str(store_path.resolve()), audit["session_store_path"])
+            self.assertEqual(str(transcript_path), audit["postflight_entry_session_file"])
+
     def test_postflight_allows_same_session_with_model_metadata_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

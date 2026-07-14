@@ -65,6 +65,14 @@ from benchmarking.runtime.bundles import (
     ensure_runtime_bundle as _shared_ensure_runtime_bundle,
     superchem_image_paths,
 )
+from benchmarking.runtime.agent_workspace import (
+    AttemptIdentity,
+    AttemptOutcome,
+    AttemptWorkspaceManager,
+    ContaminationAudit,
+    WorkspaceIsolationError,
+    default_workspace_templates,
+)
 from benchmarking.runtime.config_pool import (
     ConfigPool as _RuntimeConfigPool,
     RuntimeConfigContext,
@@ -134,7 +142,6 @@ DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax
 THINKING_LEVEL_CHOICES = ("off", "minimal", "low", "medium", "high", "xhigh")
 DEFAULT_SINGLE_AGENT_THINKING = "high"
 DEFAULT_JUDGE_AGENT_THINKING = "high"
-BASELINE_WORKSPACE_ROOT = runtime_paths.benchmark_runtime_root
 BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
 CHEMQA_SLOT_SETS = {
     "chemqa_skills_on": "A",
@@ -144,9 +151,6 @@ BASELINE_AGENT_IDS = {
     "single_llm_skills_off": "benchmark-single-skills-off",
 }
 JUDGE_AGENT_ID = "benchmark-judge"
-CHEMQA_WORKSPACE_ROOTS = {
-    "A": BASELINE_WORKSPACE_ROOT / "chemqa_skills_on",
-}
 
 
 def RunOutput(
@@ -573,24 +577,12 @@ def slugify(value: str, *, limit: int = 64) -> str:
     return f"{cleaned[: limit - 9]}-{digest}".strip("-")
 
 
-def slot_agents_template_path() -> Path:
-    return runtime_paths.skills_root / "debateclaw-v1" / "scripts" / "templates" / "debate-slot-AGENTS.md"
-
-
-def load_slot_agents_template() -> str:
-    path = slot_agents_template_path()
-    return path.read_text(encoding="utf-8").rstrip() + "\n"
-
-
 def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = None) -> RuntimeConfigContext:
     return RuntimeConfigContext(
-        baseline_workspace_root=BASELINE_WORKSPACE_ROOT,
-        chemqa_workspace_roots=CHEMQA_WORKSPACE_ROOTS,
         agents_root=runtime_paths.agents_root,
         judge_agent_id=JUDGE_AGENT_ID,
         chemqa_slot_sets=CHEMQA_SLOT_SETS,
         experiment_specs=experiment_specs or EXPERIMENT_SPECS,
-        load_slot_agents_template=load_slot_agents_template,
         benchmark_skills_root=runtime_paths.skills_root,
     )
 
@@ -601,8 +593,16 @@ def build_run_scoped_config_payload(
     group: ExperimentGroup,
     single_agent_model: str,
     judge_model: str,
+    workspace_manager: AttemptWorkspaceManager | None = None,
     single_agent_id_override: str | None = None,
 ) -> dict[str, Any]:
+    workspace_manager = workspace_manager or AttemptWorkspaceManager(
+        runtime_root=runtime_paths.benchmark_runtime_root / "runs",
+        output_root=runtime_paths.project_state_root / "benchmark-config-preview",
+        run_id="config-preview",
+        invocation_id="config-preview",
+        templates=default_workspace_templates(runtime_paths.project_root),
+    )
     try:
         return _build_run_scoped_config_payload(
             base_payload,
@@ -610,6 +610,7 @@ def build_run_scoped_config_payload(
             group=group,
             single_agent_model=single_agent_model,
             judge_model=judge_model,
+            workspace_manager=workspace_manager,
             single_agent_id_override=single_agent_id_override,
         )
     except RuntimeConfigError as exc:
@@ -698,6 +699,9 @@ class ConfigPool(_RuntimeConfigPool):
         *,
         base_config_path: Path,
         output_root: Path,
+        run_id: str,
+        invocation_id: str,
+        workspace_manager: AttemptWorkspaceManager,
         single_agent_model: str | None = None,
         judge_model: str | None = None,
         single_agent_id_override: str | None = None,
@@ -707,6 +711,9 @@ class ConfigPool(_RuntimeConfigPool):
             base_config_path=base_config_path,
             output_root=output_root,
             context=runtime_config_context(experiment_specs=experiment_specs),
+            run_id=run_id,
+            invocation_id=invocation_id,
+            workspace_manager=workspace_manager,
             single_agent_model=single_agent_model,
             judge_model=judge_model,
             single_agent_id_override=single_agent_id_override,
@@ -1071,15 +1078,42 @@ class JudgeClient:
         timeout_seconds: int,
         config_path: Path,
         thinking: str = DEFAULT_JUDGE_AGENT_THINKING,
+        workspace_manager: AttemptWorkspaceManager | None = None,
+        contamination_auditor=None,
     ) -> None:
         self.judge_agent = judge_agent
         self.timeout_seconds = timeout_seconds
         self.config_path = config_path
         self.thinking = thinking
         self._lock = threading.Lock()
+        compatibility_manager = workspace_manager is None
+        if workspace_manager is None:
+            workspace_manager = AttemptWorkspaceManager(
+                runtime_root=config_path.expanduser().resolve().parent / ".benchmark-test-workspaces" / "runs",
+                output_root=config_path.expanduser().resolve().parent / ".benchmark-test-output",
+                run_id="judge-test",
+                invocation_id=uuid.uuid4().hex,
+                templates=default_workspace_templates(runtime_paths.project_root),
+            )
+        if compatibility_manager and contamination_auditor is None:
+            contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
+        self.workspace_manager = workspace_manager
+        self._contamination_auditor = contamination_auditor
+        self.last_workspace_isolation: dict[str, Any] = {}
 
     def evaluate_json(self, prompt: str) -> dict[str, Any]:
         session_id = f"benchmark-judge-{uuid.uuid4().hex[:12]}"
+        identity = AttemptIdentity(
+            run_id=self.workspace_manager.run_id,
+            invocation_id=self.workspace_manager.invocation_id,
+            group_id="benchmark-judge-runtime",
+            runner_kind="judge",
+            agent_id=self.judge_agent,
+            record_id=f"judge-call-{hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]}",
+            attempt_index=0,
+            session_id=session_id,
+            template_id="judge-v1",
+        )
         command = [
             "openclaw",
             "agent",
@@ -1096,9 +1130,28 @@ class JudgeClient:
             str(self.timeout_seconds),
             "--json",
         ]
-        env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=self.config_path)
-        try:
-            with self._lock:
+        with self._lock:
+            try:
+                lease = self.workspace_manager.prepare(identity)
+            except WorkspaceIsolationError as exc:
+                raise BenchmarkError(f"Judge workspace isolation failed: {exc.message}") from exc
+            env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=self.config_path)
+            env.update(
+                {
+                    "BENCHMARK_WORKSPACE_DIR": str(lease.active_workspace),
+                    "BENCHMARK_SKILL_SCRATCH_DIR": str(lease.scratch_dir),
+                    "BENCHMARK_SKILL_REQUEST_DIR": str(lease.request_dir),
+                    "BENCHMARK_SKILL_OUTPUT_DIR": str(lease.output_dir),
+                    "BENCHMARK_SKILL_NOTES_DIR": str(lease.notes_dir),
+                }
+            )
+            outcome_status = "failed"
+            contamination_audit = ContaminationAudit(
+                status="unavailable",
+                findings=({"rule_id": "judge_call_incomplete", "tool_name": "", "command_excerpt": ""},),
+            )
+            call_error: Exception | None = None
+            try:
                 preflight_audit = reset_agent_main_session_if_stale(
                     self.judge_agent,
                     session_id,
@@ -1110,23 +1163,71 @@ class JudgeClient:
                     session_id,
                     config_path=self.config_path,
                 )
-        except SessionIsolationError as exc:
-            raise BenchmarkError(f"Judge OpenClaw session isolation failed: {exc}") from exc
-        audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
-        if audit.get("session_isolation_ok") is not True:
-            requested_session = str(audit.get("requested_session_id") or session_id)
-            actual_session = str(audit.get("postflight_entry_session_id") or "")
-            raise BenchmarkError(
-                "Judge OpenClaw session isolation failed: "
-                f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
+                audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
+                if audit.get("session_isolation_ok") is not True:
+                    requested_session = str(audit.get("requested_session_id") or session_id)
+                    actual_session = str(audit.get("postflight_entry_session_id") or "")
+                    raise BenchmarkError(
+                        "Judge OpenClaw session isolation failed: "
+                        f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
+                    )
+                payload = parse_json_stdout(result, command)
+                result_payload = unwrap_agent_payload(payload)
+                reply = summarize_payloads(list((result_payload.get("payloads") or [])))
+                parsed = safe_json_extract(reply)
+                if not isinstance(parsed, dict):
+                    raise BenchmarkError(f"Judge must return a JSON object, got: {reply}")
+                if self._contamination_auditor is not None:
+                    contamination_audit = self._contamination_auditor(
+                        lease=lease,
+                        runner_meta={"session_isolation": audit},
+                        allowed_roots=[],
+                        environment=env,
+                    )
+                else:
+                    contamination_audit = self.workspace_manager.audit_attempt(
+                        lease,
+                        {"session_isolation": audit},
+                        environment=env,
+                    )
+                if contamination_audit.status != "clean":
+                    raise BenchmarkError(
+                        "Judge workspace contamination detected."
+                        if contamination_audit.status == "contaminated"
+                        else "Judge workspace contamination audit unavailable."
+                    )
+                outcome_status = "completed"
+            except SessionIsolationError as exc:
+                call_error = BenchmarkError(f"Judge OpenClaw session isolation failed: {exc}")
+            except Exception as exc:
+                call_error = exc
+            isolation_meta = lease.to_meta()
+            isolation_meta.update(
+                {
+                    "contaminated": contamination_audit.status == "contaminated",
+                    "audit_status": contamination_audit.status,
+                    "findings": [dict(finding) for finding in contamination_audit.findings],
+                }
             )
-        payload = parse_json_stdout(result, command)
-        result_payload = unwrap_agent_payload(payload)
-        reply = summarize_payloads(list((result_payload.get("payloads") or [])))
-        parsed = safe_json_extract(reply)
-        if not isinstance(parsed, dict):
-            raise BenchmarkError(f"Judge must return a JSON object, got: {reply}")
-        return parsed
+            try:
+                archive = self.workspace_manager.seal(
+                    lease,
+                    AttemptOutcome(
+                        runner_status=outcome_status,
+                        archive_reason="attempt_terminal",
+                        contamination_audit=contamination_audit,
+                    ),
+                )
+            except WorkspaceIsolationError as exc:
+                isolation_meta["archive_ok"] = False
+                isolation_meta["archive_error"] = dict(exc.details)
+                self.last_workspace_isolation = isolation_meta
+                raise BenchmarkError(f"Judge workspace archive failed: {exc.message}") from exc
+            isolation_meta.update(archive.to_meta())
+            self.last_workspace_isolation = isolation_meta
+            if call_error is not None:
+                raise call_error
+            return parsed
 
 
 class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
@@ -1145,7 +1246,21 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
         sleep_fn=time.sleep,
         benchmark_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
         no_timeout: bool = False,
+        workspace_manager: AttemptWorkspaceManager | None = None,
+        contamination_auditor=None,
     ) -> None:
+        compatibility_manager = workspace_manager is None
+        if workspace_manager is None:
+            compatibility_root = runtime_bundle_root.expanduser().resolve()
+            workspace_manager = AttemptWorkspaceManager(
+                runtime_root=compatibility_root / ".benchmark-test-workspaces" / "runs",
+                output_root=compatibility_root / ".benchmark-test-output",
+                run_id="runner-test",
+                invocation_id=uuid.uuid4().hex,
+                templates=default_workspace_templates(runtime_paths.project_root),
+            )
+        if compatibility_manager and contamination_auditor is None:
+            contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
         super().__init__(
             agent_id=agent_id,
             timeout_seconds=timeout_seconds,
@@ -1167,6 +1282,9 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
             build_single_llm_prompt=build_single_llm_prompt,
             slugify=slugify,
             benchmark_agent_thinking=benchmark_agent_thinking,
+            workspace_manager=workspace_manager,
+            allowed_workspace_roots=(runtime_paths.skills_root, runtime_paths.project_root / "scripts" / "run_skill.py"),
+            contamination_auditor=contamination_auditor,
         )
 
 
@@ -1184,7 +1302,21 @@ class ChemQARunner(_BenchmarkingChemQARunner):
         runtime_bundle_root: Path,
         launch_workspace_root: Path,
         convergence_policy: ConvergencePolicy | None = None,
+        workspace_manager: AttemptWorkspaceManager | None = None,
+        contamination_auditor=None,
     ) -> None:
+        compatibility_manager = workspace_manager is None
+        if workspace_manager is None:
+            compatibility_root = runtime_bundle_root.expanduser().resolve()
+            workspace_manager = AttemptWorkspaceManager(
+                runtime_root=compatibility_root / ".benchmark-test-workspaces" / "runs",
+                output_root=compatibility_root / ".benchmark-test-output",
+                run_id="chemqa-runner-test",
+                invocation_id=uuid.uuid4().hex,
+                templates=default_workspace_templates(runtime_paths.project_root),
+            )
+        if compatibility_manager and contamination_auditor is None:
+            contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
         super().__init__(
             chemqa_root=chemqa_root,
             timeout_seconds=timeout_seconds,
@@ -1217,7 +1349,16 @@ class ChemQARunner(_BenchmarkingChemQARunner):
             default_chemqa_preset=DEFAULT_CHEMQA_PRESET,
             default_openclaw_env_file=DEFAULT_OPENCLAW_ENV_FILE,
             actual_slot_ids=actual_slot_ids,
-            chemqa_workspace_roots=CHEMQA_WORKSPACE_ROOTS,
+            workspace_manager=workspace_manager,
+            session_audit_resolver=lambda agent_id, session_id, *, session_store_path=None: inspect_postflight_session(
+                agent_id,
+                session_id,
+                config_path=config_path,
+                session_store_path=session_store_path,
+            ),
+            contamination_auditor=contamination_auditor,
+            allowed_workspace_roots=(runtime_paths.skills_root,),
+            unique_run_suffix=not compatibility_manager,
             normalize_chemqa_run_status=normalize_chemqa_run_status,
             is_chemqa_terminal_status=is_chemqa_terminal_status,
             is_chemqa_success_status=is_chemqa_success_status,
@@ -1244,8 +1385,6 @@ class ChemQARunner(_BenchmarkingChemQARunner):
     def _candidate_protocol_dirs(self, run_id: str, run_status: dict[str, Any]) -> list[Path]:
         if not hasattr(self, "_actual_slot_ids"):
             self._actual_slot_ids = actual_slot_ids
-        if not hasattr(self, "_chemqa_workspace_roots"):
-            self._chemqa_workspace_roots = CHEMQA_WORKSPACE_ROOTS
         return super()._candidate_protocol_dirs(run_id, run_status)
 
     def _build_candidate_submission_fallback(self, run_id: str, run_status: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
@@ -1532,6 +1671,19 @@ def count_per_record_outputs(output_root: Path, *, group_ids: list[str]) -> dict
     return counts
 
 
+def pending_records_for_group(
+    records: list[BenchmarkRecord],
+    *,
+    output_root: Path,
+    group_id: str,
+    merge_existing_per_record: bool,
+) -> list[BenchmarkRecord]:
+    if not merge_existing_per_record:
+        return list(records)
+    group_root = output_root / "per-record" / group_id
+    return [record for record in records if not (group_root / f"{slugify(record.record_id)}.json").is_file()]
+
+
 
 def load_group_record_result(path: Path) -> GroupRecordResult:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1782,6 +1934,7 @@ def run_group(
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str = DEFAULT_SINGLE_AGENT_THINKING,
     no_timeout: bool = False,
+    workspace_manager: AttemptWorkspaceManager | None = None,
     progress_writer: Any | None = None,
 ) -> list[GroupRecordResult]:
     try:
@@ -1807,6 +1960,7 @@ def run_group(
             single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
             single_agent_thinking=single_agent_thinking,
             no_timeout=no_timeout,
+            workspace_manager=workspace_manager,
             progress_writer=progress_writer,
             build_runner_fn=build_runner,
             evaluate_answer_fn=evaluate_answer,
@@ -1837,12 +1991,84 @@ def run_benchmark_web_search_preflight(
             else JUDGE_AGENT_ID
         )
         config_path = config_pool.config_for_group(group)
-        reports[group_id] = run_web_search_preflight(
-            agent_id=agent_id or JUDGE_AGENT_ID,
+        effective_agent_id = agent_id or JUDGE_AGENT_ID
+        identity = AttemptIdentity(
+            run_id=config_pool.workspace_manager.run_id,
+            invocation_id=config_pool.workspace_manager.invocation_id,
+            group_id=group.id,
+            runner_kind="web_search_preflight",
+            agent_id=effective_agent_id,
+            record_id="web-search-preflight",
+            attempt_index=0,
+            session_id=f"web-search-preflight-{uuid.uuid4().hex[:12]}",
+            template_id="single-llm-skills-on-v1"
+            if bool(getattr(group, "skills_enabled", False))
+            else "single-llm-skills-off-v1",
+        )
+        try:
+            lease = config_pool.workspace_manager.prepare(identity)
+        except WorkspaceIsolationError as exc:
+            reports[group_id] = {
+                "available": False,
+                "error": exc.message,
+                "workspace_isolation": {
+                    "preflight_ok": False,
+                    "archive_ok": False,
+                    "execution_error": dict(exc.details),
+                },
+            }
+            continue
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "BENCHMARK_WORKSPACE_DIR": str(lease.active_workspace),
+                "BENCHMARK_SKILL_SCRATCH_DIR": str(lease.scratch_dir),
+                "BENCHMARK_SKILL_REQUEST_DIR": str(lease.request_dir),
+                "BENCHMARK_SKILL_OUTPUT_DIR": str(lease.output_dir),
+                "BENCHMARK_SKILL_NOTES_DIR": str(lease.notes_dir),
+            }
+        )
+        report = run_web_search_preflight(
+            agent_id=effective_agent_id,
             config_path=config_path,
             current_python_path=current_python(),
             run_subprocess=run_subprocess,
+            base_env=environment,
         )
+        transcript_path = str(report.get("transcript_path") or "").strip()
+        contamination_audit = config_pool.workspace_manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": transcript_path}},
+            environment=environment,
+        )
+        isolation_meta = lease.to_meta()
+        isolation_meta.update(
+            {
+                "contaminated": contamination_audit.status == "contaminated",
+                "audit_status": contamination_audit.status,
+                "findings": [dict(finding) for finding in contamination_audit.findings],
+            }
+        )
+        if contamination_audit.status != "clean":
+            report["available"] = False
+            report["error"] = "web_search preflight workspace contamination audit failed"
+        try:
+            archive = config_pool.workspace_manager.seal(
+                lease,
+                AttemptOutcome(
+                    runner_status="completed" if report.get("available") is True else "failed",
+                    archive_reason="attempt_terminal",
+                    contamination_audit=contamination_audit,
+                ),
+            )
+            isolation_meta.update(archive.to_meta())
+        except WorkspaceIsolationError as exc:
+            isolation_meta["archive_ok"] = False
+            isolation_meta["archive_error"] = dict(exc.details)
+            report["available"] = False
+            report["error"] = exc.message
+        report["workspace_isolation"] = isolation_meta
+        reports[group_id] = report
     return {
         "enabled": True,
         "provider": "duckduckgo",
@@ -1905,6 +2131,28 @@ def main() -> int:
     else:
         output_root = Path(args.output_dir).expanduser().resolve() / f"benchmark-{now_stamp()}"
     ensure_dir(output_root)
+    run_id = output_root.name
+    invocation_id = str(uuid.uuid4())
+    workspace_manager = AttemptWorkspaceManager(
+        runtime_root=runtime_paths.benchmark_runtime_root / "runs",
+        output_root=output_root,
+        run_id=run_id,
+        invocation_id=invocation_id,
+        templates=default_workspace_templates(runtime_paths.project_root),
+    )
+    try:
+        workspace_startup_recovery = workspace_manager.recover_all_incomplete()
+    except WorkspaceIsolationError as exc:
+        raise BenchmarkError(f"Benchmark workspace startup recovery failed: {exc.message}") from exc
+    pending_records_by_group = {
+        group_id: pending_records_for_group(
+            records,
+            output_root=output_root,
+            group_id=group_id,
+            merge_existing_per_record=bool(args.merge_existing_per_record),
+        )
+        for group_id in group_ids
+    }
 
     skill_health_reports = check_all_skill_health(BENCHMARK_SKILLS_ALLOWLIST, workspace_root=runtime_paths.project_root)
     skill_health_summary = summarize_skill_health(skill_health_reports)
@@ -1917,13 +2165,16 @@ def main() -> int:
     config_pool = ConfigPool(
         base_config_path=Path(args.openclaw_config).expanduser().resolve(),
         output_root=output_root,
+        run_id=run_id,
+        invocation_id=invocation_id,
+        workspace_manager=workspace_manager,
         single_agent_model=args.single_agent_model,
         judge_model=args.judge_model,
         single_agent_id_override=args.single_agent_id_override,
         experiment_specs=effective_experiment_specs,
     )
     web_search_preflight = run_benchmark_web_search_preflight(
-        group_ids=group_ids,
+        group_ids=[group_id for group_id in group_ids if pending_records_by_group[group_id]],
         config_pool=config_pool,
         args=args,
     )
@@ -1933,11 +2184,12 @@ def main() -> int:
         timeout_seconds=args.judge_timeout,
         config_path=config_pool.judge_config_path(),
         thinking=args.judge_agent_thinking,
+        workspace_manager=workspace_manager,
     )
     group_waves = build_group_waves(group_ids, max_concurrent_groups=args.max_concurrent_groups)
     progress_writer = ProgressWriter(
         output_root,
-        total_records=len(records) * len(group_ids),
+        total_records=sum(len(group_records) for group_records in pending_records_by_group.values()),
         groups=group_ids,
     )
     progress_writer.run_started()
@@ -1958,6 +2210,10 @@ def main() -> int:
                 future_map = {}
                 for group_id in wave_group_ids:
                     group = EXPERIMENT_GROUPS[group_id]
+                    group_records = pending_records_by_group[group_id]
+                    if not group_records:
+                        group_results[group_id] = []
+                        continue
                     preflight_report = dict((web_search_preflight.get("reports") or {}).get(group_id) or {})
                     if group.websearch and preflight_report.get("available") is not True:
                         error_message = (
@@ -1966,14 +2222,14 @@ def main() -> int:
                         )
                         group_results[group_id] = materialize_group_failure_results(
                             group=group,
-                            records=records,
+                            records=group_records,
                             output_root=output_root,
                             error_message=error_message,
                         )
                         record_group_progress_failure(
                             progress_writer,
                             group_id=group_id,
-                            records=records,
+                            records=group_records,
                             error_message=error_message,
                         )
                         continue
@@ -1987,7 +2243,7 @@ def main() -> int:
                     future = executor.submit(
                         run_group,
                         group=group,
-                        records=records,
+                        records=group_records,
                         output_root=output_root,
                         single_timeout=args.single_timeout,
                         chemqa_timeout=args.chemqa_timeout,
@@ -2004,6 +2260,7 @@ def main() -> int:
                         single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
                         single_agent_thinking=args.single_agent_thinking,
                         no_timeout=bool(getattr(args, "no_timeout", False)),
+                        workspace_manager=workspace_manager,
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                         progress_writer=progress_writer,
@@ -2019,14 +2276,14 @@ def main() -> int:
                         error_message = f"Group `{group_id}` failed before returning results: {exc}"
                         group_results[group_id] = materialize_group_failure_results(
                             group=group,
-                            records=records,
+                            records=pending_records_by_group[group_id],
                             output_root=output_root,
                             error_message=error_message,
                         )
                         record_group_progress_failure(
                             progress_writer,
                             group_id=group_id,
-                            records=records,
+                            records=pending_records_by_group[group_id],
                             error_message=error_message,
                         )
             gc.collect()
@@ -2083,6 +2340,11 @@ def main() -> int:
             "backoff_seconds": list(single_timeout_retry_backoff_seconds),
         },
         "timeout_mode": timeout_mode,
+        "workspace_isolation": {
+            "schema_version": 1,
+            "run_id": run_id,
+            "invocation_id": invocation_id,
+        },
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
             "enabled": args.random_count_per_subset is not None,
@@ -2134,6 +2396,23 @@ def main() -> int:
             "backoff_seconds": list(single_timeout_retry_backoff_seconds),
         },
         "timeout_mode": timeout_mode,
+        "workspace_isolation": {
+            "schema_version": 1,
+            "run_id": run_id,
+            "invocation_id": invocation_id,
+            "runtime_runs_root": str(workspace_manager.runtime_root),
+            "runtime_workspace_root": str(workspace_manager.invocation_runtime_root),
+            "archive_root": str(workspace_manager.archive_root),
+            "quarantine_root": str(workspace_manager.quarantine_root),
+            "templates": workspace_manager.template_manifest(),
+            "startup_recovery": workspace_startup_recovery,
+            "legacy_workspace_paths_forbidden": [
+                str(runtime_paths.benchmark_runtime_root / "benchmark-single-skills-on"),
+                str(runtime_paths.benchmark_runtime_root / "benchmark-single-skills-off"),
+                str(runtime_paths.benchmark_runtime_root / "benchmark-judge"),
+                str(runtime_paths.benchmark_runtime_root / "custom-single-agent"),
+            ],
+        },
         "groups": {
             group_id: {
                 "group": asdict(EXPERIMENT_GROUPS[group_id]),
@@ -2151,6 +2430,9 @@ def main() -> int:
                 ),
                 "no_timeout": bool(getattr(args, "no_timeout", False)) if EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None,
                 "chemqa_model_profile": args.chemqa_model_profile if EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
+                "selected_record_count": len(records),
+                "pending_record_count": len(pending_records_by_group[group_id]),
+                "skipped_existing_record_count": len(records) - len(pending_records_by_group[group_id]),
             }
             for group_id in group_ids
         },

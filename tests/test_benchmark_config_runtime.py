@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from benchmarking.runtime.config import render_run_config
+from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, WorkspaceTemplate
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
@@ -29,6 +30,19 @@ class RuntimeConfigGroup:
 
 
 class BenchmarkConfigRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _workspace_manager(root: Path) -> AttemptWorkspaceManager:
+        template = root / "template"
+        template.mkdir(parents=True, exist_ok=True)
+        (template / "AGENTS.md").write_text("# test\n", encoding="utf-8")
+        return AttemptWorkspaceManager(
+            runtime_root=root / "managed-workspaces" / "runs",
+            output_root=root / "runs",
+            run_id="run-1",
+            invocation_id="invocation-1",
+            templates={"test-v1": WorkspaceTemplate(template_id="test-v1", source_dir=template)},
+        )
+
     def test_render_run_config_is_pure_and_does_not_mutate_base_payload(self) -> None:
         base = {
             "agents": {"list": []},
@@ -284,10 +298,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             context = RuntimeConfigContext(
-                baseline_workspace_root=root / "benchmark-runtime",
-                chemqa_workspace_roots={
-                    "A": root / "benchmark-runtime" / "chemqa_skills_on",
-                },
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
                 chemqa_slot_sets={"chemqa_skills_on": "A"},
@@ -302,7 +312,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                         skill_allowlist=("chem-calculator", "rdkit"),
                     )
                 },
-                load_slot_agents_template=lambda: "# slot template\n",
                 benchmark_skills_root=root / "workspace" / "skills",
             )
             base = {
@@ -324,6 +333,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 group=group,
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
+                workspace_manager=self._workspace_manager(root),
             )
 
             agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
@@ -332,48 +342,20 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual(["chem-calculator", "rdkit"], agents["benchmark-single-skills-on"]["skills"])
             self.assertIn(str((root / "workspace" / "skills").resolve()), payload["skills"]["load"]["extraDirs"])
             self.assertEqual(
-                str((root / "benchmark-runtime" / "benchmark-single-skills-on").resolve()),
+                str(
+                    self._workspace_manager(root).active_workspace_path(
+                        group_id="single_llm_skills_on",
+                        agent_id="benchmark-single-skills-on",
+                    )
+                ),
                 agents["benchmark-single-skills-on"]["workspace"],
             )
-            tools_md = root / "benchmark-runtime" / "benchmark-single-skills-on" / "TOOLS.md"
-            self.assertTrue(tools_md.is_file())
-            tools_text = tools_md.read_text(encoding="utf-8")
-            self.assertIn("Benchmark-managed TOOLS.md", tools_text)
-            self.assertIn('write {"path": "REQUEST_JSON_PATH", "content": "REQUEST_JSON_STRING"}', tools_text)
-            self.assertIn(
-                'exec {"command": "python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
-                '--workspace-root /Users/xutao/.openclaw/workspace --execution-cwd \\"$BENCHMARK_SKILL_SCRATCH_DIR\\" '
-                '--script SCRIPT_PATH -- --request-json REQUEST_JSON_PATH --output-dir OUTPUT_DIR --json"}',
-                tools_text,
-            )
-            self.assertIn("BENCHMARK_SKILL_SCRATCH_DIR", tools_text)
-            self.assertIn("REQUEST_JSON_PATH: an absolute path under the current scratch directory", tools_text)
-            self.assertIn("REQUEST_JSON_STRING: valid compact JSON", tools_text)
-            self.assertIn("SCRIPT_PATH: a real path like skills/<skill>/scripts/<script>.py", tools_text)
-            self.assertIn("OUTPUT_DIR: an absolute output directory under the current scratch directory", tools_text)
-            self.assertIn(".benchmark-scratch/<record>/<session_id>", tools_text)
-            self.assertNotIn("-- ...", tools_text)
-            self.assertNotIn("Common scripts", tools_text)
-            self.assertNotIn('--execution-cwd \\"$PWD\\"', tools_text)
-            self.assertIn("tool name must be exactly `exec`", tools_text)
-            self.assertIn("`python3`", tools_text)
-            self.assertIn("`script`", tools_text)
-            self.assertIn("`cmd`", tools_text)
-            self.assertIn("`command`", tools_text)
-            self.assertIn("`system-event-scheduler`", tools_text)
-            self.assertIn("`exec {}`", tools_text)
-            self.assertIn("direct `python skills/...", tools_text)
-            self.assertIn("pipes", tools_text)
-            self.assertIn("inline Python", tools_text)
-            self.assertIn("mark it blocked", tools_text)
-            self.assertFalse((root / "benchmark-runtime" / "benchmark-judge" / "TOOLS.md").exists())
+            self.assertFalse(Path(agents["benchmark-single-skills-on"]["workspace"]).exists())
 
     def test_build_run_scoped_config_payload_does_not_write_skill_exec_tools_md_for_skills_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             context = RuntimeConfigContext(
-                baseline_workspace_root=root / "benchmark-runtime",
-                chemqa_workspace_roots={},
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
                 chemqa_slot_sets={},
@@ -387,7 +369,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                         single_agent_id="benchmark-single-skills-off",
                     )
                 },
-                load_slot_agents_template=lambda: "# slot template\n",
                 benchmark_skills_root=root / "workspace" / "skills",
             )
             base = {
@@ -409,6 +390,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 group=group,
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
+                workspace_manager=self._workspace_manager(root),
             )
 
             tools_md = root / "benchmark-runtime" / "benchmark-single-skills-off" / "TOOLS.md"
@@ -418,10 +400,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             context = RuntimeConfigContext(
-                baseline_workspace_root=root / "benchmark-runtime",
-                chemqa_workspace_roots={
-                    "A": root / "benchmark-runtime" / "chemqa_skills_on",
-                },
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
                 chemqa_slot_sets={"chemqa_skills_on": "A"},
@@ -436,7 +414,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                         skill_allowlist=("chem-calculator", "rdkit"),
                     )
                 },
-                load_slot_agents_template=lambda: "# slot template\n",
                 benchmark_skills_root=root / "workspace" / "skills",
             )
             base = {
@@ -458,6 +435,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 group=group,
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
+                workspace_manager=self._workspace_manager(root),
             )
 
             agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
@@ -465,16 +443,13 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual("qwen3.5-plus", agents["debateA-5"]["model"])
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-coordinator"]["skills"])
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-5"]["skills"])
-            self.assertTrue((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / "AGENTS.md").is_file())
-            self.assertTrue((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / ".debateclaw-slot.json").is_file())
-            self.assertFalse((root / "benchmark-runtime" / "chemqa_skills_on" / "debateA-1" / "TOOLS.md").exists())
+            self.assertFalse(Path(agents["debateA-1"]["workspace"]).exists())
+            self.assertNotEqual(agents["debateA-1"]["workspace"], agents["debateA-2"]["workspace"])
 
     def test_build_run_scoped_config_payload_wraps_renderer_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             context = RuntimeConfigContext(
-                baseline_workspace_root=root / "benchmark-runtime",
-                chemqa_workspace_roots={},
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
                 chemqa_slot_sets={},
@@ -488,7 +463,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                         single_agent_id="benchmark-single-skills-on",
                     )
                 },
-                load_slot_agents_template=lambda: "# slot template\n",
                 benchmark_skills_root=root / "workspace" / "skills",
             )
             group = RuntimeConfigGroup(
@@ -506,6 +480,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                     group=group,
                     single_agent_model="qwen3.5-plus",
                     judge_model="su8/gpt-5.4",
+                    workspace_manager=self._workspace_manager(root),
                 )
 
     def test_config_pool_falls_back_to_openai_gpt_55(self) -> None:
@@ -523,8 +498,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = RuntimeConfigContext(
-                baseline_workspace_root=root / "benchmark-runtime",
-                chemqa_workspace_roots={},
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
                 chemqa_slot_sets={},
@@ -538,7 +511,6 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                         single_agent_id="benchmark-single-skills-on",
                     )
                 },
-                load_slot_agents_template=lambda: "# slot template\n",
                 benchmark_skills_root=root / "workspace" / "skills",
             )
             group = RuntimeConfigGroup(
@@ -549,13 +521,74 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 skills_enabled=True,
             )
 
-            pool = ConfigPool(base_config_path=base_config, output_root=root / "runs", context=context)
+            manager = self._workspace_manager(root)
+            pool = ConfigPool(
+                base_config_path=base_config,
+                output_root=root / "runs",
+                context=context,
+                run_id="run-1",
+                invocation_id="invocation-1",
+                workspace_manager=manager,
+            )
             config_path = pool.config_for_group(group)
             payload = json.loads(config_path.read_text(encoding="utf-8"))
 
             agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
             self.assertEqual("openai/gpt-5.5", agents["benchmark-single-skills-on"]["model"])
             self.assertEqual("openai/gpt-5.5", agents["benchmark-judge"]["model"])
+
+    def test_same_agent_override_remains_isolated_by_group_and_never_uses_legacy_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manager = self._workspace_manager(root)
+            specs = {
+                group_id: ExperimentSpec(
+                    id=group_id,
+                    label=group_id,
+                    runner_kind="single_llm",
+                    websearch_enabled=False,
+                    skills_enabled=group_id.endswith("on"),
+                    single_agent_id=f"default-{group_id}",
+                )
+                for group_id in ("single_llm_skills_on", "single_llm_skills_off")
+            }
+            context = RuntimeConfigContext(
+                agents_root=root / "agents",
+                judge_agent_id="benchmark-judge",
+                chemqa_slot_sets={},
+                experiment_specs=specs,
+                benchmark_skills_root=root / "workspace" / "skills",
+            )
+            base = {
+                "agents": {"list": []},
+                "tools": {"web": {"search": {"enabled": False}}},
+                "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
+            }
+            paths = []
+            for group_id in specs:
+                group = RuntimeConfigGroup(
+                    id=group_id,
+                    label=group_id,
+                    runner="single_llm",
+                    websearch=False,
+                    skills_enabled=group_id.endswith("on"),
+                )
+                payload = build_run_scoped_config_payload(
+                    base,
+                    context=context,
+                    group=group,
+                    single_agent_model="runner",
+                    judge_model="judge",
+                    workspace_manager=manager,
+                    single_agent_id_override="shared-agent",
+                )
+                agent = next(entry for entry in payload["agents"]["list"] if entry["id"] == "shared-agent")
+                paths.append(Path(agent["workspace"]))
+
+            self.assertNotEqual(paths[0], paths[1])
+            for path in paths:
+                self.assertTrue(str(path).startswith(str(manager.invocation_runtime_root)))
+                self.assertNotIn(str(root / "legacy"), str(path))
 
 
 if __name__ == "__main__":

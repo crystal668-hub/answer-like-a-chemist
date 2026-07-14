@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skill-root", default=str(Path(__file__).resolve().parents[1]), help="chemqa-review skill root")
     parser.add_argument("--team", required=True, help="Debate team / run id")
     parser.add_argument("--runtime-dir", help="Path to deployed DebateClaw runtime helpers")
+    parser.add_argument("--config-file", help="Run-scoped OpenClaw config used to resolve exact slot workspaces")
     parser.add_argument("--workspace-root", default=str(Path.home() / ".openclaw" / "debateclaw" / "workspaces"))
     parser.add_argument("--max-steps", type=int, default=40, help="Maximum reconcile/advance iterations")
     parser.add_argument("--max-respawns-per-role-phase-signature", type=int, default=1)
@@ -61,6 +62,8 @@ class RunRecoverer:
         self.debate_state_path = self.runtime_root / "debate_state.py"
         if not self.debate_state_path.is_file():
             raise SystemExit(f"Missing DebateClaw runtime helper: {self.debate_state_path}")
+        config_file = str(getattr(args, "config_file", "") or "").strip()
+        self.config_path = Path(config_file).expanduser().resolve() if config_file else None
         self.workspace_root = Path(args.workspace_root).expanduser().resolve()
         self.data_dir = os.environ.get("CLAWTEAM_DATA_DIR", "").strip()
         self.actions: list[str] = []
@@ -107,10 +110,6 @@ class RunRecoverer:
             candidate = str(command[index + 1] or "").strip()
             if candidate:
                 return candidate
-        for key in ("cwd", "workspace"):
-            candidate = str(entry.get(key) or "").strip()
-            if candidate:
-                return Path(candidate).name
         return ""
 
     @staticmethod
@@ -119,10 +118,46 @@ class RunRecoverer:
 
     def workspace_for(self, role: str) -> Path:
         registry = self.load_spawn_registry()
-        slot = self._slot_from_registry_entry(registry.get(role)) or self._fallback_slot_for_role(role)
-        path = self.workspace_root / slot
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        entry = registry.get(role)
+        if not isinstance(entry, dict):
+            raise RecoverError(f"Missing spawn registry entry for role `{role}`.")
+        workspace_root = self.workspace_root.expanduser().resolve()
+        for key in ("workspace", "cwd"):
+            candidate = str(entry.get(key) or "").strip()
+            if not candidate:
+                continue
+            workspace = Path(candidate).expanduser().resolve()
+            if workspace.parent != workspace_root:
+                raise RecoverError(
+                    f"Spawn registry workspace for role `{role}` is outside the configured workspace root: {workspace}"
+                )
+            if not workspace.is_dir():
+                raise RecoverError(f"Spawn registry workspace for role `{role}` does not exist: {workspace}")
+            return workspace
+        slot = self._slot_from_registry_entry(entry)
+        if not slot or self.config_path is None:
+            raise RecoverError(f"Spawn registry entry for role `{role}` does not record an exact workspace path.")
+        try:
+            config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RecoverError(f"Could not read run-scoped OpenClaw config: {self.config_path} ({exc})") from exc
+        agents = ((config.get("agents") or {}).get("list") or []) if isinstance(config, dict) else []
+        normalized_slot = slot.lower()
+        for agent in agents:
+            if not isinstance(agent, dict) or str(agent.get("id") or "").strip().lower() != normalized_slot:
+                continue
+            candidate = str(agent.get("workspace") or "").strip()
+            if not candidate:
+                break
+            workspace = Path(candidate).expanduser().resolve()
+            if workspace.parent != workspace_root:
+                raise RecoverError(
+                    f"Run-scoped config workspace for role `{role}` is outside the configured workspace root: {workspace}"
+                )
+            if not workspace.is_dir():
+                raise RecoverError(f"Run-scoped config workspace for role `{role}` does not exist: {workspace}")
+            return workspace
+        raise RecoverError(f"Run-scoped config does not record an exact workspace for slot `{slot}`.")
 
     def candidate_capture_path_for(self, role: str) -> Path:
         team_dir = self.team_dir()

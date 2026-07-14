@@ -79,6 +79,32 @@ def test_default_web_search_preflight_skips_all_experiment_groups(monkeypatch, t
     assert report["reports"] == {}
 
 
+def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> None:
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id=record_id,
+            dataset="demo",
+            source_file="/tmp/demo.jsonl",
+            prompt="Question?",
+            reference_answer="Answer",
+            eval_kind="generic_semantic",
+        )
+        for record_id in ("existing", "pending")
+    ]
+    existing = tmp_path / "per-record" / "single_llm_skills_on" / "existing.json"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("{}\n", encoding="utf-8")
+
+    pending = benchmarking_cli.pending_records_for_group(
+        records,
+        output_root=tmp_path,
+        group_id="single_llm_skills_on",
+        merge_existing_per_record=True,
+    )
+
+    assert [record.record_id for record in pending] == ["pending"]
+
+
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
     record = benchmarking_cli.BenchmarkRecord(
         record_id="record-1",

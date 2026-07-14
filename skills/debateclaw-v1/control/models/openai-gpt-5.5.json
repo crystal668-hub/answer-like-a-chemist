@@ -1,0 +1,13 @@
+{
+  "id": "openai-gpt-5.5",
+  "provider_ref": "openai",
+  "remote_model_id": "gpt-5.5",
+  "reasoning": true,
+  "input_modes": [
+    "text",
+    "image"
+  ],
+  "default_thinking": "high",
+  "max_output_tokens": 65536,
+  "notes": "OpenAI-responses GPT-5.5 model for chemqa-review roles."
+}

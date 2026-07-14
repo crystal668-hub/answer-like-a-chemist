@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from benchmarking.runtime.config import ConfigRenderError, render_run_config
 from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
     ensure_basic_agent_dirs,
-    provision_single_agent_skill_tools_md,
-    provision_slot_workspace,
 )
 
 
@@ -31,13 +30,10 @@ class RuntimeConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class RuntimeConfigContext:
-    baseline_workspace_root: Path
-    chemqa_workspace_roots: Mapping[str, Path]
     agents_root: Path
     judge_agent_id: str
     chemqa_slot_sets: Mapping[str, str]
     experiment_specs: Mapping[str, ExperimentSpec]
-    load_slot_agents_template: Callable[[], str]
     benchmark_skills_root: Path
 
 
@@ -108,11 +104,15 @@ def build_run_scoped_config_payload(
     group: ExperimentGroupLike,
     single_agent_model: str,
     judge_model: str,
+    workspace_manager: AttemptWorkspaceManager,
     single_agent_id_override: str | None = None,
 ) -> dict[str, Any]:
-    judge_workspace = context.baseline_workspace_root / context.judge_agent_id
+    judge_workspace = workspace_manager.active_workspace_path(
+        group_id="benchmark-judge-runtime",
+        agent_id=context.judge_agent_id,
+    )
     judge_agent_dir = context.agents_root / context.judge_agent_id / "agent"
-    ensure_basic_agent_dirs(judge_workspace, judge_agent_dir)
+    ensure_basic_agent_dirs(judge_agent_dir)
     judge = ProvisionedAgent(
         agent_id=context.judge_agent_id,
         workspace=judge_workspace,
@@ -145,9 +145,9 @@ def build_run_scoped_config_payload(
         agent_id = spec.resolve_single_agent_id(single_agent_id_override)
         if not agent_id:
             raise RuntimeConfigError(f"Experiment group `{group.id}` missing single-agent id in experiment spec.")
-        workspace = context.baseline_workspace_root / agent_id
+        workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=agent_id)
         agent_dir = context.agents_root / agent_id / "agent"
-        ensure_basic_agent_dirs(workspace, agent_dir)
+        ensure_basic_agent_dirs(agent_dir)
         runner_agents.append(
             ProvisionedAgent(
                 agent_id=agent_id,
@@ -172,25 +172,15 @@ def build_run_scoped_config_payload(
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
-        if single_spec.skills_enabled:
-            provision_single_agent_skill_tools_md(workspace)
         _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
         return payload
 
     slot_set = spec.slot_set or context.chemqa_slot_sets[group.id]
-    workspace_root = context.chemqa_workspace_roots[slot_set]
     slot_map = actual_slot_ids(slot_set)
-    agents_template_text = context.load_slot_agents_template()
     for actual_slot_id in slot_map.values():
-        workspace = workspace_root / actual_slot_id
+        workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=actual_slot_id)
         agent_dir = context.agents_root / actual_slot_id / "agent"
         ensure_basic_agent_dirs(agent_dir)
-        provision_slot_workspace(
-            workspace=workspace,
-            workspace_root=workspace_root,
-            slot_id=actual_slot_id,
-            agents_template_text=agents_template_text,
-        )
         runner_agents.append(
             ProvisionedAgent(
                 agent_id=actual_slot_id,
@@ -225,6 +215,9 @@ class ConfigPool:
         base_config_path: Path,
         output_root: Path,
         context: RuntimeConfigContext,
+        run_id: str,
+        invocation_id: str,
+        workspace_manager: AttemptWorkspaceManager,
         single_agent_model: str | None = None,
         judge_model: str | None = None,
         single_agent_id_override: str | None = None,
@@ -232,6 +225,11 @@ class ConfigPool:
         self.base_config_path = base_config_path
         self.output_root = output_root
         self.context = context
+        if workspace_manager.run_id != run_id or workspace_manager.invocation_id != invocation_id:
+            raise RuntimeConfigError("ConfigPool run/invocation identity does not match workspace manager scope.")
+        self.run_id = run_id
+        self.invocation_id = invocation_id
+        self.workspace_manager = workspace_manager
         self._payload = json.loads(base_config_path.read_text(encoding="utf-8"))
         self._config_dir = output_root / "runtime-config"
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -262,6 +260,7 @@ class ConfigPool:
             group=group,
             single_agent_model=self._single_agent_model,
             judge_model=self._judge_model,
+            workspace_manager=self.workspace_manager,
             single_agent_id_override=self._single_agent_id_override,
         )
         path = self._config_dir / f"{group.id}-openclaw.json"
@@ -279,6 +278,7 @@ class ConfigPool:
             group=judge_group,
             single_agent_model=self._single_agent_model,
             judge_model=self._judge_model,
+            workspace_manager=self.workspace_manager,
         )
         path = self._config_dir / "benchmark-judge-openclaw.json"
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

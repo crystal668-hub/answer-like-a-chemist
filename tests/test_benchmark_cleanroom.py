@@ -186,7 +186,16 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             session_id=session_id,
             pid=33881,
         )
-        self.assertGreater(len(lease_name), 240)
+        self.assertLessEqual(len(lease_name), runtime_lease.LEASE_FILENAME_MAX_CHARS)
+        self.assertIn("debate-coordinator", lease_name)
+        other_lease_name = runtime_lease.lease_filename_for_identity(
+            run_id=run_id,
+            role=role,
+            slot=slot,
+            session_id=session_id + "-retry",
+            pid=33881,
+        )
+        self.assertNotEqual(lease_name, other_lease_name)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / lease_name

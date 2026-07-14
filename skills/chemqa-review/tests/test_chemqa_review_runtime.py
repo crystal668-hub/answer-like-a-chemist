@@ -45,6 +45,7 @@ def load_module(path: Path, name: str):
 
 driver_module = load_module(SCRIPTS_DIR / "chemqa_review_openclaw_driver.py", "chemqa_review_openclaw_driver_test")
 debate_wrapper_module = load_module(DEBATECLAW_SCRIPTS_DIR / "openclaw_debate_agent.py", "openclaw_debate_agent_test")
+ensure_debate_module = load_module(DEBATECLAW_SCRIPTS_DIR / "ensure_openclaw_debate.py", "ensure_openclaw_debate_test")
 
 
 class TransportHelpersTest(unittest.TestCase):
@@ -400,6 +401,8 @@ class RecoverRunRespawnTest(unittest.TestCase):
             team = "chemqa-dead-coordinator"
             team_dir = data_dir / "teams" / team
             team_dir.mkdir(parents=True)
+            coordinator_workspace = root / "workspaces" / "debatea-coordinator-47cdea9b"
+            coordinator_workspace.mkdir(parents=True)
             (team_dir / "spawn_registry.json").write_text(
                 json.dumps(
                     {
@@ -407,6 +410,7 @@ class RecoverRunRespawnTest(unittest.TestCase):
                             "backend": "subprocess",
                             "pid": 999999,
                             "slot": "debateA-coordinator",
+                            "workspace": str(coordinator_workspace.resolve()),
                             "command": ["/bin/echo", "coordinator"],
                         }
                     }
@@ -445,7 +449,7 @@ class RecoverRunRespawnTest(unittest.TestCase):
             launch = launched[0]
             self.assertEqual(["/bin/echo", "coordinator"], launch["command"])
             self.assertEqual(
-                (root / "workspaces" / "debateA-coordinator").resolve(),
+                coordinator_workspace.resolve(),
                 Path(str(launch["cwd"])).resolve(),
             )
             self.assertEqual(recover_run.subprocess.STDOUT, launch["stderr"])
@@ -1073,6 +1077,53 @@ class DriverInitConfigPropagationTest(unittest.TestCase):
             self.assertEqual(config_path.resolve(), wrapper_probe.main_session_reset_config)
 
 
+class HashedSlotWorkspaceTest(unittest.TestCase):
+    def test_validate_slot_sentinel_accepts_hashed_workspace_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = Path(tmpdir) / "workspaces"
+            workspace = workspace_root / "debatea-1-36665e8c"
+            workspace.mkdir(parents=True)
+            (workspace / ".debateclaw-slot.json").write_text(
+                json.dumps(
+                    {
+                        "kind": "debateclaw-slot-workspace",
+                        "version": 1,
+                        "slot": "debateA-1",
+                        "workspace": str(workspace.resolve()),
+                        "workspace_root": str(workspace_root.resolve()),
+                        "last_session_id": "session-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            sentinel, resolved_root = debate_wrapper_module.validate_slot_sentinel(
+                workspace.resolve(),
+                slot="debateA-1",
+            )
+
+            self.assertEqual("debateA-1", sentinel["slot"])
+            self.assertEqual(workspace_root.resolve(), resolved_root)
+
+    def test_prepare_slot_workspace_accepts_hashed_workspace_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = Path(tmpdir) / "workspaces"
+            workspace = workspace_root / "debatea-1-36665e8c"
+
+            payload = ensure_debate_module.prepare_slot_workspace(
+                workspace,
+                slot_id="debateA-1",
+                workspace_root=workspace_root,
+                reset_markdown=False,
+                last_session_id="session-1",
+            )
+
+            sentinel = json.loads((workspace / ".debateclaw-slot.json").read_text(encoding="utf-8"))
+            self.assertEqual(str(workspace.resolve()), payload["workspace"])
+            self.assertEqual("debateA-1", sentinel["slot"])
+            self.assertEqual(str(workspace.resolve()), sentinel["workspace"])
+
+
 class ClawteamResolutionTest(unittest.TestCase):
     def test_resolve_clawteam_executable_falls_back_when_path_is_stripped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1538,7 +1589,7 @@ class OpenClawResolutionTest(unittest.TestCase):
                 (Path(tmpdir) / "sessions.json").write_text(
                     json.dumps(
                         {
-                            "agent:debatea-1:main": {
+                            "agent:debatea-1:explicit:chemqa-review-test-session": {
                                 "sessionId": "chemqa-review-test-session",
                                 "sessionFile": str(transcript_path),
                             }
@@ -1841,6 +1892,53 @@ class WorkerTimeoutSalvageTest(unittest.TestCase):
 
 
 class DriverRespawnTest(unittest.TestCase):
+    def test_respawn_role_uses_exact_hashed_workspace_from_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace_root = root / "workspaces"
+            workspace = workspace_root / "debatea-2-f29f9e10"
+            workspace.mkdir(parents=True)
+            team_dir = root / "team"
+            team_dir.mkdir()
+            driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
+            driver.args = argparse.Namespace(
+                team="chemqa-review-test-run",
+                respawn_cooldown_seconds=0,
+            )
+            driver.workspace_root = workspace_root.resolve()
+            driver.data_dir = ""
+            driver.last_respawn_attempt_at = {}
+            driver.last_respawn_events = []
+            driver.team_dir = lambda: team_dir
+            driver.load_spawn_registry = lambda: {}
+            saved_payloads: list[dict[str, object]] = []
+            driver.save_spawn_registry = lambda payload: saved_payloads.append(payload)
+            launched: list[dict[str, object]] = []
+
+            class FakePopen:
+                pid = 4242
+
+                def __init__(self, command, **kwargs) -> None:
+                    launched.append({"command": list(command), **kwargs})
+
+            entry = {
+                "slot": "debateA-2",
+                "workspace": str(workspace.resolve()),
+                "command": ["python3", "worker.py", "--slot", "debateA-2"],
+            }
+            with mock.patch.object(driver_module.subprocess, "Popen", FakePopen):
+                self.assertTrue(
+                    driver_module.ChemQAReviewDriver.respawn_role_from_registry(
+                        driver,
+                        "proposer-2",
+                        entry,
+                        reason="test",
+                    )
+                )
+
+            self.assertEqual(workspace.resolve(), Path(str(launched[0]["cwd"])).resolve())
+            self.assertEqual(str(workspace.resolve()), saved_payloads[0]["proposer-2"]["workspace"])
+
     def test_ensure_required_lanes_running_respawns_dead_actionable_reviewers(self) -> None:
         driver = driver_module.ChemQAReviewDriver.__new__(driver_module.ChemQAReviewDriver)
         driver.args = argparse.Namespace(team="chemqa-review-test-run", max_respawns_per_role_phase_signature=1)
@@ -2697,17 +2795,55 @@ class RecoveryInvocationTest(unittest.TestCase):
 
 
 class RecoverySlotMappingTest(unittest.TestCase):
-    def test_workspace_for_prefers_spawn_registry_slot_mapping(self) -> None:
+    def test_workspace_for_prefers_exact_hashed_spawn_registry_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_root:
             recoverer = recover_run.RunRecoverer.__new__(recover_run.RunRecoverer)
             recoverer.workspace_root = Path(workspace_root)
+            hashed_workspace = Path(workspace_root) / "debateb-2-0dba7fc1"
+            hashed_workspace.mkdir()
+            recoverer.load_spawn_registry = lambda: {
+                "proposer-2": {
+                    "workspace": str(hashed_workspace),
+                    "command": ["python3", "driver.py", "--slot", "debateB-2", "--team", "demo"],
+                }
+            }
+            path = recover_run.RunRecoverer.workspace_for(recoverer, "proposer-2")
+            self.assertEqual(hashed_workspace.resolve(), path)
+
+    def test_workspace_for_resolves_hashed_workspace_from_run_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace_root = root / "workspaces"
+            hashed_workspace = workspace_root / "debateb-2-0dba7fc1"
+            hashed_workspace.mkdir(parents=True)
+            config_path = root / "openclaw.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agents": {
+                            "list": [
+                                {
+                                    "id": "debateB-2",
+                                    "workspace": str(hashed_workspace.resolve()),
+                                }
+                            ]
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            recoverer = recover_run.RunRecoverer.__new__(recover_run.RunRecoverer)
+            recoverer.workspace_root = workspace_root.resolve()
+            recoverer.config_path = config_path.resolve()
             recoverer.load_spawn_registry = lambda: {
                 "proposer-2": {
                     "command": ["python3", "driver.py", "--slot", "debateB-2", "--team", "demo"],
                 }
             }
+
             path = recover_run.RunRecoverer.workspace_for(recoverer, "proposer-2")
-            self.assertEqual(Path(workspace_root) / "debateB-2", path)
+
+            self.assertEqual(hashed_workspace.resolve(), path)
 
     def test_debate_state_commands_prefer_virtualenv_python(self) -> None:
         original_virtual_env = os.environ.get("VIRTUAL_ENV")
@@ -2751,6 +2887,19 @@ class RecoveryScriptTest(unittest.TestCase):
             )
         return result.stdout
 
+    def write_spawn_registry(self, data_dir: str, team: str, role_workspaces: dict[str, Path]) -> None:
+        registry = {}
+        for role, workspace in role_workspaces.items():
+            slot = "debate-coordinator" if role == "debate-coordinator" else f"debate-{role.split('-')[-1]}"
+            registry[role] = {
+                "slot": slot,
+                "workspace": str(workspace.resolve()),
+                "cwd": str(workspace.resolve()),
+                "command": ["python3", "worker.py", "--slot", slot],
+            }
+        registry_path = Path(data_dir) / "teams" / team / "spawn_registry.json"
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
     def test_recover_review_round_submits_existing_formal_reviews(self) -> None:
         debate_state = load_module(DEBATE_STATE_PATH, "debate_state_for_recovery_tests")
         with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as workspace_root:
@@ -2792,6 +2941,11 @@ class RecoveryScriptTest(unittest.TestCase):
                 workspaces = Path(workspace_root)
                 for slot in ("debate-1", "debate-2", "debate-3", "debate-4", "debate-5"):
                     (workspaces / slot).mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {f"proposer-{index}": workspaces / f"debate-{index}" for index in range(1, 6)},
+                )
 
                 (workspaces / "debate-2" / transport.review_filename("proposer-1")).write_text(
                     """# Review\n\n**artifact_kind:** formal_review\n**phase:** review\n**reviewer_lane:** proposer-2\n**target_owner:** proposer-1\n**target_kind:** candidate_submission\n**verdict:** blocking\n\nreview_items:\n- severity: medium\n  finding: Missing literature support\ncounts_for_acceptance: true\nsynthetic: false\n""".strip(),
@@ -2861,6 +3015,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 proposal_path = workspaces / "debate-1" / transport.proposal_filename()
                 proposal_path.write_text(
                     "\n".join(
@@ -2921,6 +3080,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 capture_dir = Path(tmpdir) / "teams" / config.team_name / "artifacts" / "captures" / "proposer-1"
                 capture_dir.mkdir(parents=True, exist_ok=True)
                 capture_path = capture_dir / "proposal.captured.yaml"
@@ -2996,6 +3160,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 archive_dir = Path(tmpdir) / "teams" / config.team_name / "debate" / "artifacts" / "proposals" / "epoch-002"
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 archive_path = archive_dir / "proposer-1.md"
@@ -3117,6 +3286,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 capture_dir = Path(tmpdir) / "teams" / config.team_name / "artifacts" / "captures" / "proposer-1"
                 capture_dir.mkdir(parents=True, exist_ok=True)
                 capture_path = capture_dir / "proposal.captured.yaml"
@@ -3219,6 +3393,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 (workspaces / "debate-1" / transport.proposal_filename()).write_text(
                     prior_candidate_text,
                     encoding="utf-8",
@@ -3337,6 +3516,11 @@ class RecoveryScriptTest(unittest.TestCase):
 
                 workspaces = Path(workspace_root)
                 (workspaces / "debate-1").mkdir(parents=True, exist_ok=True)
+                self.write_spawn_registry(
+                    tmpdir,
+                    config.team_name,
+                    {"proposer-1": workspaces / "debate-1"},
+                )
                 rebuttal_path = workspaces / "debate-1" / transport.rebuttal_filename()
                 rebuttal_path.write_text(
                     "\n".join(
