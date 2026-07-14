@@ -654,6 +654,7 @@
   - Repo root stores live runtime state, backups, SQLite DBs, session logs, and generated artifacts beside source.
   - Optional dependencies listed in `pyproject.toml` may imply capabilities that do not actually exist in code.
   - Verifier-grounded dataset synchronization intentionally fails closed when the configured wheel, SHA256, runtime manifest, package version, or task inventory differs. A new verifier release therefore requires an explicit release-config update, isolated runtime install, dataset resync, and regression test run; silently falling back to a source checkout is forbidden.
+  - Benchmark runner agents still reuse fixed workspaces across runs and retain historical root files, `.benchmark-scratch` trees, and Git history. New session ids and per-session scratch paths do not prevent a later agent from reading those records. Attempt-scoped full-workspace rotation is specified but not implemented in `workspace/docs/superpowers/specs/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md`; formal benchmark runs remain exposed to local history contamination until that specification is implemented and verified.
 
 ## 7. Suggested Next Steps
 - Continue shrinking the package CLI:
@@ -665,5 +666,7 @@
 - Harden artifact and cleanup flows:
   - Continue reducing filename/path guessing in legacy ChemQA artifact recovery paths now that canonical Artifact Flow paths exist.
   - Centralize run manifest/session/process metadata contracts used by runners, drivers, cleanup, and single-LLM session-isolation audits.
+- Implement attempt-scoped benchmark agent workspace isolation:
+  - Follow `workspace/docs/superpowers/specs/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md` to replace fixed reusable runner workspaces with sentinel-guarded full-workspace rotation, per-attempt scratch, sealed full-workspace archive handoff, contamination audit, and fail-closed recovery for single-LLM, ChemQA, and judge agents.
 - Add clearer ownership boundaries:
   - Separate DebateClaw engine logic, ChemQA protocol logic, benchmark orchestration, and paper pipeline into smaller modules with fewer embedded subprocess wrappers.

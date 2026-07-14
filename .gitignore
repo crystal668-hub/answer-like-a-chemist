@@ -19,7 +19,15 @@ __pycache__/
 # Local notes and benchmark runtime outputs
 /memory/
 /state/
-/docs/
+/docs/*
+!/docs/archive/
+/docs/archive/*
+!/docs/archive/2026-05-09-single-llm-benchmark-blockers.md
+!/docs/superpowers/
+/docs/superpowers/*
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md
 /data/
 /benchmark-single-skills-on/
 /benchmark-runs/
