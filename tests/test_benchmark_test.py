@@ -175,7 +175,7 @@ print(json.dumps({{
         ]
 
         self.assertEqual(inventory_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertEqual(85, len(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST))
+        self.assertEqual(86, len(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST))
         self.assertIn("act-like-a-chemist", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("chem-calculator", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("pymatgen", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
