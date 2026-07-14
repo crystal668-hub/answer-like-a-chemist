@@ -65,6 +65,9 @@ def verifier_grounded_answer_schema_from_record(record: Any) -> dict[str, Any]:
     for verifier_config in candidates:
         if not isinstance(verifier_config, dict):
             continue
+        schema = verifier_config.get("answer_schema")
+        if isinstance(schema, dict):
+            return dict(schema)
         task = verifier_config.get("task")
         if not isinstance(task, dict):
             continue

@@ -2,6 +2,7 @@ import unittest
 
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.scoring.evaluators import (
+    EvaluationError,
     evaluate_chembench_open_ended,
     evaluate_frontierscience_olympiad,
     evaluate_frontierscience_research,
@@ -11,6 +12,7 @@ from benchmarking.scoring.evaluators import (
     extract_candidate_short_answer,
     parse_frontierscience_research_rubric,
     parse_superchem_option_answer,
+    run_verifier_grounded_evaluation,
     safe_json_extract,
 )
 
@@ -221,9 +223,13 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
             reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
             payload={
                 "verifier_grounded": {
-                    "source_repo": "/Users/xutao/verifier-grounded-benchmark",
-                    "task": {"task_id": "rdkit_logp_window_003"},
-                    "verifier_specs": [{"verifier_id": "rdkit_logp_v1"}],
+                    "release": {
+                        "package": "verifier-grounded-benchmark",
+                        "version": "0.1.1",
+                        "wheel_sha256": "pinned",
+                    },
+                    "track": "rdkit",
+                    "task_id": "rdkit_logp_window_003",
                 }
             },
         )
@@ -259,7 +265,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual(0.73, result.normalized_score)
         self.assertIsNone(result.passed)
         self.assertEqual("verifier_score", result.primary_metric)
-        self.assertEqual("script_verifier", result.details["method"])
+        self.assertEqual("isolated_wheel_api", result.details["method"])
         self.assertEqual("c1ccccc1", result.details["canonical_smiles"])
         self.assertEqual({"logp": 1.6866}, result.details["properties"])
 
@@ -271,7 +277,17 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
             reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
-            payload={"verifier_grounded": {"task": {"task_id": "rdkit_logp_window_003"}}},
+            payload={
+                "verifier_grounded": {
+                    "release": {
+                        "package": "verifier-grounded-benchmark",
+                        "version": "0.1.1",
+                        "wheel_sha256": "pinned",
+                    },
+                    "track": "rdkit",
+                    "task_id": "rdkit_logp_window_003",
+                }
+            },
         )
 
         def verifier_runner(*, record, answer_text):
@@ -299,6 +315,30 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertIsNone(result.passed)
         self.assertEqual("parse_error", result.details["failure_type"])
         self.assertEqual("missing final answer line", result.details["message"])
+
+    def test_verifier_grounded_rejects_record_task_mismatch_before_runtime(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit_qed_max_001",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Q",
+            reference_answer="No reference answer is exposed.",
+            payload={
+                "verifier_grounded": {
+                    "release": {
+                        "package": "verifier-grounded-benchmark",
+                        "version": "0.1.1",
+                        "wheel_sha256": "pinned",
+                    },
+                    "track": "rdkit",
+                    "task_id": "rdkit_sa_min_002",
+                }
+            },
+        )
+
+        with self.assertRaisesRegex(EvaluationError, "does not match record_id"):
+            run_verifier_grounded_evaluation(record=record, answer_text="FINAL ANSWER: CCO")
 
     def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
         judge = JudgeStub(

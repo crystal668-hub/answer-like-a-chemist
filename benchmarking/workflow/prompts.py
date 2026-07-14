@@ -75,6 +75,9 @@ def _verifier_grounded_answer_schema(record: BenchmarkRecord) -> dict[str, Any]:
     verifier_config = payload.get("verifier_grounded") or config.get("verifier_grounded") or {}
     if not isinstance(verifier_config, dict):
         return {}
+    direct_schema = verifier_config.get("answer_schema")
+    if isinstance(direct_schema, dict):
+        return direct_schema
     task = verifier_config.get("task") or {}
     if not isinstance(task, dict):
         return {}

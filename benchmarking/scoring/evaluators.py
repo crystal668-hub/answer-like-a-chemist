@@ -4,14 +4,15 @@ import json
 import math
 import os
 import re
-import subprocess
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Iterable
 
 from benchmarking.core.convergence import extract_final_answer_line
 from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.scoring.verifier_grounded_runtime import (
+    VerifierGroundedRuntimeError,
+    evaluate_answer,
+)
 
 
 NUMBER_RE = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
@@ -825,47 +826,26 @@ def _verifier_grounded_config(record: BenchmarkRecord) -> dict[str, Any]:
 
 def run_verifier_grounded_evaluation(*, record: BenchmarkRecord, answer_text: str) -> dict[str, Any]:
     config = _verifier_grounded_config(record)
-    source_repo = Path(str(config.get("source_repo") or "")).expanduser()
-    if not source_repo.is_dir():
-        raise EvaluationError(f"verifier_grounded source_repo does not exist: {source_repo}")
-
-    task = config.get("task")
-    verifier_specs = config.get("verifier_specs")
-    if not isinstance(task, dict):
-        raise EvaluationError("verifier_grounded config must include task object.")
-    if not isinstance(verifier_specs, list):
-        raise EvaluationError("verifier_grounded config must include verifier_specs list.")
-
-    script = (
-        "import json, sys\n"
-        "from benchmark.evaluate import evaluate_one\n"
-        "payload = json.load(sys.stdin)\n"
-        "task = payload['task']\n"
-        "specs = {spec['verifier_id']: spec for spec in payload['verifier_specs']}\n"
-        "answer = {'task_id': task['task_id'], 'response': payload['answer_text']}\n"
-        "print(json.dumps(evaluate_one(answer, {task['task_id']: task}, specs), ensure_ascii=False))\n"
-    )
-    completed = subprocess.run(
-        ["uv", "run", "--project", str(source_repo), "python", "-c", script],
-        input=json.dumps({"task": task, "verifier_specs": verifier_specs, "answer_text": answer_text}),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=float(config.get("timeout_seconds") or 120.0),
-        cwd=str(source_repo),
-    )
-    if completed.returncode != 0:
+    release = config.get("release")
+    track = str(config.get("track") or "").strip()
+    task_id = str(config.get("task_id") or "").strip()
+    if not isinstance(release, dict) or not track or not task_id:
         raise EvaluationError(
-            "verifier_grounded evaluator subprocess failed: "
-            f"{completed.stderr.strip() or completed.stdout.strip() or completed.returncode}"
+            "verifier_grounded config must include release, track, and task_id fields."
+        )
+    if task_id != record.record_id:
+        raise EvaluationError(
+            f"verifier_grounded task_id {task_id!r} does not match record_id {record.record_id!r}."
         )
     try:
-        result = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise EvaluationError(f"verifier_grounded evaluator produced invalid JSON: {exc.msg}") from exc
-    if not isinstance(result, dict):
-        raise EvaluationError("verifier_grounded evaluator produced a non-object result.")
-    return result
+        return evaluate_answer(
+            track=track,
+            task_id=task_id,
+            answer_text=answer_text,
+            release_identity=release,
+        )
+    except VerifierGroundedRuntimeError as exc:
+        raise EvaluationError(str(exc)) from exc
 
 
 def evaluate_verifier_grounded(
@@ -891,7 +871,7 @@ def evaluate_verifier_grounded(
         score = 0.0
     score = max(0.0, min(1.0, score))
     details = {
-        "method": "script_verifier",
+        "method": "isolated_wheel_api",
         "task_id": verifier_result.get("task_id"),
         "status": verifier_result.get("status"),
         "failure_type": verifier_result.get("failure_type"),

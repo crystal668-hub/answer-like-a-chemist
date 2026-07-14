@@ -123,12 +123,10 @@ class BenchmarkPromptsTests(unittest.TestCase):
             reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
             payload={
                 "verifier_grounded": {
-                    "task": {
-                        "answer_schema": {
-                            "format": "final_answer_line",
-                            "final_answer_prefix": "FINAL ANSWER:",
-                            "value_type": "smiles",
-                        },
+                    "answer_schema": {
+                        "format": "final_answer_line",
+                        "final_answer_prefix": "FINAL ANSWER:",
+                        "value_type": "smiles",
                     },
                 },
             },
@@ -150,13 +148,11 @@ class BenchmarkPromptsTests(unittest.TestCase):
             reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
             payload={
                 "verifier_grounded": {
-                    "task": {
-                        "answer_schema": {
-                            "format": "final_answer_block",
-                            "final_answer_prefix": "FINAL ANSWER:",
-                            "value_type": "xyz",
-                            "fence_language": "xyz",
-                        },
+                    "answer_schema": {
+                        "format": "final_answer_block",
+                        "final_answer_prefix": "FINAL ANSWER:",
+                        "value_type": "xyz",
+                        "fence_language": "xyz",
                     },
                 },
             },
@@ -199,10 +195,8 @@ class BenchmarkPromptsTests(unittest.TestCase):
             reference_answer="Verifier-grounded task; score is computed by local verifier scripts.",
             payload={
                 "verifier_grounded": {
-                    "task": {
-                        "task_id": "xtb_gap_window_001",
-                        "answer_schema": self.XYZ_ANSWER_SCHEMA,
-                    }
+                    "answer_schema": self.XYZ_ANSWER_SCHEMA,
+                    "task_id": "xtb_gap_window_001",
                 }
             },
         )

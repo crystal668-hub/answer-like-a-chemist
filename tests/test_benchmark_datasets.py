@@ -68,17 +68,18 @@ class BenchmarkDatasetsTests(unittest.TestCase):
             path = Path(tmpdir) / "verifier_grounded_rdkit" / "data" / "sample.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)
             verifier_config = {
-                "source_repo": "/Users/xutao/verifier-grounded-benchmark",
-                "task_set": "rdkit_baseline",
-                "task": {
-                    "task_id": "rdkit_logp_window_003",
-                    "answer_schema": {
-                        "format": "final_answer_line",
-                        "final_answer_prefix": "FINAL ANSWER:",
-                        "value_type": "smiles",
-                    },
+                "answer_schema": {
+                    "format": "final_answer_line",
+                    "final_answer_prefix": "FINAL ANSWER:",
+                    "value_type": "smiles",
                 },
-                "verifier_specs": [{"verifier_id": "rdkit_logp_v1"}],
+                "release": {
+                    "package": "verifier-grounded-benchmark",
+                    "version": "0.1.1",
+                    "wheel_sha256": "pinned",
+                },
+                "track": "rdkit",
+                "task_id": "rdkit_logp_window_003",
             }
             path.write_text(
                 json.dumps(
@@ -106,18 +107,19 @@ class BenchmarkDatasetsTests(unittest.TestCase):
             path = Path(tmpdir) / "verifier_grounded_xtb_xyz" / "data" / "sample.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)
             verifier_config = {
-                "source_repo": "/Users/xutao/verifier-grounded-benchmark",
-                "task_set": "xtb_xyz",
-                "task": {
-                    "task_id": "xtb_gap_window_001",
-                    "answer_schema": {
-                        "format": "final_answer_block",
-                        "final_answer_prefix": "FINAL ANSWER:",
-                        "value_type": "xyz",
-                        "fence_language": "xyz",
-                    },
+                "answer_schema": {
+                    "format": "final_answer_block",
+                    "final_answer_prefix": "FINAL ANSWER:",
+                    "value_type": "xyz",
+                    "fence_language": "xyz",
                 },
-                "verifier_specs": [{"verifier_id": "xtb_gap_gfn2_v1"}],
+                "release": {
+                    "package": "verifier-grounded-benchmark",
+                    "version": "0.1.1",
+                    "wheel_sha256": "pinned",
+                },
+                "track": "xtb",
+                "task_id": "xtb_gap_window_001",
                 "timeout_seconds": 540.0,
             }
             path.write_text(

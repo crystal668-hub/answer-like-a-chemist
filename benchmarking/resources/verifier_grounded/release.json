@@ -1,0 +1,70 @@
+{
+  "package": "verifier-grounded-benchmark",
+  "schema_version": 1,
+  "source_commit": "ae481b5ed8eab4207510b9027ad9c24e22839cf5",
+  "source_tag": "v0.1.1",
+  "sdist": {
+    "filename": "verifier_grounded_benchmark-0.1.1.tar.gz",
+    "sha256": "5a55461ef6ab7ee608ba0b6d068cac27640634c7bd1d8f70a52a33076df49e88"
+  },
+  "tracks": {
+    "property_calculation": {
+      "dataset": "verifier_grounded_property_calculation",
+      "task_count": 2,
+      "task_ids": [
+        "property_calc_free_energy_001",
+        "property_calc_crystal_phase_002"
+      ],
+      "timeout_seconds": 180.0
+    },
+    "rdkit": {
+      "dataset": "verifier_grounded_rdkit",
+      "task_count": 11,
+      "task_ids": [
+        "rdkit_qed_max_001",
+        "rdkit_sa_min_002",
+        "rdkit_logp_window_003",
+        "rdkit_tpsa_window_004",
+        "rdkit_hba_window_005",
+        "rdkit_hbd_window_006",
+        "rdkit_fsp3_max_007",
+        "rdkit_qed_sa_008",
+        "rdkit_logp_tpsa_009",
+        "rdkit_hba_hbd_010",
+        "rdkit_logp_target_011"
+      ],
+      "timeout_seconds": 180.0
+    },
+    "xtb": {
+      "dataset": "verifier_grounded_xtb_xyz",
+      "task_count": 18,
+      "task_ids": [
+        "xtb_gap_window_001",
+        "xtb_dipole_window_002",
+        "xtb_gap_max_003",
+        "xtb_gap_min_004",
+        "xtb_dipole_max_005",
+        "xtb_low_gap_high_dipole_opt_006",
+        "xtb_gap_dipole_window_007",
+        "xtb_lumo_min_008",
+        "xtb_polarizability_dipole_opt_009",
+        "xtb_solvation_selectivity_alpb_010",
+        "xtb_electrophilicity_max_011",
+        "xtb_fukui_carbon_site_012",
+        "xtb_hessian_thermo_stability_013",
+        "xtb_formula_dipole_min_014",
+        "xtb_two_fluorine_gap_min_015",
+        "xtb_c10_f2_gap_min_016",
+        "xtb_roy_singlepoint_energy_min_017",
+        "xtb_ritonavir_optimized_energy_min_018"
+      ],
+      "timeout_seconds": 1800.0
+    }
+  },
+  "version": "0.1.1",
+  "wheel": {
+    "filename": "verifier_grounded_benchmark-0.1.1-py3-none-any.whl",
+    "sha256": "1eb64265449f844e8a1b1d0b2cd6010ecb543ca239d1d8929c6fd9df5c935a05",
+    "size": 101483
+  }
+}
