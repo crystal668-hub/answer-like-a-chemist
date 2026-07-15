@@ -367,6 +367,43 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("clean", audit.status)
         self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
 
+    def test_workdir_fallback_tool_result_marks_attempt_contaminated(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        transcript = self.root / "workdir-fallback-transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "toolResult",
+                        "toolName": "exec",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    'Warning: workdir "/missing/attempt/output" is unavailable; '
+                                    f'using "{lease.active_workspace}".\n(Command exited with code 1)'
+                                ),
+                            }
+                        ],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        audit = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+        )
+
+        self.assertEqual("contaminated", audit.status)
+        self.assertEqual("workdir_fallback", audit.findings[0]["rule_id"])
+        self.assertEqual("/missing/attempt/output", audit.findings[0]["requested_workdir"])
+        self.assertEqual(str(lease.active_workspace), audit.findings[0]["fallback_workdir"])
+        self.manager.seal(lease, AttemptOutcome(runner_status="failed", contamination_audit=audit))
+
     def test_forbidden_path_audit_unavailable_fails_closed_contract(self) -> None:
         lease = self.manager.prepare(self._identity())
         audit = self.manager.audit_attempt(lease, {})

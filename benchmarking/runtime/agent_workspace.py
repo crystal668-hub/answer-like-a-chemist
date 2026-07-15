@@ -717,6 +717,9 @@ class AttemptWorkspaceManager:
                     )
                     if finding is not None:
                         findings.append(finding)
+                fallback_finding = _workdir_fallback_finding(payload)
+                if fallback_finding is not None:
+                    findings.append(fallback_finding)
         except Exception as exc:
             return ContaminationAudit(
                 status="unavailable",
@@ -1187,6 +1190,34 @@ def _tool_calls_from_transcript_payload(payload: Any) -> list[tuple[str, Any]]:
             continue
         calls.append((str(item.get("name") or ""), item.get("arguments")))
     return calls
+
+
+def _workdir_fallback_finding(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    message = payload.get("message")
+    if not isinstance(message, Mapping) or str(message.get("role") or "").lower() != "toolresult":
+        return None
+    tool_name = str(message.get("toolName") or "").strip().lower()
+    if tool_name not in {"exec", "execute", "shell", "bash", "command"}:
+        return None
+    content = message.get("content")
+    if not isinstance(content, list):
+        return None
+    for item in content:
+        if not isinstance(item, Mapping) or str(item.get("type") or "").lower() != "text":
+            continue
+        text = str(item.get("text") or "")
+        match = re.search(r'Warning: workdir "([^"]+)" is unavailable; using "([^"]+)"\.', text)
+        if match:
+            return {
+                "rule_id": "workdir_fallback",
+                "tool_name": tool_name,
+                "command_excerpt": _redact_text(text),
+                "requested_workdir": _redact_text(match.group(1)),
+                "fallback_workdir": _redact_text(match.group(2)),
+            }
+    return None
 
 
 def _expand_environment(text: str, environment: Mapping[str, str]) -> str:

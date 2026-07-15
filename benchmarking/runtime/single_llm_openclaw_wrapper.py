@@ -554,6 +554,16 @@ def _build_openclaw_command(
     return command
 
 
+def _benchmark_workspace_cwd(env: dict[str, str]) -> str | None:
+    workspace = str(env.get("BENCHMARK_WORKSPACE_DIR") or "").strip()
+    if not workspace:
+        return None
+    resolved = Path(workspace).expanduser().resolve()
+    if not resolved.is_dir():
+        raise SessionIsolationError(f"Benchmark workspace is unavailable: {resolved}")
+    return str(resolved)
+
+
 def _run_openclaw_with_time_reminder_tracking(
     command: list[str],
     *,
@@ -563,7 +573,14 @@ def _run_openclaw_with_time_reminder_tracking(
     timeout_seconds = int(getattr(args, "timeout", 0) or 0)
     start = time.monotonic()
     reminder_due = False
-    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(
+        command,
+        env=env,
+        cwd=_benchmark_workspace_cwd(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     while True:
         try:
             stdout, stderr = proc.communicate(timeout=TIME_REMINDER_POLL_SECONDS)
@@ -598,7 +615,14 @@ def run_openclaw(
     command = _build_openclaw_command(args, message_override=message_override, timeout_override=timeout_override)
     if message_override is None and timeout_override is None and _time_reminder_enabled(args):
         return _run_openclaw_with_time_reminder_tracking(command, args=args, env=env)
-    return subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        command,
+        env=env,
+        cwd=_benchmark_workspace_cwd(env),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _maybe_run_time_reminder(

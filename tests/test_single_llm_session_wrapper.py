@@ -34,6 +34,50 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn("Run single-LLM OpenClaw turns", completed.stdout)
 
+    def test_run_openclaw_uses_benchmark_workspace_as_process_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir).resolve()
+            args = argparse.Namespace(
+                agent="benchmark-single",
+                session_id="session-a",
+                message="Q",
+                thinking="",
+                timeout=0,
+                json=True,
+            )
+            completed = subprocess.CompletedProcess(["openclaw"], 0, stdout="{}", stderr="")
+
+            with mock.patch.object(wrapper, "resolve_openclaw_executable", return_value="openclaw"), \
+                mock.patch.object(wrapper.subprocess, "run", return_value=completed) as run_mock:
+                result = wrapper.run_openclaw(
+                    args,
+                    env={"BENCHMARK_WORKSPACE_DIR": str(workspace)},
+                    message_override="finalize",
+                )
+
+        self.assertIs(completed, result)
+        self.assertEqual(str(workspace), run_mock.call_args.kwargs["cwd"])
+
+    def test_run_openclaw_rejects_unavailable_benchmark_workspace(self) -> None:
+        args = argparse.Namespace(
+            agent="benchmark-single",
+            session_id="session-a",
+            message="Q",
+            thinking="",
+            timeout=0,
+            json=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing"
+            with mock.patch.object(wrapper, "resolve_openclaw_executable", return_value="openclaw"), \
+                self.assertRaises(wrapper.SessionIsolationError):
+                wrapper.run_openclaw(
+                    args,
+                    env={"BENCHMARK_WORKSPACE_DIR": str(missing)},
+                    message_override="finalize",
+                )
+
     def write_config(self, root: Path, *, model: str = "openai/gpt-5") -> Path:
         agent_dir = root / "agents" / "benchmark-single" / "agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -1971,12 +2015,19 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             def terminate(self) -> None:
                 killed["value"] = True
 
-        with mock.patch.object(wrapper.subprocess, "Popen", return_value=FakeProcess()), \
+        with tempfile.TemporaryDirectory() as tmpdir, \
+            mock.patch.object(wrapper.subprocess, "Popen", return_value=FakeProcess()) as popen_mock, \
             mock.patch.object(wrapper.time, "monotonic", side_effect=[0.0, 601.0, 650.0]), \
             mock.patch.object(wrapper.time, "sleep", return_value=None):
-            result = wrapper._run_openclaw_with_time_reminder_tracking(["openclaw"], args=fake_args, env={})
+            workspace = str(Path(tmpdir).resolve())
+            result = wrapper._run_openclaw_with_time_reminder_tracking(
+                ["openclaw"],
+                args=fake_args,
+                env={"BENCHMARK_WORKSPACE_DIR": workspace},
+            )
 
         self.assertFalse(killed["value"])
+        self.assertEqual(workspace, popen_mock.call_args.kwargs["cwd"])
         self.assertEqual(0, result.returncode)
         self.assertTrue(result.time_reminder_meta["due_before_primary_return"])
         self.assertEqual(650.0, result.time_reminder_meta["primary_elapsed_seconds"])
