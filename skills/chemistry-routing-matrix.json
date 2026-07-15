@@ -9,7 +9,7 @@
       "capability_domain": "protocol",
       "provider_role": "sop",
       "single_agent_exposure": true,
-      "route_summary": "Chemistry benchmark reasoning SOP: evidence ledger, provider trigger contract, candidate verification, numerical discipline, and source-sensitive answer tracing.",
+      "route_summary": "Optional chemistry reasoning workflow for evidence tracking, candidate verification, numerical discipline, and source-sensitive answer tracing.",
       "primary_triggers": [
         "chemistry benchmark",
         "chemistry question",

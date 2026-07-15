@@ -266,22 +266,36 @@ def lookup_skill_family(family_id: str) -> dict[str, Any]:
 
 
 def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str:
+    inventory_by_skill = {
+        str(entry["skill"]): entry
+        for entry in load_chemistry_skill_inventory().get("skills", [])
+        if entry.get("single_agent_exposure") is True
+    }
     lines = [
-        "Skill capability tree:",
-        "Read `act-like-a-chemist` first for the chemistry solving SOP and Atomic Coverage Checklist, then choose provider skills only when they help answer the record.",
-        "First choose a capability domain, then a skill family, then call a concrete skill only when it helps answer the record.",
+        "Chemistry skill catalog:",
+        "The catalog describes available capabilities; whether and how to use a skill is your choice.",
     ]
     if available_skills is None:
-        lines.append("All benchmark skills remain available; this tree is a discovery aid, not a router or allowlist filter.")
+        lines.append("All single-agent chemistry skills are listed below.")
     else:
-        lines.append("Only health-checked skills in this run are available; unavailable skills were omitted from the runtime allowlist.")
+        lines.append("Only health-checked skills available in this run are listed below.")
     for domain in SKILL_TREE:
-        families: list[str] = []
+        rendered_families: list[tuple[dict[str, Any], list[str]]] = []
         for family in domain["families"]:
-            family_skills = set(str(skill) for skill in family["skills"])
-            if available_skills is not None and not (family_skills & available_skills):
+            family_skills = [
+                str(skill)
+                for skill in family["skills"]
+                if available_skills is None or str(skill) in available_skills
+            ]
+            if not family_skills:
                 continue
-            families.append(f"`{family['id']}`")
-        if families:
-            lines.append(f"- `{domain['id']}`: {domain['label']} Families: {', '.join(families)}.")
+            rendered_families.append((family, family_skills))
+        if not rendered_families:
+            continue
+        lines.append(f"- Domain `{domain['id']}`: {domain['label']}")
+        for family, family_skills in rendered_families:
+            lines.append(f"  - Family `{family['id']}`: {family['label']}")
+            for skill in family_skills:
+                summary = str(inventory_by_skill.get(skill, {}).get("route_summary") or "").strip()
+                lines.append(f"    - `{skill}`: {summary}")
     return "\n".join(lines)

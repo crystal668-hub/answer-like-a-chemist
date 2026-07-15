@@ -1,11 +1,11 @@
 ---
 name: act-like-a-chemist
-description: Use when answering chemistry questions or source-sensitive chemistry tasks where structure, mechanism, calculation, literature, protocol, or evidence details can change the answer.
+description: Optional chemistry reasoning workflow for structure, mechanism, calculation, literature, protocol, and evidence-sensitive tasks.
 ---
 
 # Act Like A Chemist
 
-Use this skill first for chemistry questions. Solve as a careful chemist: track evidence, verify uncertain chemical claims, conserve atoms and charge, keep units explicit, and show enough of the reasoning path for the final answer to be auditable.
+This optional workflow supports careful chemistry reasoning: track evidence, verify uncertain chemical claims, conserve atoms and charge, keep units explicit, and show enough of the reasoning path for the final answer to be auditable.
 
 ## Non-Negotiables
 
@@ -19,7 +19,7 @@ Use this skill first for chemistry questions. Solve as a careful chemist: track 
 
 1. Identify the task type, answer format, structures, conditions, images, data tables, and external-source requirements.
 2. Write a compact Atomic Coverage Checklist using the relevant task template below. Split the solution path into atomic tasks, including known givens, formulas, unit conversions, intermediate values, mechanism steps, comparison classes, prompt constraints, and final-answer slots. Use `todo` until each atom is locally solved, `done` only after its derivation or evidence is complete, and `blocked` for atoms that cannot be resolved after bounded verification.
-3. Choose only the skills needed by referring to `contract/skill-triggers.md` to close concrete `todo` atoms for uncertain or high-impact subclaims. Before each tool call, name the exact atom it should inform and the expected output shape.
+3. If provider skills would help, use `contract/skill-triggers.md` as a capability reference for concrete `todo` atoms. Before each tool call, name the exact atom it should inform and the expected output shape.
 4. Solve step by step, checking conservation, units, structures, and source facts. After each tool result, classify what it does for the targeted atom: `supports`, `partially supports`, `contradicts`, or `only verifies an intermediate step`. Mark an atom `done` only after that exact task is satisfied; a useful tool result does not close neighboring atoms.
 5. Write a compact fact ledger for the important claims:
    - `given`: directly stated by the prompt or attached material.

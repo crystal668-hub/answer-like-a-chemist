@@ -1347,7 +1347,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_does_not_inject_skill_strategy_for_either_group(self) -> None:
+    def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1371,11 +1371,19 @@ Points: 0.5, Item: Second criterion
             input_bundle=None,
         )
 
-        self.assertEqual(skills_on, skills_off)
-        self.assertNotIn("Skill capability tree", skills_on)
-        self.assertNotIn("act-like-a-chemist", skills_on)
-        self.assertNotIn("paper-pipeline", skills_on)
-        self.assertNotIn("Do not use OpenClaw skills", skills_on)
+        self.assertIn("Chemistry skill catalog:", skills_on)
+        self.assertIn(
+            "The catalog describes available capabilities; whether and how to use a skill is your choice.",
+            skills_on,
+        )
+        self.assertIn("act-like-a-chemist", skills_on)
+        self.assertIn("paper-pipeline", skills_on)
+        self.assertTrue(skills_on.endswith(record.prompt))
+        self.assertEqual(record.prompt, skills_off)
+        for prompt in (skills_on, skills_off):
+            self.assertNotIn("Read act-like-a-chemist first", prompt)
+            self.assertNotIn("Atomic Coverage Checklist", prompt)
+            self.assertNotIn("Do not use OpenClaw skills", prompt)
 
     def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
         record = benchmark_test.BenchmarkRecord(
@@ -1397,10 +1405,12 @@ Points: 0.5, Item: Second criterion
         )
 
         self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("Chemistry skill catalog:", prompt)
+        self.assertIn("act-like-a-chemist", prompt)
         self.assertNotIn("Atomic Coverage Checklist", prompt)
-        self.assertNotIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Read act-like-a-chemist first", prompt)
         self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
-        self.assertIn("FINAL ANSWER", prompt)
+        self.assertNotIn("FINAL ANSWER", prompt)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []

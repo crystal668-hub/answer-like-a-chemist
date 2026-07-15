@@ -139,7 +139,7 @@ def test_experimental_matrix_entries_define_provider_inventory_contract() -> Non
     assert by_skill["act-like-a-chemist"]["capability_domain"] == "protocol"
     assert by_skill["act-like-a-chemist"]["provider_role"] == "sop"
     assert by_skill["act-like-a-chemist"]["single_agent_exposure"] is True
-    assert "provider trigger contract" in by_skill["act-like-a-chemist"]["route_summary"]
+    assert "Optional chemistry reasoning workflow" in by_skill["act-like-a-chemist"]["route_summary"]
     assert "mandatory verification triggers" not in by_skill["act-like-a-chemist"]["route_summary"].lower()
 
     expected_primary = {
@@ -222,10 +222,14 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
     assert "Core Workflow: OpenMM Simulation" not in tree
     assert "Installation and Setup" not in tree
     assert "first matching primary route" not in tree
-    assert len(tree.splitlines()) < 60
+    assert "Read `act-like-a-chemist` first" not in tree
+    assert "whether and how to use a skill is your choice" in tree
+    assert "`rdkit`" in tree
+    assert "`paper-retrieval`" in tree
+    assert len(tree.splitlines()) < 150
 
 
-def test_single_agent_prompt_does_not_inject_skill_tree() -> None:
+def test_single_agent_skills_on_prompt_exposes_neutral_skill_tree() -> None:
     from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.workflow.prompts import build_single_llm_prompt
 
@@ -240,11 +244,12 @@ def test_single_agent_prompt_does_not_inject_skill_tree() -> None:
 
     prompt = build_single_llm_prompt(record, websearch_enabled=False)
 
-    assert "Skill capability tree:" not in prompt
-    assert "act-like-a-chemist" not in prompt
+    assert "Chemistry skill catalog:" in prompt
+    assert "act-like-a-chemist" in prompt
     assert "Atomic Coverage Checklist" not in prompt
-    assert "materials-crystals" not in prompt
-    assert "paper-pipeline" not in prompt
+    assert "materials-crystals" in prompt
+    assert "paper-pipeline" in prompt
+    assert "Read `act-like-a-chemist` first" not in prompt
     assert "Organic mechanism SOP" not in prompt
     assert "Experimental chemistry skill routing rules" not in prompt
     assert "--workspace-root /Users/xutao/.openclaw/workspace" not in prompt
@@ -265,7 +270,7 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "## Benchmark Coverage Checklist" not in text
     assert "Atomic Coverage Checklist" in text
     assert "Standard Answering Flow" in text
-    assert "Choose only the skills needed by referring to `contract/skill-triggers.md`" in text
+    assert "If provider skills would help, use `contract/skill-triggers.md` as a capability reference" in text
     assert "all atoms are `done` or `blocked`" in text
     assert "`todo`" in text
     assert "`done`" in text
@@ -309,7 +314,7 @@ def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
 
     assert "Do not use OpenClaw skills" not in prompt
     assert "act-like-a-chemist" not in prompt
-    assert "Skill capability tree:" not in prompt
+    assert "Chemistry skill catalog:" not in prompt
     assert "tool name must be exactly `exec`" not in prompt
     assert "`python3` tool call" not in prompt
     assert "Organic mechanism SOP" not in prompt

@@ -13,6 +13,8 @@ INVENTORY_PATH = SKILL_PATH.parent.parent / "chemistry-routing-matrix.json"
 def test_act_like_a_chemist_defines_atomic_checklist_contract() -> None:
     text = SKILL_PATH.read_text(encoding="utf-8")
 
+    assert "This optional workflow" in text
+    assert "Use this skill first" not in text
     assert "Atomic Coverage Checklist" in text
     assert "atomic task" in text
     assert "known givens" in text
@@ -46,20 +48,25 @@ def test_act_like_a_chemist_links_provider_trigger_rules_contract() -> None:
 
     assert "## Mandatory Verification Triggers" not in text
     assert "contract/skill-triggers.md" in text
-    assert "Choose only the skills needed by referring to `contract/skill-triggers.md`" in text
+    assert (
+        "If provider skills would help, use `contract/skill-triggers.md` as a capability reference"
+        in text
+    )
     assert "Before each tool call, name the exact atom it should inform and the expected output shape" in text
 
 
-def test_provider_skill_trigger_rules_define_layered_routing_contract() -> None:
+def test_provider_skill_trigger_rules_define_neutral_capability_reference() -> None:
     text = TRIGGER_RULES_PATH.read_text(encoding="utf-8")
 
-    assert "# Provider Skill Trigger Rules" in text
+    assert "# Provider Skill Capability Reference" in text
     assert "## Purpose" in text
-    assert "## Capability Need First" in text
-    assert "## Primary Before Specialized" in text
-    assert "## Capability Routing Matrix" in text
+    assert "## Capability Areas" in text
+    assert "## Provider Choice" in text
+    assert "## Capability Reference" in text
+    assert "No provider order is mandatory" in text
+    assert "Primary Before Specialized" not in text
+    assert "Use the primary provider first" not in text
     assert "Mandatory Verification Triggers" not in text
-    assert "Every tool call must target a concrete Atomic Coverage Checklist atom" in text
     assert "An unexecuted skill is not evidence" in text
     assert not re.search(r"[\u4e00-\u9fff]", text)
 

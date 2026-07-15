@@ -4,6 +4,7 @@ import re
 from typing import Any, Protocol
 
 from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.skills.tree import render_top_level_skill_tree
 
 
 FORMULA_SIGNAL_RE = re.compile(
@@ -107,14 +108,11 @@ def build_single_llm_prompt(
     instructions: list[str] = []
     if isinstance(time_budget_seconds, int) and time_budget_seconds > 0:
         instructions.append(f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.")
+    if skills_enabled:
+        instructions.append(render_top_level_skill_tree(available_skills=available_skills))
 
     if record.eval_kind == "superchem_multiple_choice_rpf":
-        instructions.append("This is a chemistry multiple-choice question.")
-        instructions.append("Show visible option checks that distinguish the candidates, then end with exactly one line formatted as: FINAL ANSWER: <option letters>.")
-        instructions.append("Cover checkpoint-like reasoning: key structure, mechanism, stoichiometry, and elimination checks that support or reject the candidate options.")
-        instructions.append("If the gathered evidence is sufficient to distinguish the options, answer immediately instead of exploring more tools.")
-        instructions.append("Provider skills may be used when they directly distinguish candidate options, verify a key structure or mechanism, or resolve material uncertainty.")
-        instructions.append("Do not use provider skills to explore the skill tree, search for runners, or perform generic web/paper searches unrelated to the candidate options.")
+        instructions.append("End with exactly one line formatted as: FINAL ANSWER: <option letters>.")
         instructions.append("Use only uppercase option letters in the final answer; separate multiple correct letters with `|`.")
         if input_bundle is not None:
             instructions.append(f"Local file bundle: {input_bundle.bundle_dir}")
@@ -122,26 +120,13 @@ def build_single_llm_prompt(
             if input_bundle.image_files:
                 instructions.append("Inspect the local image files referenced in the bundle before answering.")
     elif record.eval_kind == "chembench_open_ended":
-        if _reference_is_numeric_scalar(record):
-            instructions.append("Show task-relevant formulas, substitutions, units, rounding, and checks, then end with exactly one line formatted as: FINAL ANSWER: <answer>.")
-        else:
-            instructions.append("Show minimal sufficient reasoning for the precise final string, structure, name, or count. Avoid adding irrelevant formulas, substitutions, or units.")
-            instructions.append("End with exactly one line formatted as: FINAL ANSWER: <answer>.")
-    elif record.eval_kind == "frontierscience_olympiad":
         instructions.append("End with exactly one line formatted as: FINAL ANSWER: <answer>.")
-        instructions.append("The final line should contain only the requested value, expression, formula, structure name, or entity, including required units or rounding.")
-        instructions.append("Do not provide multiple answer attempts.")
+    elif record.eval_kind == "frontierscience_olympiad":
+        pass
     elif record.eval_kind == "frontierscience_research":
-        instructions.append("This is a FrontierScience research-track chemistry task scored against itemized reasoning criteria.")
-        instructions.append("Provide a complete, structured response that covers every requested sub-question, condition, calculation, mechanism, protocol consequence, and conclusion.")
-        instructions.append("Use numbered sections or clear headings when the prompt has multiple parts.")
-        instructions.append("Include intermediate derivations, formulas, assumptions, units, and justifications needed for a rubric judge to award each point.")
-        instructions.append("Keep detailed multi-part reasoning before the final research section.")
-        instructions.append("Do not collapse the response to a short final answer, and do not replace the detailed response with a concise summary.")
         instructions.append("Do not add the short-answer final marker used by non-research tasks to FrontierScience research responses.")
-        instructions.append("End the response with this exact Markdown heading and section:")
+        instructions.append("End the response with this exact Markdown heading followed by the final synthesis:")
         instructions.append("## FINAL RESEARCH ANSWER")
-        instructions.append("<rubric-complete final synthesis>")
     elif record.eval_kind == "hle":
         instructions.append("Use the official HLE response format exactly:")
         instructions.append("Explanation: <your visible derivation and checks>")
@@ -157,13 +142,9 @@ def build_single_llm_prompt(
             instructions.append(f"Read the question bundle file first: {input_bundle.question_markdown}")
             if input_bundle.image_files:
                 instructions.append("Inspect the local image files referenced in the bundle before answering.")
-    elif record.eval_kind == "verifier_grounded":
-        prefix = "\n".join(instructions)
-        return (prefix + "\n\n" if prefix else "") + record.prompt.strip()
-    else:
-        instructions.append("Provide a complete answer. If you include a final answer line, use: FINAL ANSWER: <answer>.")
 
-    return "\n".join(instructions) + "\n\nQUESTION:\n" + record.prompt.strip()
+    prefix = "\n".join(instructions)
+    return (prefix + "\n\n" if prefix else "") + record.prompt.strip()
 
 
 def build_chemqa_goal(

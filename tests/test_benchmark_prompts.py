@@ -132,11 +132,14 @@ class BenchmarkPromptsTests(unittest.TestCase):
             },
         )
 
-        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+        skills_on = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+        skills_off = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=False)
 
-        self.assertEqual(record.prompt, prompt)
-        self.assertNotIn("deterministic local verifier scripts", prompt)
-        self.assertNotIn("single valid candidate", prompt)
+        self.assertTrue(skills_on.endswith(record.prompt))
+        self.assertIn("Chemistry skill catalog:", skills_on)
+        self.assertEqual(record.prompt, skills_off)
+        self.assertNotIn("deterministic local verifier scripts", skills_on)
+        self.assertNotIn("single valid candidate", skills_on)
 
     def test_verifier_grounded_xyz_prompt_does_not_inject_fenced_block_schema(self) -> None:
         record = BenchmarkRecord(
@@ -158,7 +161,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
             },
         )
 
-        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
+        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=False)
 
         self.assertEqual(record.prompt, prompt)
         self.assertNotIn("<XYZ content>", prompt)
@@ -188,9 +191,9 @@ class BenchmarkPromptsTests(unittest.TestCase):
         )
 
         expected = "Time budget: 900 seconds for the whole answer attempt.\n\n" + record.prompt
-        self.assertEqual(expected, skills_on)
+        self.assertTrue(skills_on.endswith(record.prompt))
+        self.assertIn("Chemistry skill catalog:", skills_on)
         self.assertEqual(expected, skills_off)
-        self.assertNotIn("act-like-a-chemist", skills_on)
         self.assertNotIn("deterministic local verifier scripts", skills_on)
 
     def test_verifier_grounded_candidate_contract_requires_final_answer_marker(self) -> None:
@@ -283,7 +286,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertTrue(result.valid)
         self.assertTrue(result.details["has_complete_answer_for_eval"])
 
-    def test_single_llm_prompt_does_not_inject_skill_strategy_guidance(self) -> None:
+    def test_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -297,10 +300,12 @@ class BenchmarkPromptsTests(unittest.TestCase):
         skills_on = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
         skills_off = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
 
-        self.assertEqual(skills_on, skills_off)
+        self.assertIn("Chemistry skill catalog:", skills_on)
+        self.assertIn("act-like-a-chemist", skills_on)
+        self.assertTrue(skills_on.endswith(record.prompt))
+        self.assertEqual(record.prompt, skills_off)
         for forbidden in (
-            "Skill capability tree",
-            "act-like-a-chemist",
+            "Read `act-like-a-chemist` first",
             "Atomic Coverage Checklist",
             "Tool results only close",
             "Do not use OpenClaw skills",
@@ -343,12 +348,13 @@ class BenchmarkPromptsTests(unittest.TestCase):
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True, time_budget_seconds=900)
 
         self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("Chemistry skill catalog:", prompt)
         self.assertNotIn("Coverage Checklist", prompt)
-        self.assertNotIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Read `act-like-a-chemist` first", prompt)
         self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
         self.assertNotIn("include enough visible checks for grading", prompt)
 
-    def test_superchem_prompt_requires_visible_option_checks_without_skill_call_cap(self) -> None:
+    def test_superchem_prompt_keeps_only_minimal_output_format(self) -> None:
         record = BenchmarkRecord(
             record_id="superchem-1",
             dataset="superchem",
@@ -360,15 +366,13 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
 
-        self.assertIn("option checks", prompt)
         self.assertIn("FINAL ANSWER: <option letters>", prompt)
-        self.assertIn("If the gathered evidence is sufficient to distinguish the options, answer immediately", prompt)
-        self.assertIn("Provider skills may be used when they directly distinguish candidate options", prompt)
-        self.assertNotIn("Show concise reasoning", prompt)
-        self.assertNotIn("at most one", prompt.lower())
-        self.assertNotIn("max one", prompt.lower())
+        self.assertNotIn("option checks", prompt)
+        self.assertNotIn("checkpoint-like", prompt)
+        self.assertNotIn("Provider skills may be used", prompt)
+        self.assertNotIn("This is a chemistry multiple-choice question", prompt)
 
-    def test_superchem_prompt_targets_checkpoint_rpf(self) -> None:
+    def test_superchem_prompt_keeps_option_encoding(self) -> None:
         record = BenchmarkRecord(
             record_id="superchem-1",
             dataset="superchem",
@@ -380,12 +384,10 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
 
-        self.assertIn("checkpoint-like", prompt)
-        self.assertIn("key structure, mechanism, stoichiometry, and elimination checks", prompt)
         self.assertIn("Use only uppercase option letters", prompt)
         self.assertIn("separate multiple correct letters with `|`", prompt)
 
-    def test_chembench_prompt_distinguishes_numeric_and_exact_answers(self) -> None:
+    def test_chembench_prompt_uses_same_minimal_output_format_for_all_answers(self) -> None:
         numeric_record = BenchmarkRecord(
             record_id="chembench-numeric",
             dataset="chembench",
@@ -408,11 +410,13 @@ class BenchmarkPromptsTests(unittest.TestCase):
         numeric_prompt = build_single_llm_prompt(numeric_record, websearch_enabled=True, skills_enabled=True)
         exact_prompt = build_single_llm_prompt(exact_record, websearch_enabled=True, skills_enabled=True)
 
-        self.assertIn("formulas, substitutions, units, rounding", numeric_prompt)
-        self.assertIn("precise final string, structure, name, or count", exact_prompt)
-        self.assertIn("Avoid adding irrelevant formulas", exact_prompt)
+        for prompt in (numeric_prompt, exact_prompt):
+            self.assertIn("FINAL ANSWER: <answer>", prompt)
+            self.assertNotIn("formulas, substitutions, units, rounding", prompt)
+            self.assertNotIn("precise final string, structure, name, or count", prompt)
+            self.assertNotIn("Avoid adding irrelevant formulas", prompt)
 
-    def test_single_llm_prompt_specializes_frontierscience_research(self) -> None:
+    def test_single_llm_prompt_keeps_only_frontierscience_research_output_format(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-research",
             dataset="frontierscience",
@@ -425,30 +429,27 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
 
-        self.assertIn("research-track", prompt)
-        self.assertIn("itemized reasoning criteria", prompt)
-        self.assertIn("every requested sub-question", prompt)
-        self.assertIn("Do not collapse", prompt)
         self.assertIn("## FINAL RESEARCH ANSWER", prompt)
-        self.assertIn("<rubric-complete final synthesis>", prompt)
         self.assertNotIn("FINAL ANSWER:", prompt)
-        self.assertNotIn("concise answer summary", prompt)
+        self.assertNotIn("research-track", prompt)
+        self.assertNotIn("itemized reasoning criteria", prompt)
+        self.assertNotIn("every requested sub-question", prompt)
+        self.assertNotIn("Do not collapse", prompt)
 
-    def test_frontierscience_olympiad_final_answer_is_exact_short_target(self) -> None:
+    def test_frontierscience_olympiad_uses_official_prompt_without_repetition(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-olympiad",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="frontierscience_olympiad",
-            prompt="Calculate the pH.",
+            prompt="Calculate the pH.\n\nEnd with FINAL ANSWER: <answer>.",
             reference_answer="4.7",
             payload={"track": "olympiad"},
         )
 
-        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
+        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
 
-        self.assertIn("The final line should contain only the requested value, expression, formula, structure name, or entity", prompt)
-        self.assertIn("Do not provide multiple answer attempts", prompt)
+        self.assertEqual(record.prompt, prompt)
 
     def test_chemqa_goal_specializes_frontierscience_research(self) -> None:
         record = BenchmarkRecord(

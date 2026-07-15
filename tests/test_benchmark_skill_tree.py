@@ -61,14 +61,15 @@ def test_skill_tree_has_three_layers_and_paper_pipeline_family() -> None:
     assert "xtb-cli" in family["skills"]
 
 
-def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
+def test_top_level_skill_tree_is_a_neutral_full_catalog() -> None:
     rendered = render_top_level_skill_tree()
+    inventory = load_chemistry_skill_inventory()
 
-    assert "Skill capability tree" in rendered
-    assert "Read `act-like-a-chemist` first" in rendered
-    assert "Atomic Coverage Checklist" in rendered
+    assert "Chemistry skill catalog" in rendered
+    assert "whether and how to use a skill is your choice" in rendered
+    assert "Read `act-like-a-chemist` first" not in rendered
+    assert "Atomic Coverage Checklist" not in rendered
     assert "Benchmark Coverage Checklist" not in rendered
-    assert "First choose a capability domain" in rendered
     assert "benchmark-solving-protocol" not in rendered
     assert "skills/benchmark-solving-protocol" not in rendered
     assert "chemist-sop" in rendered
@@ -99,19 +100,25 @@ def test_top_level_skill_tree_is_compact_and_not_a_router() -> None:
     assert "If you skip" not in rendered
     assert "find run_skill" not in rendered.lower()
     assert "python3 <skill-root>" not in rendered
-    assert "`chem-calculator`" not in rendered
-    assert "`rdkit`" not in rendered
-    assert "`paper-retrieval`" not in rendered
+    for entry in inventory["skills"]:
+        if entry["single_agent_exposure"] is True:
+            assert f"`{entry['skill']}`" in rendered
+            assert entry["route_summary"] in rendered
     for runtime_skill in RUNTIME_OR_ORCHESTRATION_SKILLS:
         assert runtime_skill not in rendered
-    assert len(rendered.splitlines()) < 60
+    assert len(rendered.splitlines()) < 150
 
 
 def test_top_level_skill_tree_reflects_health_filtered_availability() -> None:
     rendered = render_top_level_skill_tree(available_skills={"act-like-a-chemist", "rdkit", "paper-access"})
 
-    assert "Only health-checked skills in this run are available" in rendered
+    assert "Only health-checked skills available in this run are listed below" in rendered
     assert "benchmark-solving-protocol" not in rendered
     assert "chemist-sop" in rendered
     assert "molecular-structure-identity" in rendered
     assert "literature-evidence" in rendered
+    assert "`act-like-a-chemist`" in rendered
+    assert "`rdkit`" in rendered
+    assert "`paper-access`" in rendered
+    assert "`chem-calculator`" not in rendered
+    assert "`paper-retrieval`" not in rendered
