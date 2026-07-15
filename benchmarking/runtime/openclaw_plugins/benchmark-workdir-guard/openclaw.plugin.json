@@ -1,0 +1,23 @@
+{
+  "id": "benchmark-workdir-guard",
+  "name": "Benchmark Workdir Guard",
+  "description": "Blocks invalid explicit exec workdirs before benchmark commands run.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "agentWorkspaces"
+    ],
+    "properties": {
+      "agentWorkspaces": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

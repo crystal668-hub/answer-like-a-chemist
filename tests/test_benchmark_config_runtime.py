@@ -12,6 +12,8 @@ from benchmarking.runtime.provisioning import (
     provision_slot_workspace,
 )
 from benchmarking.runtime.config_pool import (
+    BENCHMARK_WORKDIR_GUARD_PLUGIN_ID,
+    BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT,
     ConfigPool,
     RuntimeConfigContext,
     RuntimeConfigError,
@@ -341,6 +343,18 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
             self.assertEqual(["chem-calculator", "rdkit"], agents["benchmark-single-skills-on"]["skills"])
             self.assertIn(str((root / "workspace" / "skills").resolve()), payload["skills"]["load"]["extraDirs"])
+            self.assertIn(
+                str(BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT.resolve()),
+                payload["plugins"]["load"]["paths"],
+            )
+            guard = payload["plugins"]["entries"][BENCHMARK_WORKDIR_GUARD_PLUGIN_ID]
+            self.assertIs(guard["enabled"], True)
+            self.assertEqual(
+                {
+                    "benchmark-single-skills-on": agents["benchmark-single-skills-on"]["workspace"],
+                },
+                guard["config"]["agentWorkspaces"],
+            )
             self.assertEqual(
                 str(
                     self._workspace_manager(root).active_workspace_path(
@@ -445,6 +459,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-5"]["skills"])
             self.assertFalse(Path(agents["debateA-1"]["workspace"]).exists())
             self.assertNotEqual(agents["debateA-1"]["workspace"], agents["debateA-2"]["workspace"])
+            self.assertNotIn(BENCHMARK_WORKDIR_GUARD_PLUGIN_ID, payload["plugins"]["entries"])
 
     def test_build_run_scoped_config_payload_wraps_renderer_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -136,6 +136,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         first_prompt = self._message_from_command(captured_commands[0])
         self.assertIn("BASE PROMPT", first_prompt)
         self.assertIn("BENCHMARK SCRATCH DIRECTORY", first_prompt)
+        self.assertIn("Do not set exec.workdir", first_prompt)
+        self.assertIn('cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&', first_prompt)
         retry_prompt = self._message_from_command(captured_commands[1])
         self.assertIn("BASE PROMPT", retry_prompt)
         self.assertNotIn("RETRY FOCUS GUIDANCE", retry_prompt)
@@ -153,6 +155,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(2, len(captured_commands))
         self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[0]))
         self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[0]))
+        self.assertIn("Do not set exec.workdir", self._message_from_command(captured_commands[0]))
+        self.assertIn('cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&', self._message_from_command(captured_commands[0]))
         self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[1]))
         self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[1]))
         for environment in captured_envs:

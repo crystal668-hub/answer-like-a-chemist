@@ -715,6 +715,10 @@ class SingleLLMRunner:
                 f"- Use this absolute directory for all request files, outputs, downloads, generated structures, temporary scripts, and notes: {scratch_dir}",
                 f"- Request files must be written under: {request_dir}",
                 f"- Output directories must be created under: {output_dir}",
+                "- Do not set exec.workdir or manually reconstruct benchmark absolute paths.",
+                '  Begin every exec command with: cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&',
+                "- Create and enter child directories in the same command before using them, for example:",
+                '  mkdir -p "$BENCHMARK_SKILL_OUTPUT_DIR/<name>" && cd "$BENCHMARK_SKILL_OUTPUT_DIR/<name>" && <command>',
                 "- Do not write benchmark exploration artifacts in the workspace root.",
             ]
         )

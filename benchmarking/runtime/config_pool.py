@@ -28,6 +28,12 @@ class RuntimeConfigError(RuntimeError):
     pass
 
 
+BENCHMARK_WORKDIR_GUARD_PLUGIN_ID = "benchmark-workdir-guard"
+BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT = (
+    Path(__file__).resolve().parent / "openclaw_plugins" / BENCHMARK_WORKDIR_GUARD_PLUGIN_ID
+)
+
+
 @dataclass(frozen=True)
 class RuntimeConfigContext:
     agents_root: Path
@@ -95,6 +101,38 @@ def _ensure_benchmark_skills_extra_dir(payload: dict[str, Any], skills_root: Pat
     normalized = str(skills_root.resolve())
     if normalized not in extra_dirs:
         extra_dirs.append(normalized)
+
+
+def _enable_benchmark_workdir_guard(
+    payload: dict[str, Any],
+    *,
+    runner_agents: tuple[ProvisionedAgent, ...],
+) -> None:
+    plugins = payload.setdefault("plugins", {})
+    load = plugins.setdefault("load", {})
+    paths = load.setdefault("paths", [])
+    if not isinstance(paths, list):
+        raise RuntimeConfigError("OpenClaw config plugins.load.paths is not a list")
+    plugin_root = str(BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT.resolve())
+    if plugin_root not in paths:
+        paths.append(plugin_root)
+
+    allow = plugins.get("allow")
+    if isinstance(allow, list) and BENCHMARK_WORKDIR_GUARD_PLUGIN_ID not in allow:
+        allow.append(BENCHMARK_WORKDIR_GUARD_PLUGIN_ID)
+
+    entries = plugins.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        raise RuntimeConfigError("OpenClaw config plugins.entries is not an object")
+    entries[BENCHMARK_WORKDIR_GUARD_PLUGIN_ID] = {
+        "enabled": True,
+        "config": {
+            "agentWorkspaces": {
+                agent.agent_id: str(agent.workspace.resolve())
+                for agent in runner_agents
+            }
+        },
+    }
 
 
 def build_run_scoped_config_payload(
@@ -173,6 +211,7 @@ def build_run_scoped_config_payload(
             runner_model=single_agent_model,
         )
         _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+        _enable_benchmark_workdir_guard(payload, runner_agents=tuple(runner_agents))
         return payload
 
     slot_set = spec.slot_set or context.chemqa_slot_sets[group.id]

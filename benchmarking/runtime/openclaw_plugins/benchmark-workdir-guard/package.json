@@ -1,0 +1,11 @@
+{
+  "name": "openclaw-benchmark-workdir-guard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}
