@@ -933,7 +933,9 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(2, run_mock.call_count)
         rescue_kwargs = run_mock.call_args_list[1].kwargs
-        self.assertIn("FINAL ANSWER:\n```xyz\n<XYZ content>\n```", rescue_kwargs["message_override"])
+        self.assertIn("exact final answer format requested in the original question", rescue_kwargs["message_override"])
+        self.assertNotIn("<XYZ content>", rescue_kwargs["message_override"])
+        self.assertNotIn("deterministic local verifier scripts", rescue_kwargs["message_override"])
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
         self.assertEqual(rescue_text, result["payloads"][0]["text"])

@@ -1347,7 +1347,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_injects_skill_tree_only_when_enabled(self) -> None:
+    def test_build_single_llm_prompt_does_not_inject_skill_strategy_for_either_group(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1371,18 +1371,13 @@ Points: 0.5, Item: Second criterion
             input_bundle=None,
         )
 
-        self.assertIn("Skill capability tree", skills_on)
-        self.assertIn("First choose a capability domain", skills_on)
-        self.assertIn("paper-pipeline", skills_on)
-        self.assertIn("calculation-math", skills_on)
-        self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
-        self.assertNotIn("first matching primary route", skills_on)
-        self.assertNotIn("SKILL TRACE: skipped", skills_on)
+        self.assertEqual(skills_on, skills_off)
+        self.assertNotIn("Skill capability tree", skills_on)
+        self.assertNotIn("act-like-a-chemist", skills_on)
+        self.assertNotIn("paper-pipeline", skills_on)
         self.assertNotIn("Do not use OpenClaw skills", skills_on)
-        self.assertNotIn("Skill capability tree", skills_off)
-        self.assertIn("Do not use OpenClaw skills", skills_off)
 
-    def test_build_single_llm_prompt_short_references_coverage_sop(self) -> None:
+    def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
         record = benchmark_test.BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -1402,14 +1397,9 @@ Points: 0.5, Item: Second criterion
         )
 
         self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("Atomic Coverage Checklist", prompt)
-        self.assertNotIn("Benchmark Coverage Checklist", prompt)
-        self.assertIn("act-like-a-chemist", prompt)
-        self.assertIn("all checklist atoms are done or blocked", prompt)
-        self.assertNotIn("When roughly 30% or less of the budget remains", prompt)
-        self.assertNotIn("todo / done / blocked", prompt)
-        self.assertNotIn("20% or less", prompt)
-        self.assertIn("Do not skip task-relevant derivation steps", prompt)
+        self.assertNotIn("Atomic Coverage Checklist", prompt)
+        self.assertNotIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
         self.assertIn("FINAL ANSWER", prompt)
 
     def test_sample_records_per_subset_draws_requested_count(self) -> None:

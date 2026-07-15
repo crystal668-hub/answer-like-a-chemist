@@ -66,22 +66,6 @@ def _answer_schema_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _verifier_grounded_rescue_instruction(answer_schema: dict[str, Any] | None) -> list[str]:
-    schema = answer_schema if isinstance(answer_schema, dict) else {}
-    schema_format = str(schema.get("format") or "").strip()
-    value_type = str(schema.get("value_type") or "").strip().lower()
-    fence_language = str(schema.get("fence_language") or value_type).strip().lower()
-    prefix = str(schema.get("final_answer_prefix") or "FINAL ANSWER:").strip() or "FINAL ANSWER:"
-    if schema_format != "final_answer_block" or value_type not in {"xyz", "cif"} or fence_language not in {"xyz", "cif"}:
-        return []
-    placeholder = "<XYZ content>" if value_type == "xyz" else "<CIF content>"
-    return [
-        "This is a verifier-grounded generation task scored by deterministic local verifier scripts.",
-        "Provide one single valid candidate in the schema-required final answer block.",
-        f"End with exactly this block format: {prefix}\n```{fence_language}\n{placeholder}\n```.",
-    ]
-
-
 def build_finalization_rescue_prompt(eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> str:
     kind = str(eval_kind or "").strip()
     common = [
@@ -127,7 +111,7 @@ def build_finalization_rescue_prompt(eval_kind: str = "", answer_schema: dict[st
             "Do not add `FINAL ANSWER:` to HLE responses.",
         ]
     elif kind == "verifier_grounded":
-        specific = _verifier_grounded_rescue_instruction(answer_schema) or [
+        specific = [
             "Provide a complete verifier-grounded answer based on the existing session reasoning.",
             "End with the exact final answer format requested in the original question.",
         ]

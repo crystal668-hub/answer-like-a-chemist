@@ -225,7 +225,7 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
     assert len(tree.splitlines()) < 60
 
 
-def test_single_agent_prompt_injects_skill_tree() -> None:
+def test_single_agent_prompt_does_not_inject_skill_tree() -> None:
     from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.workflow.prompts import build_single_llm_prompt
 
@@ -240,12 +240,11 @@ def test_single_agent_prompt_injects_skill_tree() -> None:
 
     prompt = build_single_llm_prompt(record, websearch_enabled=False)
 
-    assert "Skill capability tree:" in prompt
-    assert "Read `act-like-a-chemist` first" in prompt
-    assert "Atomic Coverage Checklist" in prompt
-    assert "Benchmark Coverage Checklist" not in prompt
-    assert "materials-crystals" in prompt
-    assert "paper-pipeline" in prompt
+    assert "Skill capability tree:" not in prompt
+    assert "act-like-a-chemist" not in prompt
+    assert "Atomic Coverage Checklist" not in prompt
+    assert "materials-crystals" not in prompt
+    assert "paper-pipeline" not in prompt
     assert "Organic mechanism SOP" not in prompt
     assert "Experimental chemistry skill routing rules" not in prompt
     assert "--workspace-root /Users/xutao/.openclaw/workspace" not in prompt
@@ -308,7 +307,7 @@ def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
 
     prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=False)
 
-    assert "Do not use OpenClaw skills" in prompt
+    assert "Do not use OpenClaw skills" not in prompt
     assert "act-like-a-chemist" not in prompt
     assert "Skill capability tree:" not in prompt
     assert "tool name must be exactly `exec`" not in prompt

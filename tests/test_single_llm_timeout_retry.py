@@ -126,7 +126,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _message_from_command(self, command: list[str]) -> str:
         return command[command.index("--message") + 1]
 
-    def test_skills_on_timeout_retry_adds_focus_prompt_after_first_attempt(self) -> None:
+    def test_skills_on_timeout_retry_keeps_original_prompt(self) -> None:
         captured_commands: list[list[str]] = []
         runner = self._runner(captured_commands=captured_commands)
 
@@ -138,11 +138,10 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertIn("BENCHMARK SCRATCH DIRECTORY", first_prompt)
         retry_prompt = self._message_from_command(captured_commands[1])
         self.assertIn("BASE PROMPT", retry_prompt)
-        self.assertIn("previous skills-enabled benchmark attempt timed out", retry_prompt)
-        self.assertIn("reduce tool use", retry_prompt)
-        self.assertIn("finalize promptly", retry_prompt)
-        self.assertFalse(result.runner_meta["timeout_retry"]["attempt_history"][0]["retry_focus_prompt_applied"])
-        self.assertTrue(result.runner_meta["timeout_retry"]["attempt_history"][1]["retry_focus_prompt_applied"])
+        self.assertNotIn("RETRY FOCUS GUIDANCE", retry_prompt)
+        self.assertNotIn("reduce tool use", retry_prompt)
+        self.assertNotIn("retry_focus_prompt_applied", result.runner_meta["timeout_retry"]["attempt_history"][0])
+        self.assertNotIn("retry_focus_prompt_applied", result.runner_meta["timeout_retry"]["attempt_history"][1])
 
     def test_skills_off_timeout_retry_keeps_original_prompt(self) -> None:
         captured_commands: list[list[str]] = []
@@ -162,8 +161,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             self.assertIn("BENCHMARK_SKILL_REQUEST_DIR", environment)
             self.assertIn("BENCHMARK_SKILL_OUTPUT_DIR", environment)
             self.assertIn("BENCHMARK_SKILL_NOTES_DIR", environment)
-        self.assertFalse(result.runner_meta["timeout_retry"]["attempt_history"][0]["retry_focus_prompt_applied"])
-        self.assertFalse(result.runner_meta["timeout_retry"]["attempt_history"][1]["retry_focus_prompt_applied"])
+        self.assertNotIn("retry_focus_prompt_applied", result.runner_meta["timeout_retry"]["attempt_history"][0])
+        self.assertNotIn("retry_focus_prompt_applied", result.runner_meta["timeout_retry"]["attempt_history"][1])
 
     def test_no_timeout_mode_omits_prompt_budget_and_wrapper_timeout(self) -> None:
         captured_commands: list[list[str]] = []
@@ -189,6 +188,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertNotIn("--timeout", captured_commands[0])
         prompt = self._message_from_command(captured_commands[0])
         self.assertNotIn("Time budget:", prompt)
+        self.assertNotIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Skill capability tree", prompt)
+        self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
         self.assertIsNone(captured_prompt_kwargs.get("time_budget_seconds"))
         self.assertEqual("no_timeout", result.runner_meta["timeout_mode"])
         self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])

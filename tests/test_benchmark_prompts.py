@@ -113,7 +113,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertIn("For HLE exact-match tasks, put only the final value, expression, or entity", prompt)
         self.assertIn("Do not add `FINAL ANSWER:`", prompt)
 
-    def test_verifier_grounded_prompt_uses_task_answer_schema(self) -> None:
+    def test_verifier_grounded_prompt_uses_official_prompt_without_schema_repetition(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
             dataset="verifier_grounded_rdkit",
@@ -134,11 +134,11 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
 
-        self.assertIn("verifier-grounded generation task", prompt)
-        self.assertIn("FINAL ANSWER: <SMILES>", prompt)
-        self.assertIn("single valid candidate", prompt)
+        self.assertEqual(record.prompt, prompt)
+        self.assertNotIn("deterministic local verifier scripts", prompt)
+        self.assertNotIn("single valid candidate", prompt)
 
-    def test_verifier_grounded_xyz_prompt_uses_fenced_block_schema(self) -> None:
+    def test_verifier_grounded_xyz_prompt_does_not_inject_fenced_block_schema(self) -> None:
         record = BenchmarkRecord(
             record_id="xtb-gap",
             dataset="verifier_grounded_xtb_xyz",
@@ -160,8 +160,38 @@ class BenchmarkPromptsTests(unittest.TestCase):
 
         prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
 
-        self.assertIn("FINAL ANSWER:\\n```xyz\\n<XYZ content>\\n```", prompt)
-        self.assertIn("single valid candidate", prompt)
+        self.assertEqual(record.prompt, prompt)
+        self.assertNotIn("<XYZ content>", prompt)
+
+    def test_verifier_grounded_bounded_prompt_only_prepends_common_time_budget(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit-qed",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Official task prompt.\nFINAL ANSWER: <SMILES>",
+            reference_answer="No reference answer is exposed.",
+            payload={},
+        )
+
+        skills_on = build_single_llm_prompt(
+            record,
+            websearch_enabled=False,
+            skills_enabled=True,
+            time_budget_seconds=900,
+        )
+        skills_off = build_single_llm_prompt(
+            record,
+            websearch_enabled=False,
+            skills_enabled=False,
+            time_budget_seconds=900,
+        )
+
+        expected = "Time budget: 900 seconds for the whole answer attempt.\n\n" + record.prompt
+        self.assertEqual(expected, skills_on)
+        self.assertEqual(expected, skills_off)
+        self.assertNotIn("act-like-a-chemist", skills_on)
+        self.assertNotIn("deterministic local verifier scripts", skills_on)
 
     def test_verifier_grounded_candidate_contract_requires_final_answer_marker(self) -> None:
         record = BenchmarkRecord(
@@ -217,7 +247,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertEqual("xyz", result.details["answer_schema_value_type"])
         self.assertEqual("xyz", result.details["answer_schema_fence_language"])
 
-    def test_single_llm_prompt_respects_skills_enabled_flag(self) -> None:
+    def test_single_llm_prompt_does_not_inject_skill_strategy_guidance(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -231,29 +261,16 @@ class BenchmarkPromptsTests(unittest.TestCase):
         skills_on = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
         skills_off = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
 
-        self.assertIn("Skill capability tree", skills_on)
-        self.assertIn("First choose a capability domain", skills_on)
-        self.assertIn("Atomic Coverage Checklist", skills_on)
-        self.assertIn("known givens", skills_on)
-        self.assertIn("required reasoning/calculation steps", skills_on)
-        self.assertIn("Tool results only close the specific checklist atom", skills_on)
-        self.assertIn("paper-pipeline", skills_on)
-        self.assertIn("calculation-math", skills_on)
-        self.assertNotIn("tool name must be exactly `exec`", skills_on)
-        self.assertNotIn('exec {"command":', skills_on)
-        self.assertNotIn("run_skill.py", skills_on)
-        self.assertNotIn("`python3` tool call", skills_on)
-        self.assertNotIn("TOOLS.md", skills_on)
-        self.assertNotIn("Experimental chemistry skill routing rules", skills_on)
-        self.assertNotIn("first matching primary route", skills_on)
-        self.assertNotIn("SKILL TRACE: skipped", skills_on)
-        self.assertNotIn("Do not use OpenClaw skills", skills_on)
-        self.assertNotIn("Skill capability tree", skills_off)
-        self.assertNotIn("Atomic Coverage Checklist", skills_off)
-        self.assertNotIn("Tool results only close the specific checklist atom", skills_off)
-        self.assertNotIn("tool name must be exactly `exec`", skills_off)
-        self.assertNotIn("`python3` tool call", skills_off)
-        self.assertIn("Do not use OpenClaw skills", skills_off)
+        self.assertEqual(skills_on, skills_off)
+        for forbidden in (
+            "Skill capability tree",
+            "act-like-a-chemist",
+            "Atomic Coverage Checklist",
+            "Tool results only close",
+            "Do not use OpenClaw skills",
+        ):
+            self.assertNotIn(forbidden, skills_on)
+            self.assertNotIn(forbidden, skills_off)
 
     def test_single_llm_prompt_omits_websearch_guidance(self) -> None:
         record = BenchmarkRecord(
@@ -276,7 +293,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("Do not use web search", web_off)
         self.assertNotIn("external browsing", web_off)
 
-    def test_single_llm_prompt_short_references_coverage_checklist_sop(self) -> None:
+    def test_single_llm_prompt_adds_only_time_budget_not_coverage_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
@@ -290,15 +307,10 @@ class BenchmarkPromptsTests(unittest.TestCase):
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True, time_budget_seconds=900)
 
         self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("Coverage Checklist", prompt)
-        self.assertNotIn("Benchmark Coverage Checklist", prompt)
-        self.assertIn("act-like-a-chemist", prompt)
-        self.assertIn("all checklist atoms are done or blocked", prompt)
-        self.assertNotIn("When roughly 30% or less of the budget remains", prompt)
-        self.assertNotIn("todo / done / blocked", prompt)
-        self.assertNotIn("20% or less", prompt)
-        self.assertIn("Do not skip task-relevant derivation steps", prompt)
-        self.assertIn("include enough visible checks for grading", prompt)
+        self.assertNotIn("Coverage Checklist", prompt)
+        self.assertNotIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
+        self.assertNotIn("include enough visible checks for grading", prompt)
 
     def test_superchem_prompt_requires_visible_option_checks_without_skill_call_cap(self) -> None:
         record = BenchmarkRecord(
