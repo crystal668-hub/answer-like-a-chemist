@@ -115,7 +115,32 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
         )
         self.assertEqual("openai-completions", qwen["api"])
 
-    def test_sync_models_payload_updates_only_token_plan_qwen_provider(self) -> None:
+    def test_sync_config_payload_replaces_literal_provider_credentials_with_env_refs(self) -> None:
+        payload = {
+            "models": {
+                "providers": {
+                    "qwen": {
+                        "baseUrl": TOKEN_PLAN_BASE_URL,
+                        "apiKey": "stale-token",
+                        "api": "openai-completions",
+                        "models": [],
+                    }
+                }
+            },
+            "agents": {"defaults": {"models": {}}},
+        }
+
+        changed = sync_config_payload(payload)
+
+        self.assertTrue(changed)
+        qwen = payload["models"]["providers"]["qwen"]
+        self.assertEqual("${QWEN_BASE_URL}", qwen["baseUrl"])
+        self.assertEqual(
+            {"source": "env", "provider": "default", "id": "QWEN_API_KEY"},
+            qwen["apiKey"],
+        )
+
+    def test_sync_models_payload_clears_token_plan_qwen_provider_cache(self) -> None:
         payload = {
             "providers": {
                 "qwen": {
@@ -147,7 +172,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
         changed = sync_models_payload(payload)
 
         self.assertTrue(changed)
-        self.assertEqual(QWEN_MODEL_IDS, tuple(model["id"] for model in payload["providers"]["qwen"]["models"]))
+        self.assertNotIn("qwen", payload["providers"])
         self.assertFalse(sync_models_payload(payload))
 
     def test_sync_models_payload_skips_non_token_plan_qwen_provider(self) -> None:
@@ -167,6 +192,22 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
 
         self.assertFalse(changed)
         self.assertEqual(before, payload)
+
+    def test_sync_models_payload_can_clear_explicit_agent_override(self) -> None:
+        payload = {
+            "providers": {
+                "qwen": {
+                    "baseUrl": "https://example.invalid/v1",
+                    "apiKey": "stale-token",
+                    "models": [],
+                }
+            }
+        }
+
+        changed = sync_models_payload(payload, clear_all=True)
+
+        self.assertTrue(changed)
+        self.assertNotIn("qwen", payload["providers"])
 
 
 if __name__ == "__main__":
