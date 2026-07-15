@@ -357,6 +357,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, help="最多运行多少条题目")
     parser.add_argument("--offset", type=int, default=0, help="跳过前多少条题目")
     parser.add_argument(
+        "--record-ids",
+        help="仅运行指定 record/task id，逗号分隔；按给定顺序运行",
+    )
+    parser.add_argument(
         "--single-agent-id-override",
         help="覆盖 single_llm 组的 agent id；未提供时按实验组规范使用默认 baseline agent",
     )
@@ -1651,6 +1655,29 @@ def filter_records_by_subsets(records: list[BenchmarkRecord], raw_subsets: str |
     return [record for record in records if classify_subset(record) in wanted]
 
 
+def filter_records_by_ids(records: list[BenchmarkRecord], raw_record_ids: str | None) -> list[BenchmarkRecord]:
+    requested = [item.strip() for item in str(raw_record_ids or "").split(",") if item.strip()]
+    if not requested:
+        return list(records)
+    if len(requested) != len(set(requested)):
+        raise BenchmarkError("--record-ids must not contain duplicate ids")
+
+    records_by_id: dict[str, BenchmarkRecord] = {}
+    duplicate_available_ids: set[str] = set()
+    for record in records:
+        if record.record_id in records_by_id:
+            duplicate_available_ids.add(record.record_id)
+        records_by_id[record.record_id] = record
+    ambiguous = sorted(set(requested) & duplicate_available_ids)
+    if ambiguous:
+        raise BenchmarkError(f"Ambiguous record id(s) across selected datasets: {', '.join(ambiguous)}")
+
+    unknown = [record_id for record_id in requested if record_id not in records_by_id]
+    if unknown:
+        raise BenchmarkError(f"Unknown record id(s): {', '.join(unknown)}")
+    return [records_by_id[record_id] for record_id in requested]
+
+
 
 def build_group_waves(group_ids: list[str], *, max_concurrent_groups: int) -> list[list[str]]:
     if max_concurrent_groups <= 0:
@@ -2109,7 +2136,10 @@ def main() -> int:
     if not dataset_files:
         raise BenchmarkError("No benchmark files discovered.")
 
-    all_records = filter_records_by_subsets(load_records(dataset_files), args.subsets)
+    all_records = filter_records_by_ids(
+        filter_records_by_subsets(load_records(dataset_files), args.subsets),
+        getattr(args, "record_ids", None),
+    )
     if args.random_count_per_subset is not None:
         selected_pool = sample_records_per_subset(
             all_records,

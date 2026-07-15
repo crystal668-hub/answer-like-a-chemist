@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from benchmarking.core.reporting import GroupRecordResult as ReportingGroupRecordResult
 from benchmarking.workflow import cli as benchmarking_cli
 
@@ -53,6 +55,73 @@ def test_parse_args_accepts_no_analysis_flag(monkeypatch) -> None:
     args = benchmarking_cli.parse_args()
 
     assert args.no_analysis is True
+
+
+def test_filter_records_by_ids_preserves_requested_order() -> None:
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id=record_id,
+            dataset="demo",
+            source_file="/tmp/demo.jsonl",
+            prompt="Question?",
+            reference_answer="Answer",
+            eval_kind="generic_semantic",
+        )
+        for record_id in ("first", "second")
+    ]
+
+    selected = benchmarking_cli.filter_records_by_ids(records, "second,first")
+
+    assert [record.record_id for record in selected] == ["second", "first"]
+
+
+def test_filter_records_by_ids_rejects_unknown_ids() -> None:
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id="known",
+            dataset="demo",
+            source_file="/tmp/demo.jsonl",
+            prompt="Question?",
+            reference_answer="Answer",
+            eval_kind="generic_semantic",
+        )
+    ]
+
+    with pytest.raises(benchmarking_cli.BenchmarkError, match="Unknown record id"):
+        benchmarking_cli.filter_records_by_ids(records, "missing")
+
+
+def test_filter_records_by_ids_rejects_duplicate_requested_ids() -> None:
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id="known",
+            dataset="demo",
+            source_file="/tmp/demo.jsonl",
+            prompt="Question?",
+            reference_answer="Answer",
+            eval_kind="generic_semantic",
+        )
+    ]
+
+    with pytest.raises(benchmarking_cli.BenchmarkError, match="duplicate ids"):
+        benchmarking_cli.filter_records_by_ids(records, "known,known")
+
+
+def test_filter_records_by_ids_rejects_ambiguous_selected_dataset_ids() -> None:
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id="shared",
+            dataset=dataset,
+            source_file=f"/tmp/{dataset}.jsonl",
+            prompt="Question?",
+            reference_answer="Answer",
+            eval_kind="generic_semantic",
+        )
+        for dataset in ("first", "second")
+    ]
+
+    with pytest.raises(benchmarking_cli.BenchmarkError, match="Ambiguous record id"):
+        benchmarking_cli.filter_records_by_ids(records, "shared")
 
 
 def test_default_web_search_preflight_skips_all_experiment_groups(monkeypatch, tmp_path) -> None:
