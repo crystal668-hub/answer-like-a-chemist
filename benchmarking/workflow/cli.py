@@ -114,6 +114,10 @@ from benchmarking.scoring.evaluators import (
     safe_json_extract as _shared_safe_json_extract,
     superchem_valid_options,
 )
+from benchmarking.scoring.verifier_grounded_runtime import (
+    VerifierGroundedRuntimeError,
+    load_public_sample_answers,
+)
 from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
 from benchmarking.skills.tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
 from benchmarking.workflow.prompts import build_chemqa_goal, build_single_llm_prompt, resolve_chemqa_answer_kind
@@ -1806,6 +1810,44 @@ def load_results_from_output_root(output_root: Path, *, group_ids: list[str]) ->
     return results
 
 
+def apply_verifier_grounded_reporting_references(
+    results: list[GroupRecordResult],
+) -> list[GroupRecordResult]:
+    dataset = "verifier_grounded_property_calculation"
+    property_results = [item for item in results if str(getattr(item, "dataset", "")) == dataset]
+    if not property_results:
+        return results
+    try:
+        samples = load_public_sample_answers("property_calculation")
+    except VerifierGroundedRuntimeError as exc:
+        raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
+
+    references: dict[str, str] = {}
+    for sample in samples:
+        task_id = str(sample.get("task_id") or "").strip()
+        answer = {key: value for key, value in sample.items() if key != "task_id"}
+        if task_id and answer:
+            references[task_id] = json.dumps(
+                answer,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+    missing = sorted(
+        {
+            str(getattr(item, "record_id", "") or "")
+            for item in property_results
+            if str(getattr(item, "record_id", "") or "") not in references
+        }
+    )
+    if missing:
+        raise BenchmarkError(
+            "Verifier-grounded property-calculation results are missing public gold for: "
+            + ", ".join(missing)
+        )
+    for item in property_results:
+        item.reference_answer = references[str(getattr(item, "record_id", "") or "")]
+    return results
+
 
 def write_wave_status(
     output_root: Path,
@@ -2345,6 +2387,12 @@ def main() -> int:
         for group_id in group_ids:
             results.extend(group_results.get(group_id, []))
 
+    apply_verifier_grounded_reporting_references(results)
+    for item in results:
+        save_json(
+            output_root / "per-record" / item.group_id / f"{slugify(item.record_id)}.json",
+            asdict(item),
+        )
     summary = aggregate_results(results)
     payload = {
         "schema_version": 2,

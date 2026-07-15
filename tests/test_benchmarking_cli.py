@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +32,55 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert benchmarking_cli.EXPERIMENT_GROUPS["chemqa_skills_on"].runner == "chemqa"
     assert all(group.websearch is False for group in benchmarking_cli.EXPERIMENT_GROUPS.values())
     assert all(spec.websearch_enabled is False for spec in benchmarking_cli.EXPERIMENT_SPECS.values())
+
+
+def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None:
+    property_result = SimpleNamespace(
+        dataset="verifier_grounded_property_calculation",
+        record_id="property_calc_free_energy_001",
+        reference_answer="No reference answer is exposed; score with the pinned verifier release.",
+    )
+    rdkit_result = SimpleNamespace(
+        dataset="verifier_grounded_rdkit",
+        record_id="rdkit_qed_max_001",
+        reference_answer="No reference answer is exposed; score with the pinned verifier release.",
+    )
+    monkeypatch.setattr(
+        benchmarking_cli,
+        "load_public_sample_answers",
+        lambda track: [
+            {
+                "task_id": "property_calc_free_energy_001",
+                "answer": 0.258031679,
+                "unit": "kJ/mol",
+            },
+            {
+                "task_id": "property_calc_crystal_phase_002",
+                "answers": [
+                    {"property": "potential_energy_difference", "value": 0.079, "unit": "eV"},
+                    {"property": "ambient_pressure_phase", "value": "alpha"},
+                    {"property": "high_pressure_phase", "value": "beta"},
+                ],
+            },
+        ],
+    )
+
+    benchmarking_cli.apply_verifier_grounded_reporting_references([property_result, rdkit_result])
+
+    assert property_result.reference_answer == '{"answer":0.258031679,"unit":"kJ/mol"}'
+    assert rdkit_result.reference_answer.startswith("No reference answer is exposed")
+
+
+def test_reporting_references_require_every_selected_property_gold(monkeypatch) -> None:
+    result = SimpleNamespace(
+        dataset="verifier_grounded_property_calculation",
+        record_id="property_calc_crystal_phase_002",
+        reference_answer="placeholder",
+    )
+    monkeypatch.setattr(benchmarking_cli, "load_public_sample_answers", lambda track: [])
+
+    with pytest.raises(benchmarking_cli.BenchmarkError, match="missing public gold"):
+        benchmarking_cli.apply_verifier_grounded_reporting_references([result])
 
 
 def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:

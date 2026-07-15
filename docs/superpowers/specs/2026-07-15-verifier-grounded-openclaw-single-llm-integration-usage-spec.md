@@ -19,13 +19,14 @@ single-LLM agent 作为外部模型调用方运行 package 已有题目，并在
 2. OpenClaw 位于 package 外部，符合 package README 规定的模型调用边界。
 3. prompt 只通过 `Track.prompts()` 获取。
 4. 单题评分只通过 `Track.evaluate_one()` 完成。
-5. 批量评分如有需要只通过 `Track.evaluate_answers()` 或 package 自带 `vgb-score` 完成。
-6. 不 import 或复制 package 的内部 `benchmark.*`、`verifiers.*` 实现。
-7. package 安装在独立 scorer runtime，不安装进 agent/workspace 主 `.venv`。
-8. 日常运行直接使用项目 canonical CLI：`python -m benchmarking.workflow.cli`。
-9. 不新增 VGB 专属 CLI、track 别名转译器或 shell launcher。
-10. 主要测试路径是 `single_llm_skills_on` / `single_llm_skills_off`，不以 ChemQA 为主路径。
-11. 不定义 official run 认证层；单题、部分题和全量运行都是合法实验。
+5. `property_calculation` 的公开 gold 只通过 `Track.sample_answers()` 获取，并且只写入最终报告面。
+6. 批量评分如有需要只通过 `Track.evaluate_answers()` 或 package 自带 `vgb-score` 完成。
+7. 不 import 或复制 package 的内部 `benchmark.*`、`verifiers.*` 实现。
+8. package 安装在独立 scorer runtime，不安装进 agent/workspace 主 `.venv`。
+9. 日常运行直接使用项目 canonical CLI：`python -m benchmarking.workflow.cli`。
+10. 不新增 VGB 专属 CLI、track 别名转译器或 shell launcher。
+11. 主要测试路径是 `single_llm_skills_on` / `single_llm_skills_off`，不以 ChemQA 为主路径。
+12. 不定义 official run 认证层；单题、部分题和全量运行都是合法实验。
 
 ## 3. 标准 VGB 用法
 
@@ -72,7 +73,21 @@ result = vgb.load_track(track_name).evaluate_one(
 OpenClaw 当前采用这一公共 API，因为 orchestration 按 record 持久化答案、错误和 attempt
 metadata。逐题调用不是兼容路径，也不改变 package scorer 语义。
 
-### 3.4 批量评分
+### 3.4 公开标准答案报告
+
+`property_calculation` 是 fixed-input track，package 将其 sample answers 定义为公开 gold。最终结果
+报告必须通过公共 API 获取：
+
+```python
+gold = vgb.load_track("property_calculation").sample_answers()
+```
+
+该调用在隔离 runtime 中执行，并校验返回 task ID 与 pinned inventory 完全一致。gold 只替换最终
+`results.json`、per-record 和后续 dashboard/analysis 使用的 `reference_answer`；不得写入 synchronized
+JSONL、agent prompt、attempt workspace、scratch 或 runtime config。`rdkit` 与 `xtb` 继续报告隐藏
+reference 占位文本。
+
+### 3.5 批量评分
 
 需要 package 原生 coverage/`benchmark_score` 语义时，应使用：
 
@@ -102,6 +117,8 @@ vgb-score --track rdkit --answers answers.jsonl
    JSONL；它只是 public prompt view 的确定性缓存。
 4. **Result mapping**：把 package result 映射为项目统一 `EvaluationResult`，不改变 score。
 5. **OpenClaw orchestration**：负责模型调用、attempt workspace、session、retry、audit 和 archive。
+6. **Report-only public reference mapping**：在 agent attempts 全部结束后，通过
+   `property_calculation.sample_answers()` 把公开 gold 写入最终通用结果 artifacts。
 
 隔离进程的 JSON stdin/stdout 只是跨虚拟环境传输协议，不是对旧 VGB 版本或私有格式的兼容层。
 
@@ -196,8 +213,9 @@ Runtime JSONL：
 ~/.openclaw/data/formal-benchmarks/<dataset>/data/<dataset>.jsonl
 ```
 
-每条 record 只允许包含 public prompt、public answer schema、track/task ID、release identity、
-verifier timeout 和不暴露 reference 的占位 answer 文本。
+每条 synchronized record 只允许包含 public prompt、public answer schema、track/task ID、release
+identity、verifier timeout 和不暴露 reference 的占位 answer 文本。`property_calculation` 的公开 gold
+不进入该缓存，而是在最终报告阶段通过 `sample_answers()` 单独取得。
 
 ## 8. Provisioning
 
@@ -386,7 +404,9 @@ uv run python -m benchmarking.workflow.cli \
 9. scorer 校验 release identity 和 runtime manifest；
 10. scorer 通过标准 `load_track(track).evaluate_one(...)` 评分；
 11. package result 映射为统一 `EvaluationResult`；
-12. CLI 保存 per-record、aggregate、runtime manifest 和 progress state。
+12. 所有 agent attempts 结束后，CLI 通过隔离 runtime 的 `property_calculation.sample_answers()`
+    校验并填充公开 report reference；
+13. CLI 保存/重写 per-record、aggregate、runtime manifest 和 progress state。
 
 Agent-facing prompt policy：
 
@@ -444,6 +464,10 @@ Agent 默认行为继承通用 CLI：
 - 每次 retry 使用新 workspace/session；
 - `--no-timeout` 保留进程安全阀。
 
+LLM idle timeout、transport timeout 等历史事件保留在 convergence diagnostics 中，但同一 session
+后续由 native output、transcript recovery 或 finalization rescue 生成的完整、schema-aware 最终答案
+优先于历史 timeout 状态。只有没有完整答案的 timeout sentinel/timeout-family 结果才不可评分。
+
 Verifier timeout 固定于 release config：
 
 - RDKit：180 秒；
@@ -484,6 +508,9 @@ analysis/status.json
 `--no-analysis` 仍写入 `analysis/status.json`，状态为 `skipped`；只有启用并成功完成自动分析时才
 产生 analysis report。
 
+完成聚合时，`property_calculation` 的 `reference_answer` 必须是 public gold 的 canonical JSON；即使
+agent 未作答或 record 不可评分也必须报告 gold。RDKit/xTB reference 仍保持隐藏占位文本。
+
 ## 17. 失败行为
 
 调用 agent 前应失败：
@@ -501,6 +528,10 @@ analysis/status.json
 - workspace contamination/audit/archive 失败；
 - package runtime、xTB 或 verifier execution 失败。
 
+wrapper/provider/subprocess 非零退出时，runner 必须用已知 agent/session ID 执行 postflight session
+定位，并在 transcript 已落盘时把该路径交给 workspace audit。干净 transcript 不得因父进程未解析到
+wrapper stdout 而被误报为 `transcript_unavailable`，原始结构化 execution error 必须保留。
+
 不得用本地 fallback scorer 或旧 schema 兼容分支掩盖 package 错误。
 
 ## 18. 实现位置
@@ -508,9 +539,9 @@ analysis/status.json
 | 模块 | 责任 |
 | --- | --- |
 | `scripts/sync_verifier_grounded_datasets.py` | 标准 `prompts()` provisioning 与 sanitized JSONL 同步 |
-| `benchmarking/scoring/verifier_grounded_runtime.py` | 隔离 runtime、release 校验和标准 VGB API 调用 |
+| `benchmarking/scoring/verifier_grounded_runtime.py` | 隔离 runtime、release 校验以及 `prompts()`、`evaluate_one()`、`sample_answers()` 公共 API 调用 |
 | `benchmarking/scoring/evaluators.py` | package result 到统一 `EvaluationResult` 的直接映射 |
-| `benchmarking/workflow/cli.py` | canonical benchmark CLI 与通用 record selection |
+| `benchmarking/workflow/cli.py` | canonical benchmark CLI、通用 record selection 与 report-only public gold 映射 |
 | `benchmarking/workflow/runners/single_llm.py` | OpenClaw 外部模型调用与 attempt 生命周期 |
 | `benchmarking/runtime/agent_workspace.py` | workspace prepare/audit/archive/quarantine |
 | `benchmarking/resources/verifier_grounded/release.json` | 固定 release identity 与 inventory |
@@ -533,8 +564,11 @@ benchmarking/workflow/verifier_grounded_cli.py
 7. 不存在 VGB 专属 launcher 或 parser。
 8. 每个 attempt 继续满足 workspace/session isolation 契约。
 9. package score 直接映射，不增加本地评分逻辑。
-10. README 和 `GLOBAL_DEV_SPEC.md` 推荐 canonical module CLI。
-11. canonical CLI compatibility、dataset sync、runtime 和 evaluator 测试全部通过。
+10. `property_calculation` 最终结果通过公共 `sample_answers()` 报告完整 gold，且 gold 不进入 agent-facing artifacts。
+11. 完整恢复答案不因同 session 的历史 idle timeout 被 candidate contract 否决。
+12. provider/subprocess 失败且 transcript 已存在时，workspace audit 使用该 transcript 并保留原始 execution error。
+13. README 和 `GLOBAL_DEV_SPEC.md` 推荐 canonical module CLI。
+14. canonical CLI compatibility、dataset sync、runtime 和 evaluator 测试全部通过。
 
 ## 20. Release Metadata Follow-Up
 

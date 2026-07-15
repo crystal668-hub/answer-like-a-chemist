@@ -67,3 +67,47 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     }
     assert "source_repo" not in payload
     assert "verifier_specs" not in payload
+
+
+def test_load_public_sample_answers_calls_public_api_runtime() -> None:
+    expected = [
+        {
+            "task_id": "property_calc_free_energy_001",
+            "answer": 0.258031679,
+            "unit": "kJ/mol",
+        },
+        {
+            "task_id": "property_calc_crystal_phase_002",
+            "answers": [
+                {"property": "potential_energy_difference", "value": 0.079, "unit": "eV"},
+                {"property": "ambient_pressure_phase", "value": "alpha"},
+                {"property": "high_pressure_phase", "value": "beta"},
+            ],
+        },
+    ]
+    with patch.object(runtime, "_invoke_api", return_value={"sample_answers": expected}) as invoke:
+        result = runtime.load_public_sample_answers("property_calculation")
+
+    assert result == expected
+    assert invoke.call_args.args[1] == {
+        "action": "sample_answers",
+        "track": "property_calculation",
+    }
+
+
+def test_load_public_sample_answers_rejects_incomplete_pinned_inventory() -> None:
+    with patch.object(
+        runtime,
+        "_invoke_api",
+        return_value={
+            "sample_answers": [
+                {
+                    "task_id": "property_calc_free_energy_001",
+                    "answer": 0.258031679,
+                    "unit": "kJ/mol",
+                }
+            ]
+        },
+    ):
+        with pytest.raises(runtime.VerifierGroundedRuntimeError, match="inventory"):
+            runtime.load_public_sample_answers("property_calculation")

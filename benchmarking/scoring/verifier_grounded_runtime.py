@@ -45,6 +45,9 @@ elif action == "evaluate_one":
         "task_id": request["task_id"],
         "response": request["answer_text"],
     })
+elif action == "sample_answers":
+    track = vgb.load_track(request["track"])
+    result = {"sample_answers": track.sample_answers()}
 else:
     raise ValueError(f"Unsupported verifier runtime action: {action}")
 print(json.dumps(result, ensure_ascii=False))
@@ -144,6 +147,31 @@ def describe_installed_release(
         timeout=180.0,
         require_manifest=require_manifest,
     )
+
+
+def load_public_sample_answers(track: str) -> list[dict[str, Any]]:
+    config = load_release_config()
+    track_config = config.tracks.get(track)
+    if track_config is None:
+        raise VerifierGroundedRuntimeError(f"Unknown pinned verifier track: {track}")
+    result = _invoke_api(
+        config,
+        {"action": "sample_answers", "track": track},
+        timeout=180.0,
+        require_manifest=True,
+    )
+    answers = result.get("sample_answers")
+    if not isinstance(answers, list) or not all(isinstance(item, dict) for item in answers):
+        raise VerifierGroundedRuntimeError(
+            f"Pinned verifier sample-answer inventory is invalid for track {track!r}"
+        )
+    task_ids = track_config.get("task_ids")
+    actual_task_ids = [str(item.get("task_id") or "") for item in answers]
+    if not isinstance(task_ids, list) or actual_task_ids != task_ids:
+        raise VerifierGroundedRuntimeError(
+            f"Pinned verifier sample-answer inventory does not match track {track!r}"
+        )
+    return [dict(item) for item in answers]
 
 
 def evaluate_answer(

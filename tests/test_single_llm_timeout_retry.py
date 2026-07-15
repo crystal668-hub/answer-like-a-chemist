@@ -313,6 +313,81 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual("workspace_archive_failed", result.failure.code)
         self.assertFalse(result.runner_meta["workspace_isolation"]["archive_ok"])
 
+    def test_provider_failure_keeps_transcript_available_for_workspace_audit(self) -> None:
+        root = Path(self.temporary.name)
+        agent_root = root / "agents" / "benchmark-single-skills-on"
+        sessions_root = agent_root / "sessions"
+        sessions_root.mkdir(parents=True)
+        config_path = root / "openclaw.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "agents": {
+                        "list": [
+                            {
+                                "id": "benchmark-single-skills-on",
+                                "agentDir": str(agent_root / "agent"),
+                                "model": "openai/gpt-5.5",
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def run_subprocess(command: list[str], *, env: dict[str, str], timeout: int) -> CompletedProcess:
+            session_id = command[command.index("--session-id") + 1]
+            transcript = sessions_root / f"{session_id}.jsonl"
+            transcript.write_text(
+                json.dumps({"type": "session", "id": session_id, "cwd": env["BENCHMARK_WORKSPACE_DIR"]})
+                + "\n",
+                encoding="utf-8",
+            )
+            (sessions_root / "sessions.json").write_text(
+                json.dumps(
+                    {
+                        f"agent:benchmark-single-skills-on:explicit:{session_id}": {
+                            "sessionId": session_id,
+                            "sessionFile": str(transcript),
+                            "modelProvider": "openai",
+                            "model": "gpt-5.5",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return CompletedProcess(
+                returncode=1,
+                stderr="rate limit exceeded: Concurrency limit exceeded for account",
+            )
+
+        runner = SingleLLMRunner(
+            agent_id="benchmark-single-skills-on",
+            timeout_seconds=10,
+            config_path=config_path,
+            runtime_bundle_root=root / "bundles",
+            run_subprocess=run_subprocess,
+            parse_json_stdout=lambda result, command: {},
+            unwrap_agent_payload=lambda payload: payload,
+            summarize_payloads=lambda payloads: "",
+            normalize_answer_tracks=lambda *, full_response_text: ("", full_response_text),
+            ensure_runtime_bundle=lambda record, *, bundle_root: None,
+            build_single_llm_prompt=lambda *args, **kwargs: "BASE PROMPT",
+            slugify=lambda value, **kwargs: str(value),
+            benchmark_agent_thinking="high",
+            workspace_manager=self.workspace_manager,
+            timeout_retries=0,
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual("provider_rate_limit_error", result.failure.code)
+        self.assertEqual("clean", result.runner_meta["workspace_isolation"]["audit_status"])
+        transcript_path = result.runner_meta["session_isolation"]["postflight_entry_session_file"]
+        self.assertTrue(Path(transcript_path).is_file())
+        self.assertEqual("provider_rate_limit_error", result.raw["execution_error"]["code"])
+
 
 if __name__ == "__main__":
     unittest.main()

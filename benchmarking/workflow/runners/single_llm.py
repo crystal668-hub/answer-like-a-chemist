@@ -28,6 +28,10 @@ from benchmarking.runtime.agent_workspace import (
     ContaminationAudit,
     WorkspaceIsolationError,
 )
+from benchmarking.runtime.session_isolation import (
+    SessionIsolationError,
+    inspect_postflight_session,
+)
 
 
 OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
@@ -307,10 +311,16 @@ def is_openclaw_timeout_result(
     eval_kind: str = "",
     answer_schema: dict[str, Any] | None = None,
 ) -> bool:
-    if is_runner_meta_timeout_family(runner_meta):
-        return True
     text = str(full_response_text or "")
     stripped = text.strip()
+    if is_complete_answer_for_eval(
+        text,
+        eval_kind=str(eval_kind or ""),
+        answer_schema=answer_schema,
+    ) or HLE_ANSWER_RE.search(text):
+        return False
+    if is_runner_meta_timeout_family(runner_meta):
+        return True
     has_timeout_text = any(needle in text for needle in OPENCLAW_TIMEOUT_SENTINELS)
     if has_timeout_text and stripped in OPENCLAW_TIMEOUT_SENTINELS:
         return True
@@ -318,8 +328,6 @@ def is_openclaw_timeout_result(
         runner_meta.get("aborted") is True or str(runner_meta.get("livenessState") or "") == "blocked"
     ):
         return True
-    if is_complete_answer_for_eval(text, eval_kind=str(eval_kind or ""), answer_schema=answer_schema) or HLE_ANSWER_RE.search(text):
-        return False
     return is_timeout_family_text(text)
 
 
@@ -762,6 +770,7 @@ class SingleLLMRunner:
             "session_id": session_id,
             "timeout_mode": self._timeout_mode(),
         }
+        runner_meta["session_isolation"] = self._inspect_failed_attempt_session(session_id)
         runner_meta["skill_use_audit"] = build_skill_use_audit(
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             configured_skills=self.configured_skills,
@@ -782,6 +791,32 @@ class SingleLLMRunner:
                 details=dict(details),
             ),
         )
+
+    def _inspect_failed_attempt_session(self, session_id: str) -> dict[str, Any]:
+        try:
+            audit = inspect_postflight_session(
+                self.agent_id,
+                session_id,
+                config_path=self.config_path,
+            )
+        except (OSError, SessionIsolationError) as exc:
+            return {
+                "requested_session_id": session_id,
+                "agent_id": self.agent_id,
+                "postflight_entry_session_file": "",
+                "session_isolation_ok": False,
+                "postflight_inspection_error": f"{type(exc).__name__}: {exc}",
+            }
+
+        if not str(audit.get("postflight_entry_session_file") or "").strip():
+            store_path_text = str(audit.get("session_store_path") or "").strip()
+            if store_path_text:
+                transcript_path = Path(store_path_text).expanduser().parent / f"{session_id}.jsonl"
+                if transcript_path.is_file() and not transcript_path.is_symlink():
+                    audit["postflight_entry_session_id"] = session_id
+                    audit["postflight_entry_session_file"] = str(transcript_path.resolve())
+                    audit["transcript_path_recovered"] = True
+        return audit
 
     def _subprocess_timeout_result(
         self,

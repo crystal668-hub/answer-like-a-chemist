@@ -247,6 +247,42 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertEqual("xyz", result.details["answer_schema_value_type"])
         self.assertEqual("xyz", result.details["answer_schema_fence_language"])
 
+    def test_complete_rescue_answer_survives_prior_idle_timeout(self) -> None:
+        record = BenchmarkRecord(
+            record_id="property_calc_free_energy_001",
+            dataset="verifier_grounded_property_calculation",
+            source_file="/tmp/verifier_grounded_property_calculation.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Q",
+            reference_answer="No reference answer is exposed.",
+            payload={
+                "verifier_grounded": {
+                    "answer_schema": {
+                        "format": "final_answer_line",
+                        "final_answer_prefix": "FINAL ANSWER:",
+                        "value_type": "json",
+                    }
+                }
+            },
+        )
+        full_response_text = 'FINAL ANSWER: {"answer":0.258031679,"unit":"kJ/mol"}'
+
+        result = validate_candidate_answer_contract(
+            record=record,
+            short_answer_text='{"answer":0.258031679,"unit":"kJ/mol"}',
+            full_response_text=full_response_text,
+            runner_meta={
+                "convergence": {
+                    "latest_prompt_error": "LLM idle timeout (120s): no response from model",
+                    "latest_prompt_error_is_timeout": True,
+                    "finalization_rescue_succeeded": True,
+                }
+            },
+        )
+
+        self.assertTrue(result.valid)
+        self.assertTrue(result.details["has_complete_answer_for_eval"])
+
     def test_single_llm_prompt_does_not_inject_skill_strategy_guidance(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
