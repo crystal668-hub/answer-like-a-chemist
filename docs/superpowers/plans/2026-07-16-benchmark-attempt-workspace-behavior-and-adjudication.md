@@ -1,6 +1,6 @@
 # Benchmark Attempt Workspace Behavior and Adjudication Implementation Plan
 
-状态：`IMPLEMENTED / DESIGNATED HISTORY RECOVERY PENDING`
+状态：`DONE`
 
 日期：2026-07-16
 
@@ -99,3 +99,15 @@ uv run pytest -q
 ```
 
 所有测试通过前不得把规格或计划标记为 `DONE`，不得提交实现，也不得 apply 历史结果恢复。
+
+## 5. 完成记录
+
+- 代码与文档实现在分支 `feat/benchmark-attempt-workspace-adjudication` 完成；
+- 最终全量回归：`708 passed, 99 subtests passed`；
+- 指定历史恢复 apply 报告：
+  `state/benchmark-runs/verifier-grounded-xtb-qwen3.7-max-20260716-114656/recovery/workspace-adjudication-replay-20260716T095651Z-f081fd8d.json`；
+- 原始状态快照：
+  `state/benchmark-runs/verifier-grounded-xtb-qwen3.7-max-20260716-114656/recovery/workspace-adjudication-snapshot-20260716T095651Z`；
+- `xtb_formula_dipole_min_014` 与 `xtb_c10_f2_gap_min_016` 分别通过官方
+  `isolated_wheel_api` 得分 `0.8989499999999999` 和 `0.8707013143352`；
+- apply 记录 `model_calls=0`、source hashes、git commit、policy digests 和 scorer identities。

@@ -1,6 +1,6 @@
 # Benchmark Attempt Workspace Behavior and Contamination Adjudication Specification
 
-状态：`IMPLEMENTED / DESIGNATED HISTORY RECOVERY PENDING`
+状态：`DONE`
 
 日期：2026-07-16
 
@@ -715,6 +715,27 @@ state/benchmark-runs/verifier-grounded-xtb-qwen3.7-max-20260716-114656
 - 使用原始完整答案交给 pinned verifier 评分；
 - 原子更新 per-record、results、progress 和 recovery report；
 - 不重新调用 qwen 模型。
+
+### 16.4 指定恢复完成记录
+
+2026-07-16 已对第 16.3 节两条记录完成 dry-run、人工 transcript 复核和显式
+`--approve-historical-ownership` apply。原始状态快照与 apply 报告为：
+
+```text
+state/benchmark-runs/verifier-grounded-xtb-qwen3.7-max-20260716-114656/recovery/workspace-adjudication-snapshot-20260716T095651Z
+state/benchmark-runs/verifier-grounded-xtb-qwen3.7-max-20260716-114656/recovery/workspace-adjudication-replay-20260716T095651Z-f081fd8d.json
+```
+
+恢复结果：
+
+- `xtb_formula_dipole_min_014`：`scoreable_degraded`，官方 `isolated_wheel_api` 分数
+  `0.8989499999999999`；
+- `xtb_c10_f2_gap_min_016`：`scoreable_degraded`，官方 `isolated_wheel_api` 分数
+  `0.8707013143352`；
+- 每条记录只保留一个 `write.path` / `operation_outcome=succeeded` finding，
+  `contamination_status=clear`；
+- apply 报告记录 source hashes、git commit、policy digests、scorer identities 和
+  `model_calls=0`，未重新调用 qwen 模型。
 
 ## 17. Implementation Boundaries
 
