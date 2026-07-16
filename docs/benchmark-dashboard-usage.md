@@ -103,6 +103,8 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - 刷新 run 列表
 - 显示或隐藏已隐藏的 run
 
+verifier-grounded benchmark 的三个 track 在 dashboard 中会归为同一个 Dataset：`vgb`；具体 track 通过 Subset 区分，例如 `verifier_grounded_rdkit`、`verifier_grounded_xtb_xyz`、`verifier_grounded_property_calculation`。
+
 常用操作：
 
 - 点击 run 卡片进入该 run 的逐题审查页面。

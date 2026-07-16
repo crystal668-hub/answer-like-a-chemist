@@ -49,6 +49,14 @@ def _format_number(value: Any) -> str:
     return f"{float(value):.4g}"
 
 
+def _dashboard_dataset_subset(result: dict[str, Any]) -> tuple[str, str]:
+    dataset = str(result.get("dataset") or "")
+    subset = str(result.get("subset") or "")
+    if dataset.startswith("verifier_grounded_"):
+        return "vgb", subset or dataset
+    return dataset, subset
+
+
 def _score_label(result: dict[str, Any]) -> str:
     evaluation = result.get("evaluation") if isinstance(result.get("evaluation"), dict) else {}
     status = {key: result.get(key) for key in ("evaluable", "scored")}
@@ -213,8 +221,9 @@ class BenchmarkDashboard:
             results = self._load_results(run_root)
             group_ids = self._group_ids(payload, results, run_root)
             record_ids = sorted({str(result.get("record_id") or "") for result in results if result.get("record_id")})
-            datasets = sorted({str(result.get("dataset") or "") for result in results if result.get("dataset")})
-            subsets = sorted({str(result.get("subset") or "") for result in results if result.get("subset")})
+            display_pairs = [_dashboard_dataset_subset(result) for result in results]
+            datasets = sorted({dataset for dataset, _subset in display_pairs if dataset})
+            subsets = sorted({subset for _dataset, subset in display_pairs if subset})
             total = int(payload.get("records") or len(record_ids)) * max(1, len(group_ids))
             progress = load_progress(run_root, expected_total=total, group_ids=group_ids)
             summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
@@ -271,11 +280,12 @@ class BenchmarkDashboard:
         records: list[dict[str, Any]] = []
         for record_id, items in sorted(by_record.items()):
             first = items[0]
+            dataset, subset = _dashboard_dataset_subset(first)
             records.append(
                 {
                     "record_id": record_id,
-                    "dataset": first.get("dataset", ""),
-                    "subset": first.get("subset", ""),
+                    "dataset": dataset,
+                    "subset": subset,
                     "eval_kind": first.get("eval_kind", ""),
                     "prompt_preview": str(first.get("prompt") or "")[:320],
                     "group_results": [
@@ -353,6 +363,7 @@ class BenchmarkDashboard:
             raise RecordNotFoundError(f"Unknown record `{record_id}` in run `{run_id}`")
         results = sorted(results, key=_group_sort_key)
         first = results[0]
+        dataset, subset = _dashboard_dataset_subset(first)
         question_markdown, question_source = self._question_markdown(run_root, results)
         groups: list[dict[str, Any]] = []
         for result in results:
@@ -394,8 +405,8 @@ class BenchmarkDashboard:
         return {
             "run_id": run_id,
             "record_id": first.get("record_id") or record_id,
-            "dataset": first.get("dataset", ""),
-            "subset": first.get("subset", ""),
+            "dataset": dataset,
+            "subset": subset,
             "eval_kind": first.get("eval_kind", ""),
             "prompt": first.get("prompt", ""),
             "question_markdown": question_markdown,

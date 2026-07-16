@@ -18,6 +18,8 @@ def result_payload(
     *,
     group_id: str,
     record_id: str,
+    dataset: str = "demo",
+    subset: str = "chembench",
     eval_kind: str = "chembench_open_ended",
     passed: bool | None = True,
     score: float = 1.0,
@@ -33,8 +35,8 @@ def result_payload(
         "websearch": False,
         "skills_enabled": group_id.endswith("skills_on"),
         "record_id": record_id,
-        "subset": "chembench",
-        "dataset": "demo",
+        "subset": subset,
+        "dataset": dataset,
         "source_file": "/tmp/demo.jsonl",
         "eval_kind": eval_kind,
         "prompt": "Question body",
@@ -125,6 +127,64 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert "average_normalized_score" not in runs[0]
     assert runs[0]["progress"]["completed"] == 1
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
+
+
+def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> None:
+    run_root = tmp_path / "vgb-run"
+    payloads = [
+        result_payload(
+            group_id="single_llm_skills_on",
+            record_id="rdkit-qed-max-001",
+            dataset="verifier_grounded_rdkit",
+            subset="verifier_grounded_rdkit",
+            eval_kind="verifier_grounded",
+        ),
+        result_payload(
+            group_id="single_llm_skills_on",
+            record_id="xtb-gap-min-001",
+            dataset="verifier_grounded_xtb_xyz",
+            subset="verifier_grounded_xtb_xyz",
+            eval_kind="verifier_grounded",
+        ),
+        result_payload(
+            group_id="single_llm_skills_on",
+            record_id="property-calc-001",
+            dataset="verifier_grounded_property_calculation",
+            subset="verifier_grounded_property_calculation",
+            eval_kind="verifier_grounded",
+        ),
+    ]
+    write_json(
+        run_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-07-16T12:00:00+0800",
+            "records": 3,
+            "groups": [{"id": "single_llm_skills_on"}],
+            "results": payloads,
+            "summary": {},
+        },
+    )
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    runs = dashboard.list_runs()
+    records = dashboard.list_records("vgb-run")
+    record = dashboard.get_record("vgb-run", "rdkit-qed-max-001")
+
+    assert runs[0]["datasets"] == ["vgb"]
+    assert runs[0]["subsets"] == [
+        "verifier_grounded_property_calculation",
+        "verifier_grounded_rdkit",
+        "verifier_grounded_xtb_xyz",
+    ]
+    assert {item["dataset"] for item in records} == {"vgb"}
+    assert {item["subset"] for item in records} == {
+        "verifier_grounded_property_calculation",
+        "verifier_grounded_rdkit",
+        "verifier_grounded_xtb_xyz",
+    }
+    assert record["dataset"] == "vgb"
+    assert record["subset"] == "verifier_grounded_rdkit"
 
 
 def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Path) -> None:
