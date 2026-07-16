@@ -1,0 +1,16 @@
+[
+  {
+    "tool_name": "write",
+    "arguments": {
+      "path": "{scratch_dir}/find_max_qed.py",
+      "content": "print('trajectory fixture')\n"
+    }
+  },
+  {
+    "tool_name": "exec",
+    "arguments": {
+      "command": "cd \"$BENCHMARK_SKILL_SCRATCH_DIR\" && python find_max_qed.py",
+      "timeout": 30
+    }
+  }
+]

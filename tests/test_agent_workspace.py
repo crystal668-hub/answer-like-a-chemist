@@ -10,6 +10,7 @@ from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
     AttemptWorkspaceManager,
+    ProtectedRoot,
     WorkspaceIsolationError,
     WorkspaceTemplate,
 )
@@ -23,19 +24,42 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.template_root.mkdir(parents=True)
         (self.template_root / "AGENTS.md").write_text("# clean template\n", encoding="utf-8")
         self.manager = self._manager(invocation_id="invocation-1")
+        self.audit_index = 0
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def _manager(self, *, invocation_id: str) -> AttemptWorkspaceManager:
+        runtime_root = self.root / "runtime" / "runs"
+        output_root = self.root / "output"
         return AttemptWorkspaceManager(
-            runtime_root=self.root / "runtime" / "runs",
-            output_root=self.root / "output",
+            runtime_root=runtime_root,
+            output_root=output_root,
             run_id="run-1",
             invocation_id=invocation_id,
             templates={
                 "single-v1": WorkspaceTemplate(template_id="single-v1", source_dir=self.template_root),
             },
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", runtime_root, "test.runtime_root"),
+                ProtectedRoot("current_output_root", output_root, "test.output_root"),
+                ProtectedRoot("benchmark_dataset_root", self.root / "datasets", "test.datasets"),
+                ProtectedRoot("temp_benchmark_dataset_root", self.root / "temp-datasets", "test.temp_datasets"),
+                ProtectedRoot("verifier_release_root", self.root / "verifier-releases", "test.verifier_releases"),
+                ProtectedRoot("verifier_runtime_root", self.root / "verifier-runtimes", "test.verifier_runtimes"),
+                ProtectedRoot("verifier_resource_root", self.root / "verifier-resources", "test.verifier_resources"),
+                ProtectedRoot("benchmark_results_root", self.root / "benchmark-results", "test.results"),
+                ProtectedRoot("agents_root", self.root / "agents", "test.agents"),
+                *(
+                    ProtectedRoot("legacy_benchmark_workspace", self.root / "legacy" / name, f"test.legacy.{name}")
+                    for name in (
+                        "benchmark-single-skills-on",
+                        "benchmark-single-skills-off",
+                        "benchmark-judge",
+                        "custom-single-agent",
+                    )
+                ),
+            ),
         )
 
     @staticmethod
@@ -51,6 +75,48 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
             session_id=session_id,
             template_id="single-v1",
         )
+
+    def _audit_tool_call(
+        self,
+        *,
+        tool_name: str,
+        arguments: object,
+        allowed_roots: tuple[Path, ...] | list[Path] = (),
+        environment: dict[str, str] | None = None,
+    ):
+        index = self.audit_index
+        self.audit_index += 1
+        identity = self._identity(attempt_index=index, session_id=f"audit-session-{index}")
+        lease = self.manager.prepare(identity)
+        resolved_arguments = arguments(lease) if callable(arguments) else arguments
+        transcript = self.root / f"audit-transcript-{index}.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "toolCall", "name": tool_name, "arguments": resolved_arguments}],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        audit = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+            allowed_roots=allowed_roots,
+            environment=environment,
+        )
+        self.manager.seal(
+            lease,
+            AttemptOutcome(
+                runner_status="completed" if audit.status == "clean" else "failed",
+                contamination_audit=audit,
+            ),
+        )
+        return audit
 
     def test_prepare_creates_exact_sentinel_and_current_scratch_atomically(self) -> None:
         identity = self._identity()
@@ -277,6 +343,13 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                         run_id="run-1",
                         invocation_id="invocation-1",
                         templates=self.manager.templates,
+                        protected_roots=(
+                            ProtectedRoot(
+                                "legacy_benchmark_workspace",
+                                Path(environment["HOME"]) / "benchmark" / "workspaces" / "benchmark-judge",
+                                "test.legacy",
+                            ),
+                        ),
                     )
                     manager.runtime_root.parent.mkdir(parents=True, exist_ok=True)
                     audit = manager.audit_attempt(
@@ -305,6 +378,10 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
             run_id=run_id,
             invocation_id="invocation-1",
             templates=self.manager.templates,
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", self.root / "runtime" / "runs", "test.runtime_root"),
+                ProtectedRoot("current_output_root", self.root / "output", "test.output_root"),
+            ),
         )
         identity = AttemptIdentity(
             run_id=run_id,
@@ -353,7 +430,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("clean", audit.status)
         manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
 
-    def test_forbidden_path_audit_still_detects_verifier_resource_paths(self) -> None:
+    def test_forbidden_path_audit_does_not_assign_policy_by_resource_name(self) -> None:
         commands = (
             "cat /tmp/formal-benchmarks/verifier_grounded_rdkit/data/tasks.jsonl",
             "cat /tmp/verifier-grounded-benchmark/tasks/task.yaml",
@@ -390,12 +467,326 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                     {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
                 )
 
-                self.assertEqual("contaminated", audit.status)
-                self.assertEqual("verifier_or_gold_path", audit.findings[0]["rule_id"])
+                self.assertEqual("clean", audit.status)
+                self.assertEqual((), audit.findings)
                 self.manager.seal(
                     lease,
-                    AttemptOutcome(runner_status="failed", contamination_audit=audit),
+                    AttemptOutcome(runner_status="completed", contamination_audit=audit),
                 )
+
+    def test_forbidden_path_audit_reports_configured_root_evidence(self) -> None:
+        cases = (
+            ("benchmark_dataset_root", self.root / "datasets" / "track" / "tasks.jsonl"),
+            ("temp_benchmark_dataset_root", self.root / "temp-datasets" / "old.jsonl"),
+            ("verifier_release_root", self.root / "verifier-releases" / "wheel.whl"),
+            ("verifier_runtime_root", self.root / "verifier-runtimes" / "manifest.json"),
+            ("verifier_resource_root", self.root / "verifier-resources" / "release.json"),
+            ("benchmark_results_root", self.root / "benchmark-results" / "other-run" / "results.json"),
+            ("agents_root", self.root / "agents" / "agent" / "sessions.json"),
+        )
+        for expected_policy, path in cases:
+            with self.subTest(policy=expected_policy):
+                audit = self._audit_tool_call(
+                    tool_name="exec",
+                    arguments={"command": f"cat {path}"},
+                )
+                self.assertEqual("contaminated", audit.status)
+                finding = audit.findings[0]
+                self.assertEqual("forbidden_path", finding["rule_id"])
+                self.assertEqual(expected_policy, finding["policy_id"])
+                self.assertEqual(str(path.resolve(strict=False)), finding["resolved_path"])
+                matched_root = next(
+                    root.path for root in self.manager.protected_roots if root.policy_id == expected_policy
+                )
+                self.assertEqual(str(matched_root), finding["matched_root"])
+                Path(finding["resolved_path"]).relative_to(Path(finding["matched_root"]))
+
+    def test_forbidden_path_audit_supports_relative_env_home_and_flag_paths(self) -> None:
+        dataset_file = self.root / "datasets" / "track" / "tasks.jsonl"
+        commands_and_env = (
+            (lambda lease: f"cat {os.path.relpath(dataset_file, lease.active_workspace)}", {}),
+            (lambda _lease: "cat $DATASET_ROOT/track/tasks.jsonl", {"DATASET_ROOT": str(self.root / "datasets")}),
+            (lambda _lease: "cat ${DATASET_ROOT}/track/tasks.jsonl", {"DATASET_ROOT": str(self.root / "datasets")}),
+            (lambda _lease: "cat ~/track/tasks.jsonl", {"HOME": str(self.root / "datasets")}),
+            (lambda _lease: f"tool --input={dataset_file}", {}),
+        )
+        for command_factory, environment in commands_and_env:
+            with self.subTest(environment=environment):
+                audit = self._audit_tool_call(
+                    tool_name="exec",
+                    arguments=lambda lease: {"command": command_factory(lease)},
+                    environment=environment,
+                )
+                self.assertEqual("contaminated", audit.status)
+                self.assertEqual("benchmark_dataset_root", audit.findings[0]["policy_id"])
+
+        workdir = self._audit_tool_call(
+            tool_name="exec",
+            arguments={"command": "pwd", "workdir": str(self.root / "datasets" / "track")},
+        )
+        self.assertEqual("contaminated", workdir.status)
+        self.assertEqual("exec.workdir", workdir.findings[0]["candidate_source"])
+
+    def test_all_explicit_legacy_workspaces_are_protected(self) -> None:
+        for name in (
+            "benchmark-single-skills-on",
+            "benchmark-single-skills-off",
+            "benchmark-judge",
+            "custom-single-agent",
+        ):
+            with self.subTest(name=name):
+                audit = self._audit_tool_call(
+                    tool_name="read",
+                    arguments={"path": str(self.root / "legacy" / name / "history.json")},
+                )
+                self.assertEqual("contaminated", audit.status)
+                self.assertEqual("legacy_benchmark_workspace", audit.findings[0]["policy_id"])
+
+    def test_environment_expansion_uses_exact_identifiers_and_ignores_unknown_dynamic_values(self) -> None:
+        exact = self._audit_tool_call(
+            tool_name="exec",
+            arguments={"command": "cat $HOME2/track/tasks.jsonl"},
+            environment={"HOME": str(self.root / "safe"), "HOME2": str(self.root / "datasets")},
+        )
+        self.assertEqual("contaminated", exact.status)
+        self.assertEqual("benchmark_dataset_root", exact.findings[0]["policy_id"])
+
+        for command in (
+            "cat $UNKNOWN/track/tasks.jsonl",
+            f"cat ${{UNKNOWN:-{self.root / 'datasets'}}}/tasks.jsonl",
+            f"cat $(printf {self.root / 'datasets'})/tasks.jsonl",
+            f"cat `printf {self.root / 'datasets'}`/tasks.jsonl",
+        ):
+            with self.subTest(command=command):
+                audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
+                self.assertEqual("clean", audit.status)
+
+    def test_existing_symlink_alias_resolves_into_protected_root(self) -> None:
+        dataset_root = self.root / "datasets"
+        dataset_root.mkdir()
+        alias = self.root / "dataset-alias"
+        alias.symlink_to(dataset_root, target_is_directory=True)
+
+        audit = self._audit_tool_call(
+            tool_name="read",
+            arguments={"path": str(alias / "track" / "tasks.jsonl")},
+        )
+
+        self.assertEqual("contaminated", audit.status)
+        self.assertEqual("benchmark_dataset_root", audit.findings[0]["policy_id"])
+        self.assertEqual(
+            str((dataset_root / "track" / "tasks.jsonl").resolve(strict=False)),
+            audit.findings[0]["resolved_path"],
+        )
+
+    def test_allowed_child_scope_wins_over_protected_parent_without_allowing_siblings(self) -> None:
+        public_bundle = self.manager.output_root / "input-bundles" / "record-1"
+        allowed = self._audit_tool_call(
+            tool_name="read",
+            arguments={"path": str(public_bundle / "record.json")},
+            allowed_roots=[public_bundle],
+        )
+        sibling = self._audit_tool_call(
+            tool_name="read",
+            arguments={"path": str(public_bundle.parent / "record-2" / "record.json")},
+            allowed_roots=[public_bundle],
+        )
+
+        self.assertEqual("clean", allowed.status)
+        self.assertEqual("contaminated", sibling.status)
+        self.assertEqual("current_output_root", sibling.findings[0]["policy_id"])
+
+    def test_structured_payload_text_is_not_a_path_source(self) -> None:
+        audit = self._audit_tool_call(
+            tool_name="edit",
+            arguments={
+                "path": "notes.txt",
+                "new_text": f"refer to {self.root / 'datasets' / 'track' / 'tasks.jsonl'}",
+            },
+        )
+
+        self.assertEqual("clean", audit.status)
+
+    def test_unconfigured_named_paths_and_exact_output_sibling_are_clean(self) -> None:
+        for path in (
+            "/tmp/formal-benchmarks/track/tasks.jsonl",
+            "/tmp/verifier-grounded-benchmark/tasks/task.yaml",
+            "/tmp/sample_answers.jsonl",
+            self.manager.output_root.parent / "unrelated" / "results.json",
+        ):
+            with self.subTest(path=path):
+                audit = self._audit_tool_call(
+                    tool_name="exec",
+                    arguments={"command": f"cat {path}"},
+                )
+                self.assertEqual("clean", audit.status)
+
+    def test_most_specific_protected_root_is_independent_of_policy_order(self) -> None:
+        parent = self.root / "specific-results"
+        child = parent / "run-a"
+        policies = (
+            ProtectedRoot("benchmark_results_root", parent, "test.parent"),
+            ProtectedRoot("current_output_root", child, "test.child"),
+            ProtectedRoot("z_same_depth_policy", child, "test.tie"),
+        )
+        observed = []
+        for index, ordered in enumerate((policies, tuple(reversed(policies)))):
+            manager = AttemptWorkspaceManager(
+                runtime_root=self.root / f"specific-runtime-{index}",
+                output_root=child,
+                run_id="specific-run",
+                invocation_id=f"specific-invocation-{index}",
+                templates=self.manager.templates,
+                protected_roots=ordered,
+            )
+            identity = AttemptIdentity(
+                run_id="specific-run",
+                invocation_id=f"specific-invocation-{index}",
+                group_id="group",
+                runner_kind="single_llm",
+                agent_id="agent",
+                record_id="record",
+                attempt_index=0,
+                session_id=f"specific-session-{index}",
+                template_id="single-v1",
+            )
+            lease = manager.prepare(identity)
+            transcript = self.root / f"specific-{index}.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "toolCall",
+                                    "name": "read",
+                                    "arguments": {"path": str(child / "secret.json")},
+                                }
+                            ],
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit = manager.audit_attempt(
+                lease,
+                {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+            )
+            observed.append(audit.findings[0]["policy_id"])
+            manager.seal(lease, AttemptOutcome(runner_status="failed", contamination_audit=audit))
+
+        self.assertEqual(["current_output_root", "current_output_root"], observed)
+
+    def test_invalid_protected_root_policy_fails_before_workspace_prepare(self) -> None:
+        invalid_file = self.root / "not-a-directory"
+        invalid_file.write_text("x", encoding="utf-8")
+        for root in (
+            ProtectedRoot("", self.root / "somewhere", "test"),
+            ProtectedRoot("root", Path("/"), "test"),
+            ProtectedRoot("file", invalid_file, "test"),
+        ):
+            with self.subTest(root=root):
+                with self.assertRaises(WorkspaceIsolationError) as raised:
+                    AttemptWorkspaceManager(
+                        runtime_root=self.root / "invalid-runtime",
+                        output_root=self.root / "invalid-output",
+                        run_id="run",
+                        invocation_id="invocation",
+                        templates=self.manager.templates,
+                        protected_roots=(root,),
+                    )
+                self.assertEqual("workspace_policy_invalid", raised.exception.code)
+
+    def test_protected_root_manifest_is_normalized_deduplicated_and_stable(self) -> None:
+        first = self.root / "policy-a"
+        second = self.root / "policy-b"
+        manager = AttemptWorkspaceManager(
+            runtime_root=self.root / "policy-runtime",
+            output_root=self.root / "policy-output",
+            run_id="run",
+            invocation_id="invocation",
+            templates=self.manager.templates,
+            protected_roots=(
+                ProtectedRoot("shared", second, "source-b"),
+                ProtectedRoot("shared", first, "source-z"),
+                ProtectedRoot("shared", first, "source-a"),
+            ),
+        )
+
+        manifest = manager.forbidden_path_policy_manifest()
+        self.assertEqual(2, len(manifest["protected_roots"]))
+        self.assertEqual(
+            [str(first.resolve(strict=False)), str(second.resolve(strict=False))],
+            [item["path"] for item in manifest["protected_roots"]],
+        )
+        self.assertEqual("source-a", manifest["protected_roots"][0]["source"])
+
+    def test_rdkit_false_positive_trajectory_replays_clean_and_real_dataset_root_is_blocked(self) -> None:
+        lease = self.manager.prepare(
+            self._identity(attempt_index=900, session_id="rdkit-trajectory-replay")
+        )
+        fixture_path = Path(__file__).parent / "fixtures" / "rdkit_forbidden_path_false_positive.json"
+        fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        def write_transcript(path: Path, replacement: Path) -> None:
+            content = []
+            for call in fixture:
+                arguments = json.loads(
+                    json.dumps(call["arguments"]).replace("{scratch_dir}", str(replacement))
+                )
+                content.append(
+                    {
+                        "type": "toolCall",
+                        "name": call["tool_name"],
+                        "arguments": arguments,
+                    }
+                )
+            path.write_text(
+                json.dumps({"message": {"role": "assistant", "content": content}}) + "\n",
+                encoding="utf-8",
+            )
+
+        clean_transcript = self.root / "rdkit-clean-trajectory.jsonl"
+        write_transcript(clean_transcript, lease.scratch_dir)
+        environment = {"BENCHMARK_SKILL_SCRATCH_DIR": str(lease.scratch_dir)}
+        clean = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(clean_transcript)}},
+            environment=environment,
+        )
+
+        protected_transcript = self.root / "rdkit-protected-trajectory.jsonl"
+        write_transcript(protected_transcript, self.root / "datasets")
+        contaminated = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(protected_transcript)}},
+            environment=environment,
+        )
+
+        self.assertEqual("clean", clean.status)
+        self.assertEqual("contaminated", contaminated.status)
+        finding = contaminated.findings[0]
+        self.assertEqual("forbidden_path", finding["rule_id"])
+        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
+        self.assertIn("resolved_path", finding)
+        self.assertIn("matched_root", finding)
+        self.assertEqual({"forbidden_path"}, {item["rule_id"] for item in contaminated.findings})
+        self.manager.seal(
+            lease,
+            AttemptOutcome(runner_status="failed", contamination_audit=contaminated),
+        )
+
+    def test_malformed_exec_command_makes_audit_unavailable_without_false_path_finding(self) -> None:
+        audit = self._audit_tool_call(
+            tool_name="exec",
+            arguments={"command": "cat '/unterminated"},
+        )
+
+        self.assertEqual("unavailable", audit.status)
+        self.assertEqual("transcript_audit_failed", audit.findings[0]["rule_id"])
+        self.assertNotIn("resolved_path", audit.findings[0])
 
     def test_forbidden_path_audit_allows_current_workspace_and_skill_root(self) -> None:
         lease = self.manager.prepare(self._identity())

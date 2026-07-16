@@ -2634,8 +2634,12 @@ Points: 0.5, Item: Second criterion
                     status="contaminated",
                     findings=(
                         {
-                            "rule_id": "forbidden_workspace_path",
+                            "rule_id": "forbidden_path",
+                            "policy_id": "benchmark_runtime_root",
                             "tool_name": "read",
+                            "candidate_source": "read.path",
+                            "resolved_path": "/tmp/benchmark-runtime/old/verdict.json",
+                            "matched_root": "/tmp/benchmark-runtime",
                             "command_excerpt": "../old/verdict.json",
                         },
                     ),

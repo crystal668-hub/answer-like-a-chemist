@@ -12,6 +12,7 @@ from unittest import mock
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
+    ProtectedRoot,
     ContaminationAudit,
     WorkspaceTemplate,
     WorkspaceIsolationError,
@@ -50,6 +51,10 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             run_id="run-1",
             invocation_id="invocation-1",
             templates=templates,
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", root / "runtime" / "runs", "test.runtime_root"),
+                ProtectedRoot("current_output_root", root / "output", "test.output_root"),
+            ),
         )
 
     def tearDown(self) -> None:
@@ -289,8 +294,12 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
                 status="contaminated",
                 findings=(
                     {
-                        "rule_id": "forbidden_workspace_path",
+                        "rule_id": "forbidden_path",
+                        "policy_id": "benchmark_runtime_root",
                         "tool_name": "read",
+                        "candidate_source": "read.path",
+                        "resolved_path": "/tmp/benchmark-runtime/old/answer.xyz",
+                        "matched_root": "/tmp/benchmark-runtime",
                         "command_excerpt": "../old/answer.xyz",
                     },
                 ),

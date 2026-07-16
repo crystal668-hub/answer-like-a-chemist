@@ -10,6 +10,7 @@ from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
+    ProtectedRoot,
     ContaminationAudit,
     WorkspaceIsolationError,
     default_workspace_templates,
@@ -36,6 +37,10 @@ class ChemQAWorkspaceIsolationTests(unittest.TestCase):
             run_id="run-1",
             invocation_id="invocation-1",
             templates=default_workspace_templates(project_root),
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", self.root / "runtime" / "runs", "test.runtime_root"),
+                ProtectedRoot("current_output_root", self.root / "output", "test.output_root"),
+            ),
         )
         self.runner = ChemQARunner(
             chemqa_root=self.root / "chemqa-root",

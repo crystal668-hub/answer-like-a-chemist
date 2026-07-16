@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from benchmarking.runtime.config import render_run_config
-from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, WorkspaceTemplate
+from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, ProtectedRoot, WorkspaceTemplate
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
@@ -43,6 +43,10 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             run_id="run-1",
             invocation_id="invocation-1",
             templates={"test-v1": WorkspaceTemplate(template_id="test-v1", source_dir=template)},
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", root / "managed-workspaces" / "runs", "test.runtime_root"),
+                ProtectedRoot("current_output_root", root / "runs", "test.output_root"),
+            ),
         )
 
     def test_render_run_config_is_pure_and_does_not_mutate_base_payload(self) -> None:

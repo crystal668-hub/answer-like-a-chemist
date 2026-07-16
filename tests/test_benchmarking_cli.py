@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from benchmarking.core.reporting import GroupRecordResult as ReportingGroupRecordResult
+from benchmarking.runtime.agent_workspace import (
+    AttemptIdentity,
+    AttemptOutcome,
+    AttemptWorkspaceManager,
+    WorkspaceTemplate,
+)
 from benchmarking.workflow import cli as benchmarking_cli
 
 
@@ -32,6 +40,95 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert benchmarking_cli.EXPERIMENT_GROUPS["chemqa_skills_on"].runner == "chemqa"
     assert all(group.websearch is False for group in benchmarking_cli.EXPERIMENT_GROUPS.values())
     assert all(spec.websearch_enabled is False for spec in benchmarking_cli.EXPERIMENT_SPECS.values())
+
+
+def test_production_forbidden_path_policy_uses_explicit_runtime_roots_and_custom_dataset(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    custom_dataset = tmp_path / "custom-vgb-data"
+    path_values = {
+        "benchmarks_root": custom_dataset,
+        "temp_benchmarks_root": tmp_path / "temp-data",
+        "data_root": tmp_path / "data",
+        "project_state_root": tmp_path / "project" / "state",
+        "project_root": tmp_path / "project",
+        "agents_root": tmp_path / "agents",
+        "benchmark_runtime_root": tmp_path / "benchmark-workspaces",
+    }
+    for name, value in path_values.items():
+        monkeypatch.setattr(benchmarking_cli.runtime_paths, name, value)
+
+    runtime_root = path_values["benchmark_runtime_root"] / "runs"
+    output_root = path_values["project_state_root"] / "benchmark-runs" / "run-a"
+    roots = benchmarking_cli.build_production_protected_roots(
+        runtime_root=runtime_root,
+        output_root=output_root,
+    )
+
+    counts = Counter(root.policy_id for root in roots)
+    assert len(roots) == 13
+    assert counts["legacy_benchmark_workspace"] == 4
+    assert sum(count for policy, count in counts.items() if policy != "legacy_benchmark_workspace") == 9
+
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "AGENTS.md").write_text("# test\n", encoding="utf-8")
+    manager = AttemptWorkspaceManager(
+        runtime_root=runtime_root,
+        output_root=output_root,
+        run_id="run-a",
+        invocation_id="invocation-a",
+        templates={"single-v1": WorkspaceTemplate("single-v1", source_dir=template)},
+        protected_roots=roots,
+    )
+    manifest = manager.forbidden_path_policy_manifest()
+    dataset_policy = next(
+        item for item in manifest["protected_roots"] if item["policy_id"] == "benchmark_dataset_root"
+    )
+    assert dataset_policy["path"] == str(custom_dataset.resolve(strict=False))
+
+    lease = manager.prepare(
+        AttemptIdentity(
+            run_id="run-a",
+            invocation_id="invocation-a",
+            group_id="single_llm_skills_off",
+            runner_kind="single_llm",
+            agent_id="agent",
+            record_id="record",
+            attempt_index=0,
+            session_id="session",
+            template_id="single-v1",
+        )
+    )
+    transcript = tmp_path / "custom-dataset-transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "name": "exec",
+                            "arguments": {"command": f"cat {custom_dataset / 'track' / 'tasks.jsonl'}"},
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    audit = manager.audit_attempt(
+        lease,
+        {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+    )
+
+    assert audit.status == "contaminated"
+    assert audit.findings[0]["policy_id"] == "benchmark_dataset_root"
+    assert audit.findings[0]["matched_root"] == dataset_policy["path"]
+    manager.seal(lease, AttemptOutcome(runner_status="failed", contamination_audit=audit))
 
 
 def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None:

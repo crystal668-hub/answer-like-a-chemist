@@ -35,6 +35,7 @@ WORKSPACE_FAILURE_CODES = frozenset(
         "workspace_archive_failed",
         "benchmark_workspace_contamination",
         "workspace_recovery_failed",
+        "workspace_policy_invalid",
     }
 )
 
@@ -90,6 +91,21 @@ class WorkspaceTemplate:
     template_id: str
     source_dir: Path | None = None
     files: Mapping[str, Path] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProtectedRoot:
+    policy_id: str
+    path: Path
+    source: str
+
+
+@dataclass(frozen=True)
+class PathCandidate:
+    raw_token: str
+    expanded_token: str
+    resolved_path: Path
+    source: str
 
 
 @dataclass(frozen=True)
@@ -253,12 +269,14 @@ class AttemptWorkspaceManager:
         run_id: str,
         invocation_id: str,
         templates: Mapping[str, WorkspaceTemplate],
+        protected_roots: tuple[ProtectedRoot, ...] | list[ProtectedRoot],
     ) -> None:
         self.runtime_root = runtime_root.expanduser().resolve()
         self.output_root = output_root.expanduser().resolve()
         self.run_id = str(run_id)
         self.invocation_id = str(invocation_id)
         self.templates = dict(templates)
+        self.protected_roots = _normalize_protected_roots(protected_roots)
         self.run_runtime_root = self.runtime_root / workspace_slug(self.run_id)
         self.invocation_runtime_root = self.run_runtime_root / workspace_slug(self.invocation_id)
         self.active_root = self.invocation_runtime_root / "active"
@@ -281,6 +299,19 @@ class AttemptWorkspaceManager:
             _, digest = self._template_entries(template)
             manifest[template_id] = {"template_id": template_id, "template_sha256": digest}
         return manifest
+
+    def forbidden_path_policy_manifest(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "protected_roots": [
+                {
+                    "policy_id": root.policy_id,
+                    "path": str(root.path),
+                    "source": root.source,
+                }
+                for root in self.protected_roots
+            ],
+        }
 
     def prepare(self, identity: AttemptIdentity) -> AttemptWorkspaceLease:
         self._validate_identity_scope(identity)
@@ -688,17 +719,6 @@ class AttemptWorkspaceManager:
                 ),
             )
 
-        forbidden_roots = [
-            self.runtime_root,
-            self.archive_root,
-            self.quarantine_root,
-            self.output_root.parent,
-            self.runtime_root.parents[2] / "agents",
-            self.runtime_root.parent / "benchmark-single-skills-on",
-            self.runtime_root.parent / "benchmark-single-skills-off",
-            self.runtime_root.parent / "benchmark-judge",
-            self.runtime_root.parent / "custom-single-agent",
-        ]
         allowed = [lease.active_workspace, *allowed_roots]
         findings: list[dict[str, Any]] = []
         try:
@@ -707,16 +727,16 @@ class AttemptWorkspaceManager:
                     continue
                 payload = json.loads(raw_line)
                 for tool_name, arguments in _tool_calls_from_transcript_payload(payload):
-                    finding = _forbidden_access_finding(
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        workspace=lease.active_workspace,
-                        forbidden_roots=forbidden_roots,
-                        allowed_roots=allowed,
-                        environment=environment or {},
+                    findings.extend(
+                        _forbidden_access_findings(
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            workspace=lease.active_workspace,
+                            protected_roots=self.protected_roots,
+                            allowed_roots=allowed,
+                            environment=environment or {},
+                        )
                     )
-                    if finding is not None:
-                        findings.append(finding)
                 fallback_finding = _workdir_fallback_finding(payload)
                 if fallback_finding is not None:
                     findings.append(fallback_finding)
@@ -1220,12 +1240,38 @@ def _workdir_fallback_finding(payload: Any) -> dict[str, Any] | None:
     return None
 
 
-def _expand_environment(text: str, environment: Mapping[str, str]) -> str:
-    expanded = str(text)
-    for name, value in sorted(environment.items(), key=lambda item: len(item[0]), reverse=True):
-        expanded = expanded.replace(f"${{{name}}}", str(value)).replace(f"${name}", str(value))
-    home = str(environment.get("HOME") or Path.home())
-    return expanded.replace("~/", home.rstrip("/") + "/")
+_ENVIRONMENT_REFERENCE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_UNSUPPORTED_DYNAMIC_EXPRESSION = re.compile(r"\$\(|`|\$\{[^}]*[^A-Za-z0-9_][^}]*\}")
+
+
+def _expand_path_expression(token: str, environment: Mapping[str, str]) -> str | None:
+    expanded = str(token)
+    if _UNSUPPORTED_DYNAMIC_EXPRESSION.search(expanded):
+        return None
+    if expanded == "~" or expanded.startswith("~/"):
+        home = str(environment.get("HOME") or "").strip()
+        if not home:
+            return None
+        expanded = home if expanded == "~" else home.rstrip("/") + expanded[1:]
+    elif expanded.startswith("~"):
+        return None
+    if "$" in _ENVIRONMENT_REFERENCE.sub("", expanded):
+        return None
+
+    missing = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal missing
+        name = match.group(1) or match.group(2) or ""
+        if name not in environment:
+            missing = True
+            return match.group(0)
+        return str(environment[name])
+
+    expanded = _ENVIRONMENT_REFERENCE.sub(replace, expanded)
+    if missing:
+        return None
+    return expanded
 
 
 def _redact_text(text: str, *, limit: int = 1000) -> str:
@@ -1245,102 +1291,265 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _argument_text(arguments: Any) -> str:
-    if isinstance(arguments, str):
-        return arguments
-    try:
-        return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
-    except TypeError:
-        return str(arguments)
-
-
-_NON_ACCESS_ARGUMENT_KEYS = {
-    "body",
-    "content",
-    "data",
-    "new_string",
-    "new_text",
-    "old_string",
-    "old_text",
-    "replacement",
-    "text",
-}
-
-
-_SENSITIVE_RESOURCE_PATTERNS = (
-    re.compile(r"(?<![A-Za-z0-9_-])sample[_-]answers(?=[./\\\s\"'`,;|&<>]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])gold(?=[/\\]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])verifier[_-]specs?(?=[./\\\s\"'`,;|&<>]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])data[/\\]verifier-grounded-releases(?=[/\\]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])verifier-grounded-benchmark[/\\]tasks(?=[/\\]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])verifier_grounded_benchmark(?=[/\\\s\"'`,;|&<>]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])formal-benchmarks(?=[/\\]|$)"),
-    re.compile(r"(?<![A-Za-z0-9_-])task\.ya?ml(?=[/\\\s\"'`,;|&<>]|$)"),
+_EXEC_TOOLS = frozenset({"exec", "execute", "shell", "bash", "command"})
+_PATH_ARGUMENT_KEYS = frozenset(
+    {
+        "path",
+        "file_path",
+        "directory",
+        "workdir",
+        "cwd",
+        "source",
+        "target",
+    }
 )
 
 
-def _access_arguments(tool_name: str, arguments: Any) -> Any:
-    if not isinstance(arguments, Mapping):
-        return arguments
-    if str(tool_name or "").strip().lower() in {"exec", "execute", "shell", "bash", "command"}:
-        return arguments
-    return {
-        key: value
-        for key, value in arguments.items()
-        if str(key).strip().lower() not in _NON_ACCESS_ARGUMENT_KEYS
-    }
+def _normalize_protected_roots(
+    roots: tuple[ProtectedRoot, ...] | list[ProtectedRoot],
+) -> tuple[ProtectedRoot, ...]:
+    normalized: list[ProtectedRoot] = []
+    for root in roots:
+        policy_id = str(root.policy_id or "").strip()
+        source = str(root.source or "").strip()
+        raw_path = Path(root.path).expanduser()
+        resolved = raw_path.resolve(strict=False)
+        if not policy_id:
+            raise WorkspaceIsolationError(
+                "workspace_policy_invalid",
+                "Protected benchmark root policy_id must be non-empty.",
+            )
+        if str(root.path).strip() in {"", "."} or resolved == Path(resolved.anchor):
+            raise WorkspaceIsolationError(
+                "workspace_policy_invalid",
+                "Protected benchmark root must not be empty or the filesystem root.",
+                details={"policy_id": policy_id, "path": str(root.path)},
+            )
+        if resolved.exists() and not resolved.is_dir():
+            raise WorkspaceIsolationError(
+                "workspace_policy_invalid",
+                "Existing protected benchmark root must be a directory.",
+                details={"policy_id": policy_id, "path": str(resolved)},
+            )
+        normalized.append(ProtectedRoot(policy_id=policy_id, path=resolved, source=source))
+
+    deduped: dict[tuple[str, str], ProtectedRoot] = {}
+    for root in sorted(normalized, key=lambda item: (item.policy_id, str(item.path), item.source)):
+        deduped.setdefault((root.policy_id, str(root.path)), root)
+    return tuple(sorted(deduped.values(), key=lambda item: (item.policy_id, str(item.path), item.source)))
 
 
-def _candidate_paths(text: str, *, workspace: Path) -> list[Path]:
-    normalized = re.sub(r"[\n\r\t]", " ", text)
-    try:
-        tokens = shlex.split(normalized, posix=True)
-    except ValueError:
-        tokens = normalized.split()
-    candidates: list[Path] = []
-    for raw_token in tokens:
-        token = raw_token.strip("\"'`,;()[]{}")
-        if not token or token.startswith("-"):
+def _resolve_candidate(
+    raw_token: str,
+    *,
+    source: str,
+    workspace: Path,
+    environment: Mapping[str, str],
+    require_path_syntax: bool,
+) -> PathCandidate | None:
+    token = str(raw_token).strip().strip(",")
+    if not token or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", token):
+        return None
+    expanded = _expand_path_expression(token, environment)
+    if expanded is None or not expanded:
+        return None
+    if require_path_syntax and not (
+        expanded.startswith(("/", "./", "../", "~/"))
+        or "/" in expanded
+        or any(part == ".." for part in Path(expanded).parts)
+    ):
+        return None
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = workspace / path
+    return PathCandidate(
+        raw_token=token,
+        expanded_token=expanded,
+        resolved_path=path.expanduser().resolve(strict=False),
+        source=source,
+    )
+
+
+def _without_dynamic_command_substitutions(command: str) -> str:
+    result: list[str] = []
+    index = 0
+    quote = ""
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and quote != "'" and index + 1 < len(command):
+            result.extend((char, command[index + 1]))
+            index += 2
             continue
-        if token.startswith("/") or token.startswith("./") or token.startswith("../") or "/../" in token:
-            candidate = Path(token)
-            if not candidate.is_absolute():
-                candidate = workspace / candidate
-            candidates.append(candidate.resolve(strict=False))
-    for match in re.finditer(r"(?<![A-Za-z0-9_])(/[^\s\"'`,;|&<>]+)", normalized):
-        candidates.append(Path(match.group(1)).resolve(strict=False))
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            result.append(char)
+            index += 1
+            continue
+        if quote != "'" and command.startswith("$(", index):
+            depth = 1
+            index += 2
+            while index < len(command) and depth:
+                if command.startswith("$(", index):
+                    depth += 1
+                    index += 2
+                    continue
+                if command[index] == ")":
+                    depth -= 1
+                index += 1
+            result.append(" ")
+            continue
+        if quote != "'" and char == "`":
+            index += 1
+            while index < len(command):
+                if command[index] == "\\" and index + 1 < len(command):
+                    index += 2
+                    continue
+                if command[index] == "`":
+                    index += 1
+                    break
+                index += 1
+            result.append(" ")
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _exec_tokens(command: str) -> list[str]:
+    lexer = shlex.shlex(_without_dynamic_command_substitutions(command), posix=True, punctuation_chars="|&;()<>")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def _candidate_paths(
+    tool_name: str,
+    arguments: Any,
+    *,
+    workspace: Path,
+    environment: Mapping[str, str],
+) -> list[PathCandidate]:
+    normalized_tool = str(tool_name or "").strip().lower()
+    candidates: list[PathCandidate] = []
+    if normalized_tool in _EXEC_TOOLS:
+        if isinstance(arguments, str):
+            command = arguments
+            explicit_arguments: Mapping[str, Any] = {}
+        elif isinstance(arguments, Mapping):
+            command = str(arguments.get("command") or "")
+            explicit_arguments = arguments
+        else:
+            return []
+        for raw_token in _exec_tokens(command):
+            token = raw_token.strip()
+            if not token or token in {"|", "||", "&", "&&", ";", "(", ")", "<", ">", "<<", ">>"}:
+                continue
+            path_token = token.rsplit("=", 1)[1] if "=" in token else token
+            candidate = _resolve_candidate(
+                path_token,
+                source="exec.command",
+                workspace=workspace,
+                environment=environment,
+                require_path_syntax=True,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        for key in ("workdir", "cwd"):
+            value = explicit_arguments.get(key)
+            if isinstance(value, (str, os.PathLike)):
+                candidate = _resolve_candidate(
+                    str(value),
+                    source=f"exec.{key}",
+                    workspace=workspace,
+                    environment=environment,
+                    require_path_syntax=False,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+        return candidates
+
+    if not isinstance(arguments, Mapping):
+        return []
+    for key, value in arguments.items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key not in _PATH_ARGUMENT_KEYS or not isinstance(value, (str, os.PathLike)):
+            continue
+        candidate = _resolve_candidate(
+            str(value),
+            source=f"{normalized_tool or 'tool'}.{normalized_key}",
+            workspace=workspace,
+            environment=environment,
+            require_path_syntax=False,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
     return candidates
 
 
-def _forbidden_access_finding(
+def _command_excerpt(tool_name: str, arguments: Any) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    if isinstance(arguments, str):
+        return _redact_text(arguments)
+    if not isinstance(arguments, Mapping):
+        return ""
+    if normalized_tool in _EXEC_TOOLS:
+        payload = {key: arguments[key] for key in ("command", "workdir", "cwd") if key in arguments}
+    else:
+        payload = {key: value for key, value in arguments.items() if str(key).strip().lower() in _PATH_ARGUMENT_KEYS}
+    return _redact_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
+def _allowed_scope_matches(candidate: Path, root: Path) -> bool:
+    resolved_root = root.expanduser().resolve(strict=False)
+    if resolved_root.is_file():
+        return candidate == resolved_root
+    return _path_is_within(candidate, resolved_root)
+
+
+def _forbidden_access_findings(
     *,
     tool_name: str,
     arguments: Any,
     workspace: Path,
-    forbidden_roots: list[Path],
+    protected_roots: tuple[ProtectedRoot, ...],
     allowed_roots: list[Path],
     environment: Mapping[str, str],
-) -> dict[str, Any] | None:
-    raw_text = _argument_text(_access_arguments(tool_name, arguments))
-    expanded = _expand_environment(raw_text, environment)
-    lowered = expanded.lower()
-    if any(pattern.search(lowered) for pattern in _SENSITIVE_RESOURCE_PATTERNS):
-        return {
-            "rule_id": "verifier_or_gold_path",
-            "tool_name": tool_name,
-            "command_excerpt": _redact_text(raw_text),
-        }
-
-    resolved_allowed = [root.resolve(strict=False) for root in allowed_roots]
-    for candidate in _candidate_paths(expanded, workspace=workspace):
-        if any(_path_is_within(candidate, root) for root in resolved_allowed):
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    candidates = _candidate_paths(
+        tool_name,
+        arguments,
+        workspace=workspace,
+        environment=environment,
+    )
+    for candidate in candidates:
+        if any(_allowed_scope_matches(candidate.resolved_path, root) for root in allowed_roots):
             continue
-        for forbidden_root in forbidden_roots:
-            if _path_is_within(candidate, forbidden_root):
-                return {
-                    "rule_id": "forbidden_workspace_path",
-                    "tool_name": tool_name,
-                    "command_excerpt": _redact_text(raw_text),
-                    "matched_root": str(forbidden_root.resolve(strict=False)),
-                }
-    return None
+        matches = [
+            root
+            for root in protected_roots
+            if _path_is_within(candidate.resolved_path, root.path)
+        ]
+        if not matches:
+            continue
+        matched = min(matches, key=lambda root: (-len(root.path.parts), root.policy_id))
+        finding_key = (str(candidate.resolved_path), matched.policy_id)
+        if finding_key in seen:
+            continue
+        seen.add(finding_key)
+        findings.append(
+            {
+                "rule_id": "forbidden_path",
+                "policy_id": matched.policy_id,
+                "tool_name": str(tool_name or "").strip().lower(),
+                "candidate_source": candidate.source,
+                "resolved_path": str(candidate.resolved_path),
+                "matched_root": str(matched.path),
+                "command_excerpt": _command_excerpt(tool_name, arguments),
+            }
+        )
+    return findings

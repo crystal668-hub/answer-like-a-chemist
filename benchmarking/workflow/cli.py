@@ -70,6 +70,7 @@ from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
     ContaminationAudit,
+    ProtectedRoot,
     WorkspaceIsolationError,
     default_workspace_templates,
 )
@@ -595,6 +596,61 @@ def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = 
     )
 
 
+def build_production_protected_roots(*, runtime_root: Path, output_root: Path) -> tuple[ProtectedRoot, ...]:
+    roots = [
+        ProtectedRoot("benchmark_dataset_root", runtime_paths.benchmarks_root, "runtime_paths.benchmarks_root"),
+        ProtectedRoot(
+            "temp_benchmark_dataset_root",
+            runtime_paths.temp_benchmarks_root,
+            "runtime_paths.temp_benchmarks_root",
+        ),
+        ProtectedRoot(
+            "verifier_release_root",
+            runtime_paths.data_root / "verifier-grounded-releases",
+            'runtime_paths.data_root / "verifier-grounded-releases"',
+        ),
+        ProtectedRoot(
+            "verifier_runtime_root",
+            runtime_paths.project_state_root / "verifier-grounded-runtimes",
+            'runtime_paths.project_state_root / "verifier-grounded-runtimes"',
+        ),
+        ProtectedRoot(
+            "verifier_resource_root",
+            runtime_paths.project_root / "benchmarking" / "resources" / "verifier_grounded",
+            'runtime_paths.project_root / "benchmarking/resources/verifier_grounded"',
+        ),
+        ProtectedRoot("benchmark_runtime_root", runtime_root, "AttemptWorkspaceManager.runtime_root"),
+        ProtectedRoot(
+            "benchmark_results_root",
+            runtime_paths.project_state_root / "benchmark-runs",
+            'runtime_paths.project_state_root / "benchmark-runs"',
+        ),
+        ProtectedRoot("current_output_root", output_root, "AttemptWorkspaceManager.output_root"),
+        ProtectedRoot("agents_root", runtime_paths.agents_root, "runtime_paths.agents_root"),
+    ]
+    roots.extend(
+        ProtectedRoot(
+            "legacy_benchmark_workspace",
+            runtime_paths.benchmark_runtime_root / name,
+            f"runtime_paths.benchmark_runtime_root / {name}",
+        )
+        for name in (
+            "benchmark-single-skills-on",
+            "benchmark-single-skills-off",
+            "benchmark-judge",
+            "custom-single-agent",
+        )
+    )
+    return tuple(roots)
+
+
+def _compatibility_protected_roots(*, runtime_root: Path, output_root: Path) -> tuple[ProtectedRoot, ...]:
+    return (
+        ProtectedRoot("benchmark_runtime_root", runtime_root, "compatibility.runtime_root"),
+        ProtectedRoot("current_output_root", output_root, "compatibility.output_root"),
+    )
+
+
 def build_run_scoped_config_payload(
     base_payload: dict[str, Any],
     *,
@@ -610,6 +666,10 @@ def build_run_scoped_config_payload(
         run_id="config-preview",
         invocation_id="config-preview",
         templates=default_workspace_templates(runtime_paths.project_root),
+        protected_roots=_compatibility_protected_roots(
+            runtime_root=runtime_paths.benchmark_runtime_root / "runs",
+            output_root=runtime_paths.project_state_root / "benchmark-config-preview",
+        ),
     )
     try:
         return _build_run_scoped_config_payload(
@@ -1102,6 +1162,10 @@ class JudgeClient:
                 run_id="judge-test",
                 invocation_id=uuid.uuid4().hex,
                 templates=default_workspace_templates(runtime_paths.project_root),
+                protected_roots=_compatibility_protected_roots(
+                    runtime_root=config_path.expanduser().resolve().parent / ".benchmark-test-workspaces" / "runs",
+                    output_root=config_path.expanduser().resolve().parent / ".benchmark-test-output",
+                ),
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
@@ -1266,6 +1330,10 @@ class SingleLLMRunner(_BenchmarkingSingleLLMRunner):
                 run_id="runner-test",
                 invocation_id=uuid.uuid4().hex,
                 templates=default_workspace_templates(runtime_paths.project_root),
+                protected_roots=_compatibility_protected_roots(
+                    runtime_root=compatibility_root / ".benchmark-test-workspaces" / "runs",
+                    output_root=compatibility_root / ".benchmark-test-output",
+                ),
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
@@ -1322,6 +1390,10 @@ class ChemQARunner(_BenchmarkingChemQARunner):
                 run_id="chemqa-runner-test",
                 invocation_id=uuid.uuid4().hex,
                 templates=default_workspace_templates(runtime_paths.project_root),
+                protected_roots=_compatibility_protected_roots(
+                    runtime_root=compatibility_root / ".benchmark-test-workspaces" / "runs",
+                    output_root=compatibility_root / ".benchmark-test-output",
+                ),
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
@@ -2211,6 +2283,10 @@ def main() -> int:
         run_id=run_id,
         invocation_id=invocation_id,
         templates=default_workspace_templates(runtime_paths.project_root),
+        protected_roots=build_production_protected_roots(
+            runtime_root=runtime_paths.benchmark_runtime_root / "runs",
+            output_root=output_root,
+        ),
     )
     try:
         workspace_startup_recovery = workspace_manager.recover_all_incomplete()
@@ -2422,6 +2498,7 @@ def main() -> int:
             "schema_version": 1,
             "run_id": run_id,
             "invocation_id": invocation_id,
+            "forbidden_path_policy": workspace_manager.forbidden_path_policy_manifest(),
         },
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
@@ -2484,12 +2561,7 @@ def main() -> int:
             "quarantine_root": str(workspace_manager.quarantine_root),
             "templates": workspace_manager.template_manifest(),
             "startup_recovery": workspace_startup_recovery,
-            "legacy_workspace_paths_forbidden": [
-                str(runtime_paths.benchmark_runtime_root / "benchmark-single-skills-on"),
-                str(runtime_paths.benchmark_runtime_root / "benchmark-single-skills-off"),
-                str(runtime_paths.benchmark_runtime_root / "benchmark-judge"),
-                str(runtime_paths.benchmark_runtime_root / "custom-single-agent"),
-            ],
+            "forbidden_path_policy": workspace_manager.forbidden_path_policy_manifest(),
         },
         "groups": {
             group_id: {
