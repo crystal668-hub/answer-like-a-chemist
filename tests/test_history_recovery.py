@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from benchmarking.runtime.history_recovery import replay_workspace_adjudication
@@ -151,3 +153,16 @@ def test_history_replay_is_dry_run_first_and_apply_snapshots_atomically(tmp_path
     assert json.loads((run_root / "results.json").read_text(encoding="utf-8"))["schema_version"] == 3
     progress = json.loads((run_root / "progress" / "state.json").read_text(encoding="utf-8"))
     assert progress["workspace_adjudication_recovery"]["model_calls"] == 0
+
+
+def test_history_replay_script_is_directly_executable() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, str(project_root / "scripts" / "replay_workspace_adjudication.py"), "--help"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Replay benchmark workspace audit" in completed.stdout
