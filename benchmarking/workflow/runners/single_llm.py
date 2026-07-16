@@ -26,7 +26,10 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceLease,
     AttemptWorkspaceManager,
     ContaminationAudit,
+    WorkspaceAccessPolicy,
+    WorkspaceAudit,
     WorkspaceIsolationError,
+    ensure_workspace_audit,
 )
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
@@ -711,15 +714,11 @@ class SingleLLMRunner:
             [
                 prompt.rstrip(),
                 "",
-                "BENCHMARK SCRATCH DIRECTORY:",
-                f"- Use this absolute directory for all request files, outputs, downloads, generated structures, temporary scripts, and notes: {scratch_dir}",
-                f"- Request files must be written under: {request_dir}",
-                f"- Output directories must be created under: {output_dir}",
-                "- Do not set exec.workdir or manually reconstruct benchmark absolute paths.",
-                '  Begin every exec command with: cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&',
-                "- Create and enter child directories in the same command before using them, for example:",
-                '  mkdir -p "$BENCHMARK_SKILL_OUTPUT_DIR/<name>" && cd "$BENCHMARK_SKILL_OUTPUT_DIR/<name>" && <command>',
-                "- Do not write benchmark exploration artifacts in the workspace root.",
+                "BENCHMARK WORKSPACE FILE CONTRACT:",
+                "- Structured file tools must use workspace-relative `scratch/...` paths.",
+                '- For exec, omit workdir and begin with: cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&',
+                "- Create child output directories in the same shell command before entering them.",
+                "- Do not reconstruct or modify benchmark runtime absolute paths.",
             ]
         )
 
@@ -970,23 +969,23 @@ class SingleLLMRunner:
         result: RunnerResult,
         input_bundle: Any,
         environment: dict[str, str],
-    ) -> ContaminationAudit:
-        allowed_roots = list(self.allowed_workspace_roots)
+        policy: WorkspaceAccessPolicy,
+    ) -> WorkspaceAudit:
         bundle_dir = getattr(input_bundle, "bundle_dir", None)
-        if bundle_dir is not None:
-            allowed_roots.append(Path(bundle_dir).expanduser().resolve())
         if self._contamination_auditor is not None:
-            return self._contamination_auditor(
+            return ensure_workspace_audit(self._contamination_auditor(
                 lease=lease,
                 runner_meta=result.runner_meta,
-                allowed_roots=allowed_roots,
+                allowed_roots=[scope.path for scope in policy.read_scopes],
                 environment=environment,
-            )
+                policy=policy,
+            ))
         return self.workspace_manager.audit_attempt(
             lease,
             result.runner_meta,
-            allowed_roots=allowed_roots,
+            allowed_roots=[scope.path for scope in policy.read_scopes],
             environment=environment,
+            policy=policy,
         )
 
     def _run_isolated_attempt(
@@ -1023,14 +1022,17 @@ class SingleLLMRunner:
                 input_bundle=input_bundle,
                 session_id=session_id,
                 isolation_meta={
-                    "schema_version": 1,
+                    "schema_version": 3,
                     **identity.sentinel_fields(),
                     "active_workspace": str(
                         self.workspace_manager.active_workspace_path(group_id=identity.group_id, agent_id=identity.agent_id)
                     ),
                     "preflight_ok": False,
                     "archive_ok": False,
-                    "contaminated": False,
+                    "audit_execution_status": "unavailable",
+                    "boundary_status": "unknown",
+                    "contamination_status": "indeterminate",
+                    "adjudication": "non_evaluable",
                     "findings": [],
                 },
             )
@@ -1041,6 +1043,8 @@ class SingleLLMRunner:
         attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(lease.request_dir)
         attempt_env["BENCHMARK_SKILL_OUTPUT_DIR"] = str(lease.output_dir)
         attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(lease.notes_dir)
+        attempt_env["BENCHMARK_PROJECT_ROOT"] = str(Path(__file__).resolve().parents[3])
+        attempt_env["BENCHMARK_SKILL_RUNNER"] = str(Path(__file__).resolve().parents[3] / "scripts" / "run_skill.py")
         attempt_prompt = self._attach_scratch_prompt(
             prompt,
             scratch_dir=lease.scratch_dir,
@@ -1053,7 +1057,8 @@ class SingleLLMRunner:
             "request_dir": str(lease.request_dir),
             "output_dir": str(lease.output_dir),
             "notes_dir": str(lease.notes_dir),
-            "record_slug": lease.scratch_dir.parent.name,
+            "scratch_contract_version": 2,
+            "record_id": lease.identity.record_id,
             "session_id": session_id,
             "group_id": str(group.id),
         }
@@ -1079,31 +1084,43 @@ class SingleLLMRunner:
         if skills_enabled:
             result.runner_meta["skill_scratch"] = scratch_meta
         archive_reason = "timeout_retry" if self._timeout_retry_decision(result).retryable else "attempt_terminal"
+        bundle_dir = getattr(input_bundle, "bundle_dir", None)
+        policy = self.workspace_manager.policy_for_lease(
+            lease,
+            role="single_llm",
+            skills_enabled=skills_enabled,
+            always_read_scopes=([Path(bundle_dir)] if bundle_dir is not None else []),
+            read_scopes=(self.allowed_workspace_roots if skills_enabled else ()),
+        )
         audit = self._audit_attempt(
             lease=lease,
             result=result,
             input_bundle=input_bundle,
             environment=attempt_env,
+            policy=policy,
         )
+        cleanup = self.workspace_manager.cleanup_boundary_writes(audit)
         isolation_meta = lease.to_meta()
+        isolation_meta.update(audit.to_payload())
         isolation_meta.update(
-            {
-                "contaminated": audit.status == "contaminated",
-                "audit_status": audit.status,
-                "findings": [dict(finding) for finding in audit.findings],
-            }
+            {"policy_digest": policy.digest, "policy": policy.to_payload(), "cleanup": cleanup}
         )
-        if audit.status != "clean":
+        if audit.adjudication == "non_evaluable":
             message = (
-                "Benchmark workspace contamination was detected."
-                if audit.status == "contaminated"
-                else "Benchmark workspace contamination audit was unavailable."
+                "Benchmark workspace information contamination was detected."
+                if audit.contamination_status == "confirmed"
+                else "Benchmark workspace audit could not exclude information contamination."
             )
             result = self._workspace_failure_result(
                 error=WorkspaceIsolationError(
                     "benchmark_workspace_contamination",
                     message,
-                    details={"audit_status": audit.status, "findings": isolation_meta["findings"]},
+                    details={
+                        "audit_execution_status": audit.audit_execution_status,
+                        "contamination_status": audit.contamination_status,
+                        "adjudication": audit.adjudication,
+                        "findings": isolation_meta["findings"],
+                    },
                 ),
                 record=record,
                 group=group,
@@ -1113,6 +1130,8 @@ class SingleLLMRunner:
                 original_result=result,
             )
         else:
+            if audit.adjudication == "scoreable_degraded":
+                result.runner_meta["degraded_execution"] = True
             result.runner_meta["workspace_isolation"] = isolation_meta
         try:
             archive = self.workspace_manager.seal(

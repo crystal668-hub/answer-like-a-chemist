@@ -22,6 +22,9 @@ SENTINEL_FILENAME = ".benchmark-workspace.json"
 SENTINEL_KIND = "openclaw-benchmark-attempt-workspace"
 ARCHIVE_KIND = "openclaw-benchmark-workspace-archive"
 SCHEMA_VERSION = 1
+WORKSPACE_POLICY_SCHEMA_VERSION = 1
+WORKSPACE_ISOLATION_SCHEMA_VERSION = 3
+SCRATCH_CONTRACT_VERSION = 2
 WORKSPACE_FAILURE_LAYER = "benchmark_runtime"
 WORKSPACE_FAILURE_SOURCE = "workspace_isolation"
 
@@ -91,6 +94,8 @@ class WorkspaceTemplate:
     template_id: str
     source_dir: Path | None = None
     files: Mapping[str, Path] = field(default_factory=dict)
+    agents_base: Path | None = None
+    agents_overlay: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -101,11 +106,102 @@ class ProtectedRoot:
 
 
 @dataclass(frozen=True)
+class AccessScope:
+    scope_id: str
+    path: Path
+    kind: str
+    source: str
+
+
+@dataclass(frozen=True)
+class WorkspaceAccessPolicy:
+    schema_version: int
+    role: str
+    skills_enabled: bool
+    read_scopes: tuple[AccessScope, ...]
+    write_scopes: tuple[AccessScope, ...]
+    exec_workdir_scopes: tuple[AccessScope, ...]
+    protected_roots: tuple[ProtectedRoot, ...]
+
+    def __post_init__(self) -> None:
+        if int(self.schema_version) != WORKSPACE_POLICY_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported workspace policy schema version: {self.schema_version}")
+        if not str(self.role or "").strip():
+            raise ValueError("Workspace access policy role must be non-empty.")
+        object.__setattr__(self, "role", str(self.role).strip())
+        object.__setattr__(self, "read_scopes", _normalize_access_scopes(self.read_scopes))
+        object.__setattr__(self, "write_scopes", _normalize_access_scopes(self.write_scopes))
+        object.__setattr__(self, "exec_workdir_scopes", _normalize_access_scopes(self.exec_workdir_scopes))
+        object.__setattr__(self, "protected_roots", _normalize_protected_roots(self.protected_roots))
+        for write_scope in self.write_scopes:
+            if not any(
+                _access_scope_matches(write_scope.path, read_scope)
+                for read_scope in self.read_scopes
+                if read_scope.kind == "directory"
+            ):
+                raise ValueError(
+                    f"Workspace write scope `{write_scope.scope_id}` must be contained by a read directory scope."
+                )
+
+    @property
+    def digest(self) -> str:
+        canonical = json.dumps(self.to_payload(include_digest=False), sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def allows(self, access_mode: str, candidate: Path) -> bool:
+        mode = str(access_mode or "").strip().lower()
+        if mode in {"write", "mutate"}:
+            scopes = self.write_scopes
+        elif mode == "workdir":
+            scopes = self.exec_workdir_scopes
+        else:
+            scopes = self.read_scopes
+        resolved = Path(candidate).expanduser().resolve(strict=False)
+        return any(_access_scope_matches(resolved, scope) for scope in scopes)
+
+    def to_payload(self, *, include_digest: bool = True) -> dict[str, Any]:
+        def scope_payload(scope: AccessScope) -> dict[str, str]:
+            return {
+                "scope_id": scope.scope_id,
+                "path": str(scope.path),
+                "kind": scope.kind,
+                "source": scope.source,
+            }
+
+        payload: dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "role": self.role,
+            "skills_enabled": self.skills_enabled,
+            "read_scopes": [scope_payload(scope) for scope in self.read_scopes],
+            "write_scopes": [scope_payload(scope) for scope in self.write_scopes],
+            "exec_workdir_scopes": [scope_payload(scope) for scope in self.exec_workdir_scopes],
+            "protected_roots": [
+                {"policy_id": root.policy_id, "path": str(root.path), "source": root.source}
+                for root in self.protected_roots
+            ],
+            "security_boundary": "runtime_guard_and_transcript_audit_not_os_sandbox",
+        }
+        if include_digest:
+            payload["policy_digest"] = self.digest
+        return payload
+
+
+@dataclass(frozen=True)
 class PathCandidate:
     raw_token: str
     expanded_token: str
     resolved_path: Path
     source: str
+
+
+@dataclass(frozen=True)
+class ToolEvent:
+    tool_call_id: str
+    tool_name: str
+    arguments: Any
+    call_line: int
+    result_line: int | None = None
+    result: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -165,10 +261,174 @@ class ContaminationAudit:
 
 
 @dataclass(frozen=True)
+class WorkspaceAudit:
+    audit_execution_status: str = "complete"
+    boundary_status: str = "clean"
+    contamination_status: str = "clear"
+    adjudication: str = "scoreable"
+    findings: tuple[dict[str, Any], ...] = ()
+    recovery: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.audit_execution_status not in {"complete", "unavailable"}:
+            raise ValueError(f"Unsupported audit execution status: {self.audit_execution_status}")
+        if self.boundary_status not in {"clean", "warning", "violated", "unknown"}:
+            raise ValueError(f"Unsupported workspace boundary status: {self.boundary_status}")
+        if self.contamination_status not in {"clear", "confirmed", "indeterminate"}:
+            raise ValueError(f"Unsupported contamination status: {self.contamination_status}")
+        if self.adjudication not in {"scoreable", "scoreable_degraded", "non_evaluable"}:
+            raise ValueError(f"Unsupported workspace adjudication: {self.adjudication}")
+
+    @property
+    def status(self) -> str:
+        """Legacy read adapter; new writers persist the independent status axes."""
+        if self.audit_execution_status == "unavailable":
+            return "unavailable"
+        if self.contamination_status != "clear":
+            return "contaminated"
+        return "clean"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": WORKSPACE_ISOLATION_SCHEMA_VERSION,
+            "audit_execution_status": self.audit_execution_status,
+            "boundary_status": self.boundary_status,
+            "contamination_status": self.contamination_status,
+            "adjudication": self.adjudication,
+            "finding_count": len(self.findings),
+            "findings": [dict(finding) for finding in self.findings],
+            "recovery": dict(self.recovery),
+        }
+
+
+def adjudicate_workspace_findings(
+    findings: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    audit_execution_status: str = "complete",
+    recovery: Mapping[str, Any] | None = None,
+) -> WorkspaceAudit:
+    normalized_findings = tuple(dict(finding) for finding in findings)
+    if audit_execution_status == "unavailable":
+        return WorkspaceAudit(
+            audit_execution_status="unavailable",
+            boundary_status="unknown",
+            contamination_status="indeterminate",
+            adjudication="non_evaluable",
+            findings=normalized_findings,
+            recovery=dict(recovery or {}),
+        )
+
+    boundary_effects = {str(finding.get("boundary_effect") or "clean") for finding in normalized_findings}
+    if "violated" in boundary_effects:
+        boundary_status = "violated"
+    elif "unknown" in boundary_effects:
+        boundary_status = "unknown"
+    elif "warning" in boundary_effects:
+        boundary_status = "warning"
+    else:
+        boundary_status = "clean"
+
+    exposures = {str(finding.get("information_exposure") or "none") for finding in normalized_findings}
+    if "confirmed" in exposures:
+        contamination_status = "confirmed"
+    elif exposures & {"possible", "unknown", "indeterminate"}:
+        contamination_status = "indeterminate"
+    else:
+        contamination_status = "clear"
+
+    if contamination_status != "clear":
+        adjudication = "non_evaluable"
+    elif boundary_status in {"violated", "unknown"}:
+        adjudication = "scoreable_degraded"
+    else:
+        adjudication = "scoreable"
+    return WorkspaceAudit(
+        audit_execution_status="complete",
+        boundary_status=boundary_status,
+        contamination_status=contamination_status,
+        adjudication=adjudication,
+        findings=normalized_findings,
+        recovery=dict(recovery or {}),
+    )
+
+
+def ensure_workspace_audit(audit: WorkspaceAudit | ContaminationAudit) -> WorkspaceAudit:
+    if isinstance(audit, WorkspaceAudit):
+        return audit
+    if audit.status == "unavailable":
+        return adjudicate_workspace_findings(
+            tuple(dict(finding) for finding in audit.findings),
+            audit_execution_status="unavailable",
+        )
+    if audit.status == "contaminated":
+        findings = tuple(
+            {
+                "boundary_effect": "violated",
+                "information_exposure": "confirmed",
+                **dict(finding),
+            }
+            for finding in audit.findings
+        )
+        return adjudicate_workspace_findings(findings)
+    return adjudicate_workspace_findings(tuple(dict(finding) for finding in audit.findings))
+
+
+def build_workspace_access_policy(
+    *,
+    active_workspace: Path,
+    role: str,
+    skills_enabled: bool,
+    protected_roots: tuple[ProtectedRoot, ...],
+    always_read_scopes: tuple[Path, ...] | list[Path] = (),
+    skill_read_scopes: tuple[Path, ...] | list[Path] = (),
+    extra_write_scopes: tuple[Path, ...] | list[Path] = (),
+    extra_exec_workdir_scopes: tuple[Path, ...] | list[Path] = (),
+) -> WorkspaceAccessPolicy:
+    workspace = Path(active_workspace).expanduser().resolve(strict=False)
+    scratch = workspace / "scratch"
+
+    def scope(scope_id: str, path: Path, source: str) -> AccessScope:
+        resolved = Path(path).expanduser().resolve(strict=False)
+        kind = "file" if resolved.is_file() else "directory"
+        return AccessScope(scope_id=scope_id, path=resolved, kind=kind, source=source)
+
+    external_reads = [Path(path) for path in always_read_scopes]
+    if role != "judge" and (role != "single_llm" or skills_enabled):
+        external_reads.extend(Path(path) for path in skill_read_scopes)
+    reads = [scope("active_workspace", workspace, "active_workspace")]
+    reads.extend(
+        scope(f"role_read_{index}", path, "runner.role_read_scope")
+        for index, path in enumerate(external_reads)
+    )
+    writes = [scope("attempt_scratch", scratch, "active_workspace.scratch")]
+    writes.extend(
+        scope(f"role_write_{index}", path, "runner.role_write_scope")
+        for index, path in enumerate(extra_write_scopes)
+    )
+    exec_scopes = [
+        scope("active_workspace", workspace, "active_workspace"),
+        scope("attempt_scratch", scratch, "active_workspace.scratch"),
+    ]
+    exec_scopes.extend(
+        scope(f"role_exec_{index}", path, "runner.role_exec_scope")
+        for index, path in enumerate(extra_exec_workdir_scopes)
+    )
+    return WorkspaceAccessPolicy(
+        schema_version=WORKSPACE_POLICY_SCHEMA_VERSION,
+        role=role,
+        skills_enabled=bool(skills_enabled),
+        read_scopes=tuple(reads),
+        write_scopes=tuple(writes),
+        exec_workdir_scopes=tuple(exec_scopes),
+        protected_roots=protected_roots,
+    )
+
+
+@dataclass(frozen=True)
 class AttemptOutcome:
     runner_status: str
     archive_reason: str = "attempt_terminal"
-    contamination_audit: ContaminationAudit = field(default_factory=ContaminationAudit)
+    contamination_audit: WorkspaceAudit | ContaminationAudit = field(default_factory=WorkspaceAudit)
 
     def __post_init__(self) -> None:
         if self.runner_status not in {"completed", "recovered", "failed", "aborted"}:
@@ -199,6 +459,7 @@ class AttemptWorkspaceLease:
     request_dir: Path
     output_dir: Path
     notes_dir: Path
+    tmp_dir: Path
     sentinel_path: Path
     lock_path: Path
     template_sha256: str
@@ -209,14 +470,13 @@ class AttemptWorkspaceLease:
 
     def to_meta(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": WORKSPACE_ISOLATION_SCHEMA_VERSION,
             **self.identity.sentinel_fields(),
             "active_workspace": str(self.active_workspace),
             "template_sha256": self.template_sha256,
             "preflight_ok": True,
             "archive_ok": False,
-            "contaminated": False,
-            "findings": [],
+            "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
         }
         if self.archive is not None:
             payload.update(self.archive.to_meta())
@@ -232,11 +492,11 @@ class WorkspaceLeaseSet:
 
     def to_meta(self) -> dict[str, Any]:
         return {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": WORKSPACE_ISOLATION_SCHEMA_VERSION,
             "preflight_ok": True,
             "archive_ok": False,
-            "contaminated": False,
             "findings": [],
+            "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
             "slots": {lease.identity.agent_id: lease.to_meta() for lease in self.leases},
         }
 
@@ -313,6 +573,28 @@ class AttemptWorkspaceManager:
             ],
         }
 
+    def policy_for_lease(
+        self,
+        lease: AttemptWorkspaceLease,
+        *,
+        role: str,
+        skills_enabled: bool,
+        always_read_scopes: tuple[Path, ...] | list[Path] = (),
+        read_scopes: tuple[Path, ...] | list[Path] = (),
+        write_scopes: tuple[Path, ...] | list[Path] = (),
+        exec_workdir_scopes: tuple[Path, ...] | list[Path] = (),
+    ) -> WorkspaceAccessPolicy:
+        return build_workspace_access_policy(
+            active_workspace=lease.active_workspace,
+            role=role,
+            skills_enabled=bool(skills_enabled),
+            protected_roots=self.protected_roots,
+            always_read_scopes=always_read_scopes,
+            skill_read_scopes=read_scopes,
+            extra_write_scopes=write_scopes,
+            extra_exec_workdir_scopes=exec_workdir_scopes,
+        )
+
     def prepare(self, identity: AttemptIdentity) -> AttemptWorkspaceLease:
         self._validate_identity_scope(identity)
         template = self.templates.get(identity.template_id)
@@ -352,7 +634,8 @@ class AttemptWorkspaceManager:
             request_dir = scratch_dir / "requests"
             output_dir = scratch_dir / "outputs"
             notes_dir = scratch_dir / "notes"
-            for path in (request_dir, output_dir, notes_dir):
+            tmp_dir = scratch_dir / "tmp"
+            for path in (request_dir, output_dir, notes_dir, tmp_dir):
                 path.mkdir(parents=True, exist_ok=False)
             created_at = _utc_now()
             sentinel_payload = self._sentinel_payload(
@@ -435,6 +718,48 @@ class AttemptWorkspaceManager:
         finally:
             self._release_lease(lease)
 
+    def cleanup_boundary_writes(self, audit: WorkspaceAudit) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "attempted_count": 0,
+            "succeeded_count": 0,
+            "failed_count": 0,
+            "items": [],
+        }
+        for finding in audit.findings:
+            if finding.get("access_mode") not in {"write", "mutate"}:
+                continue
+            if finding.get("operation_outcome") != "succeeded":
+                continue
+            if finding.get("resource_provenance") != "current_attempt_owned":
+                continue
+            report["attempted_count"] += 1
+            item = {
+                "resolved_path": str(finding.get("resolved_path") or ""),
+                "status": "failed",
+            }
+            try:
+                target = Path(item["resolved_path"]).expanduser().resolve(strict=False)
+                matched_root = Path(str(finding.get("matched_root") or "")).expanduser().resolve(strict=False)
+                if target == matched_root or not _path_is_within(target, matched_root):
+                    raise ValueError("cleanup target is not a strict child of the matched protected root")
+                sentinel = target / SENTINEL_FILENAME if target.is_dir() else None
+                if sentinel is not None and sentinel.exists():
+                    raise ValueError("cleanup target contains a managed workspace sentinel")
+                if target.is_symlink():
+                    target.unlink()
+                elif target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                item["status"] = "succeeded"
+                report["succeeded_count"] += 1
+            except Exception as exc:
+                item["exception_type"] = type(exc).__name__
+                item["reason"] = _redact_text(str(exc), limit=240)
+                report["failed_count"] += 1
+            report["items"].append(item)
+        return report
+
     def seal(self, lease: AttemptWorkspaceLease, outcome: AttemptOutcome) -> WorkspaceArchive:
         if lease.archive is not None:
             return lease.archive
@@ -487,7 +812,8 @@ class AttemptWorkspaceManager:
                 "file_count": file_count,
                 "total_bytes": total_bytes,
                 "sentinel_sha256": sentinel_sha256,
-                "contamination_audit": outcome.contamination_audit.to_payload(),
+                "workspace_isolation": ensure_workspace_audit(outcome.contamination_audit).to_payload(),
+                "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
             }
             temporary_manifest = temporary_archive / "workspace-archive-manifest.json"
             _atomic_write_json(temporary_manifest, manifest_payload)
@@ -684,6 +1010,60 @@ class AttemptWorkspaceManager:
             )
         return sorted(candidates)
 
+    def _retry_audit_from_archive(
+        self,
+        *,
+        lease: AttemptWorkspaceLease,
+        runner_meta: Mapping[str, Any],
+        current_transcript: Path,
+        recovery_candidates: tuple[str, ...],
+        allowed_roots: tuple[Path, ...] | list[Path],
+        environment: Mapping[str, str] | None,
+        policy: WorkspaceAccessPolicy,
+    ) -> WorkspaceAudit | None:
+        if runner_meta.get("workspace_audit_recovery_attempted") is True:
+            return None
+        for candidate_text in recovery_candidates:
+            candidate = Path(candidate_text).expanduser()
+            if candidate == current_transcript or candidate.is_symlink() or not candidate.is_file():
+                continue
+            recovered_meta = dict(runner_meta)
+            session = recovered_meta.get("session_isolation")
+            session = dict(session) if isinstance(session, Mapping) else {}
+            session["postflight_entry_session_file"] = str(candidate)
+            for key in (
+                "archived_session_file",
+                "archive_transcript_path",
+                "archived_transcript_path",
+                "transcript_archive_path",
+            ):
+                session.pop(key, None)
+                recovered_meta.pop(key, None)
+            recovered_meta["session_isolation"] = session
+            recovered_meta["workspace_audit_recovery_attempted"] = True
+            recovered = self.audit_attempt(
+                lease,
+                recovered_meta,
+                allowed_roots=allowed_roots,
+                environment=environment,
+                policy=policy,
+            )
+            return WorkspaceAudit(
+                audit_execution_status=recovered.audit_execution_status,
+                boundary_status=recovered.boundary_status,
+                contamination_status=recovered.contamination_status,
+                adjudication=recovered.adjudication,
+                findings=recovered.findings,
+                recovery={
+                    "attempted": True,
+                    "succeeded": recovered.audit_execution_status == "complete",
+                    "source": "archive",
+                    "transcript_path": _redact_text(str(candidate)),
+                    "model_reinvoked": False,
+                },
+            )
+        return None
+
     def audit_attempt(
         self,
         lease: AttemptWorkspaceLease,
@@ -691,87 +1071,169 @@ class AttemptWorkspaceManager:
         *,
         allowed_roots: tuple[Path, ...] | list[Path] = (),
         environment: Mapping[str, str] | None = None,
-    ) -> ContaminationAudit:
+        policy: WorkspaceAccessPolicy | None = None,
+    ) -> WorkspaceAudit:
         session_isolation = runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, Mapping) else {}
-        transcript_path_text = str(session_isolation.get("postflight_entry_session_file") or "").strip()
-        if not transcript_path_text:
-            return ContaminationAudit(
-                status="unavailable",
-                findings=(
-                    {
-                        "rule_id": "transcript_unavailable",
-                        "tool_name": "",
-                        "command_excerpt": "",
-                    },
-                ),
-            )
-        transcript_path = Path(transcript_path_text).expanduser()
-        if transcript_path.is_symlink() or not transcript_path.is_file():
-            return ContaminationAudit(
-                status="unavailable",
-                findings=(
-                    {
-                        "rule_id": "transcript_unavailable",
-                        "tool_name": "",
-                        "command_excerpt": _redact_text(transcript_path_text),
-                    },
-                ),
+        requested_path = str(session_isolation.get("postflight_entry_session_file") or "").strip()
+        recovery_candidates = _audit_recovery_candidates(runner_meta)
+        transcript_path, recovery = _select_audit_transcript(requested_path, recovery_candidates)
+        if transcript_path is None:
+            finding = {
+                "rule_id": "transcript_unavailable",
+                "tool_call_id": "",
+                "tool_name": "",
+                "candidate_source": "session_isolation.postflight_entry_session_file",
+                "access_mode": "unknown",
+                "operation_outcome": "unknown",
+                "resource_provenance": "unknown",
+                "information_exposure": "unknown",
+                "boundary_effect": "unknown",
+                "command_excerpt": _redact_text(requested_path),
+                "evidence": {},
+            }
+            return adjudicate_workspace_findings(
+                (finding,),
+                audit_execution_status="unavailable",
+                recovery=recovery,
             )
 
-        allowed = [lease.active_workspace, *allowed_roots]
-        findings: list[dict[str, Any]] = []
+        active_policy = policy or self.policy_for_lease(
+            lease,
+            role=lease.identity.runner_kind,
+            skills_enabled=bool(allowed_roots),
+            read_scopes=allowed_roots,
+        )
         try:
             transcript_lines = transcript_path.read_text(encoding="utf-8").splitlines()
+            payloads: list[tuple[int, Any]] = []
+            for line_number, raw_line in enumerate(transcript_lines, start=1):
+                if not raw_line.strip():
+                    continue
+                payloads.append((line_number, json.loads(raw_line)))
+            events, standalone_results = _tool_events_from_transcript(payloads)
         except Exception as exc:
-            return ContaminationAudit(
-                status="unavailable",
-                findings=(_transcript_audit_failure(exc),),
+            recovered = self._retry_audit_from_archive(
+                lease=lease,
+                runner_meta=runner_meta,
+                current_transcript=transcript_path,
+                recovery_candidates=recovery_candidates,
+                allowed_roots=allowed_roots,
+                environment=environment,
+                policy=active_policy,
             )
-        for line_number, raw_line in enumerate(transcript_lines, start=1):
-            if not raw_line.strip():
-                continue
-            try:
-                payload = json.loads(raw_line)
-            except Exception as exc:
-                return ContaminationAudit(
-                    status="unavailable",
-                    findings=(_transcript_audit_failure(exc, line_number=line_number),),
-                )
-            for tool_name, arguments in _tool_calls_from_transcript_payload(payload):
+            if recovered is not None:
+                return recovered
+            finding = _transcript_audit_failure(exc)
+            finding.update(
+                {
+                    "tool_call_id": "",
+                    "candidate_source": "transcript",
+                    "access_mode": "unknown",
+                    "operation_outcome": "unknown",
+                    "resource_provenance": "unknown",
+                    "information_exposure": "unknown",
+                    "boundary_effect": "unknown",
+                    "evidence": {},
+                }
+            )
+            return adjudicate_workspace_findings(
+                (finding,),
+                audit_execution_status="unavailable",
+                recovery=recovery,
+            )
+
+        findings: list[dict[str, Any]] = []
+        try:
+            for event in events:
                 try:
                     findings.extend(
                         _forbidden_access_findings(
-                            tool_name=tool_name,
-                            arguments=arguments,
+                            event=event,
                             workspace=lease.active_workspace,
-                            protected_roots=self.protected_roots,
-                            allowed_roots=allowed,
+                            policy=active_policy,
                             environment=environment or {},
                         )
                     )
                 except Exception as exc:
-                    return ContaminationAudit(
-                        status="unavailable",
-                        findings=(
-                            _transcript_audit_failure(
-                                exc,
-                                line_number=line_number,
-                                tool_name=tool_name,
-                                arguments=arguments,
-                            ),
-                        ),
+                    recovered = self._retry_audit_from_archive(
+                        lease=lease,
+                        runner_meta=runner_meta,
+                        current_transcript=transcript_path,
+                        recovery_candidates=recovery_candidates,
+                        allowed_roots=allowed_roots,
+                        environment=environment,
+                        policy=active_policy,
                     )
-            try:
-                fallback_finding = _workdir_fallback_finding(payload)
-                if fallback_finding is not None:
-                    findings.append(fallback_finding)
-            except Exception as exc:
-                return ContaminationAudit(
-                    status="unavailable",
-                    findings=(_transcript_audit_failure(exc, line_number=line_number),),
+                    if recovered is not None:
+                        return recovered
+                    finding = _transcript_audit_failure(
+                        exc,
+                        line_number=event.call_line,
+                        tool_name=event.tool_name,
+                        arguments=event.arguments,
+                    )
+                    finding.update(
+                        {
+                            "tool_call_id": event.tool_call_id,
+                            "candidate_source": "transcript.tool_call",
+                            "access_mode": "unknown",
+                            "operation_outcome": _operation_outcome(event.result),
+                            "resource_provenance": "unknown",
+                            "information_exposure": "unknown",
+                            "boundary_effect": "unknown",
+                            "evidence": {
+                                "call_line": event.call_line,
+                                "result_line": event.result_line,
+                            },
+                        }
+                    )
+                    return adjudicate_workspace_findings(
+                        (finding,),
+                        audit_execution_status="unavailable",
+                        recovery=recovery,
+                    )
+            for result_line, result_message in standalone_results:
+                fallback = _workdir_fallback_finding(
+                    result_message,
+                    line_number=result_line,
+                    policy=active_policy,
                 )
-        return ContaminationAudit(status="contaminated" if findings else "clean", findings=tuple(findings))
+                if fallback is not None:
+                    findings.append(fallback)
+            for event in events:
+                if event.result is None:
+                    continue
+                fallback = _workdir_fallback_finding(
+                    event.result,
+                    line_number=event.result_line,
+                    policy=active_policy,
+                    tool_call_id=event.tool_call_id,
+                    operation_outcome=_operation_outcome(event.result),
+                    call_line=event.call_line,
+                )
+                if fallback is not None:
+                    findings.append(fallback)
+        except Exception as exc:
+            finding = _transcript_audit_failure(exc)
+            finding.update(
+                {
+                    "tool_call_id": "",
+                    "candidate_source": "transcript",
+                    "access_mode": "unknown",
+                    "operation_outcome": "unknown",
+                    "resource_provenance": "unknown",
+                    "information_exposure": "unknown",
+                    "boundary_effect": "unknown",
+                    "evidence": {},
+                }
+            )
+            return adjudicate_workspace_findings(
+                (finding,),
+                audit_execution_status="unavailable",
+                recovery=recovery,
+            )
+        return adjudicate_workspace_findings(findings, recovery=recovery)
 
     def _validate_identity_scope(self, identity: AttemptIdentity, *, allow_previous_invocation: bool = False) -> None:
         if identity.run_id != self.run_id or (
@@ -836,6 +1298,20 @@ class AttemptWorkspaceManager:
                 if relative in entries:
                     raise ValueError(f"duplicate template path: {relative}")
                 entries[relative] = source.read_bytes()
+            if template.agents_base is not None or template.agents_overlay is not None:
+                if template.agents_base is None or template.agents_overlay is None:
+                    raise ValueError("template agent contract requires both base and overlay")
+                base = template.agents_base.expanduser().resolve()
+                overlay = template.agents_overlay.expanduser().resolve()
+                if not base.is_file() or not overlay.is_file():
+                    raise ValueError("template agent contract source is missing")
+                final_contract = base.read_text(encoding="utf-8").rstrip() + "\n\n" + overlay.read_text(
+                    encoding="utf-8"
+                ).strip() + "\n"
+                agents_path = PurePosixPath("AGENTS.md")
+                if agents_path in entries:
+                    raise ValueError("duplicate template path: AGENTS.md")
+                entries[agents_path] = final_contract.encode("utf-8")
             if not entries:
                 raise ValueError("template contains no files")
         except WorkspaceIsolationError:
@@ -860,7 +1336,7 @@ class AttemptWorkspaceManager:
             raise ValueError(f"unsafe template path: {relative}")
         if ".git" in relative.parts:
             raise ValueError(f"template contains .git: {relative}")
-        if relative.parts[0] in {SENTINEL_FILENAME, ".benchmark-scratch"}:
+        if relative.parts[0] in {SENTINEL_FILENAME, "scratch", ".benchmark-scratch"}:
             raise ValueError(f"template uses manager-owned path: {relative}")
 
     @staticmethod
@@ -882,11 +1358,7 @@ class AttemptWorkspaceManager:
     ) -> None:
         allowed_files = {relative.as_posix() for relative in template_entries}
         allowed_files.add(SENTINEL_FILENAME)
-        scratch_relative = PurePosixPath(
-            ".benchmark-scratch",
-            workspace_slug(identity.record_id, limit=80),
-            workspace_slug(identity.session_id, limit=96),
-        )
+        scratch_relative = PurePosixPath("scratch")
         for path in root.rglob("*"):
             relative = path.relative_to(root)
             relative_posix = relative.as_posix()
@@ -1120,12 +1592,7 @@ class AttemptWorkspaceManager:
 
     @staticmethod
     def _scratch_dir(root: Path, identity: AttemptIdentity) -> Path:
-        return (
-            root
-            / ".benchmark-scratch"
-            / workspace_slug(identity.record_id, limit=80)
-            / workspace_slug(identity.session_id, limit=96)
-        )
+        return root / "scratch"
 
     def _build_lease(
         self,
@@ -1145,6 +1612,7 @@ class AttemptWorkspaceManager:
             request_dir=scratch_dir / "requests",
             output_dir=scratch_dir / "outputs",
             notes_dir=scratch_dir / "notes",
+            tmp_dir=scratch_dir / "tmp",
             sentinel_path=active_workspace / SENTINEL_FILENAME,
             lock_path=lock_path,
             template_sha256=template_sha256,
@@ -1193,69 +1661,223 @@ class AttemptWorkspaceManager:
 def default_workspace_templates(project_root: Path) -> dict[str, WorkspaceTemplate]:
     project_root = project_root.expanduser().resolve()
     resource_root = project_root / "benchmarking" / "resources" / "agent-workspace-templates"
-    debate_template = project_root / "skills" / "debateclaw-v1" / "scripts" / "templates" / "debate-slot-AGENTS.md"
+    base_contract = resource_root / "common" / "AGENTS.base.md"
     return {
         "single-llm-skills-on-v1": WorkspaceTemplate(
             template_id="single-llm-skills-on-v1",
-            source_dir=resource_root / "single-llm-skills-on",
+            files={"TOOLS.md": resource_root / "single-llm-skills-on" / "TOOLS.md"},
+            agents_base=base_contract,
+            agents_overlay=resource_root / "single-llm-skills-on" / "AGENTS.overlay.md",
         ),
         "single-llm-skills-off-v1": WorkspaceTemplate(
             template_id="single-llm-skills-off-v1",
-            source_dir=resource_root / "single-llm-skills-off",
+            agents_base=base_contract,
+            agents_overlay=resource_root / "single-llm-skills-off" / "AGENTS.overlay.md",
         ),
         "judge-v1": WorkspaceTemplate(
             template_id="judge-v1",
-            source_dir=resource_root / "judge",
+            agents_base=base_contract,
+            agents_overlay=resource_root / "judge" / "AGENTS.overlay.md",
         ),
         "chemqa-role-v1": WorkspaceTemplate(
             template_id="chemqa-role-v1",
-            files={"AGENTS.md": debate_template},
+            agents_base=base_contract,
+            agents_overlay=resource_root / "chemqa-role" / "AGENTS.overlay.md",
         ),
     }
 
 
-def _tool_calls_from_transcript_payload(payload: Any) -> list[tuple[str, Any]]:
-    if not isinstance(payload, Mapping):
-        return []
-    message = payload.get("message")
-    if not isinstance(message, Mapping) or message.get("role") != "assistant":
-        return []
+def _audit_recovery_candidates(runner_meta: Mapping[str, Any]) -> tuple[str, ...]:
+    candidates: list[str] = []
+    session = runner_meta.get("session_isolation")
+    isolation = runner_meta.get("workspace_isolation")
+    for payload in (session, isolation, runner_meta):
+        if not isinstance(payload, Mapping):
+            continue
+        for key in (
+            "archived_session_file",
+            "archive_transcript_path",
+            "archived_transcript_path",
+            "transcript_archive_path",
+        ):
+            value = str(payload.get(key) or "").strip()
+            if value and value not in candidates:
+                candidates.append(value)
+    return tuple(candidates)
+
+
+def _select_audit_transcript(
+    requested_path: str,
+    recovery_candidates: tuple[str, ...],
+) -> tuple[Path | None, dict[str, Any]]:
+    candidates = tuple(value for value in (requested_path, *recovery_candidates) if value)
+    for index, candidate_text in enumerate(candidates):
+        candidate = Path(candidate_text).expanduser()
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        recovered = index > 0 or (bool(requested_path) and candidate_text != requested_path)
+        return candidate, {
+            "attempted": recovered,
+            "succeeded": recovered,
+            "source": "archive" if recovered else "active_session",
+            "transcript_path": _redact_text(str(candidate)),
+            "model_reinvoked": False,
+        }
+    return None, {
+        "attempted": True,
+        "succeeded": False,
+        "source": "none",
+        "candidate_count": len(candidates),
+        "model_reinvoked": False,
+    }
+
+
+def _tool_events_from_transcript(
+    payloads: list[tuple[int, Any]],
+) -> tuple[list[ToolEvent], list[tuple[int, Mapping[str, Any]]]]:
+    pending: list[ToolEvent] = []
+    results: dict[str, tuple[int, Mapping[str, Any]]] = {}
+    result_order: list[tuple[int, Mapping[str, Any]]] = []
+    for line_number, payload in payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        message = payload.get("message")
+        if not isinstance(message, Mapping):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        if role == "assistant":
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item_index, item in enumerate(content):
+                if not isinstance(item, Mapping) or str(item.get("type") or "").lower() not in {
+                    "toolcall",
+                    "tool_call",
+                }:
+                    continue
+                call_id = str(item.get("id") or item.get("toolCallId") or "").strip()
+                if not call_id:
+                    call_id = f"transcript-line-{line_number}-call-{item_index}"
+                pending.append(
+                    ToolEvent(
+                        tool_call_id=call_id,
+                        tool_name=str(item.get("name") or ""),
+                        arguments=item.get("arguments"),
+                        call_line=line_number,
+                    )
+                )
+        elif role in {"toolresult", "tool_result"}:
+            call_id = str(message.get("toolCallId") or message.get("tool_call_id") or "").strip()
+            result_order.append((line_number, message))
+            if call_id:
+                results[call_id] = (line_number, message)
+
+    events: list[ToolEvent] = []
+    matched_result_ids: set[str] = set()
+    for event in pending:
+        result_entry = results.get(event.tool_call_id)
+        if result_entry is None:
+            events.append(event)
+            continue
+        result_line, result = result_entry
+        matched_result_ids.add(event.tool_call_id)
+        events.append(
+            ToolEvent(
+                tool_call_id=event.tool_call_id,
+                tool_name=event.tool_name,
+                arguments=event.arguments,
+                call_line=event.call_line,
+                result_line=result_line,
+                result=result,
+            )
+        )
+    standalone = [
+        (line_number, result)
+        for line_number, result in result_order
+        if str(result.get("toolCallId") or result.get("tool_call_id") or "").strip() not in matched_result_ids
+    ]
+    return events, standalone
+
+
+def _tool_result_text(message: Mapping[str, Any] | None) -> str:
+    if not isinstance(message, Mapping):
+        return ""
     content = message.get("content")
     if not isinstance(content, list):
-        return []
-    calls: list[tuple[str, Any]] = []
-    for item in content:
-        if not isinstance(item, Mapping) or str(item.get("type") or "").lower() not in {"toolcall", "tool_call"}:
-            continue
-        calls.append((str(item.get("name") or ""), item.get("arguments")))
-    return calls
+        return ""
+    return "\n".join(
+        str(item.get("text") or "")
+        for item in content
+        if isinstance(item, Mapping) and str(item.get("type") or "").lower() == "text"
+    )
 
 
-def _workdir_fallback_finding(payload: Any) -> dict[str, Any] | None:
-    if not isinstance(payload, Mapping):
-        return None
-    message = payload.get("message")
-    if not isinstance(message, Mapping) or str(message.get("role") or "").lower() != "toolresult":
+def _operation_outcome(message: Mapping[str, Any] | None) -> str:
+    if message is None:
+        return "unknown"
+    text = _tool_result_text(message)
+    if "benchmark_workspace_guard_blocked" in text or "benchmark_workdir_invalid" in text:
+        return "blocked"
+    if message.get("isError") is True:
+        return "failed"
+    details = message.get("details")
+    details = details if isinstance(details, Mapping) else {}
+    exit_code = details.get("exitCode", details.get("exit_code"))
+    if isinstance(exit_code, int) and exit_code != 0:
+        return "failed"
+    match = re.search(r"Command exited with code\s+(-?\d+)", text)
+    if match and int(match.group(1)) != 0:
+        return "failed"
+    return "succeeded"
+
+
+def _workdir_fallback_finding(
+    message: Any,
+    *,
+    line_number: int | None,
+    policy: WorkspaceAccessPolicy,
+    tool_call_id: str = "",
+    operation_outcome: str | None = None,
+    call_line: int | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(message, Mapping) or str(message.get("role") or "").lower() not in {
+        "toolresult",
+        "tool_result",
+    }:
         return None
     tool_name = str(message.get("toolName") or "").strip().lower()
     if tool_name not in {"exec", "execute", "shell", "bash", "command"}:
         return None
-    content = message.get("content")
-    if not isinstance(content, list):
-        return None
-    for item in content:
-        if not isinstance(item, Mapping) or str(item.get("type") or "").lower() != "text":
-            continue
-        text = str(item.get("text") or "")
-        match = re.search(r'Warning: workdir "([^"]+)" is unavailable; using "([^"]+)"\.', text)
-        if match:
-            return {
-                "rule_id": "workdir_fallback",
-                "tool_name": tool_name,
-                "command_excerpt": _redact_text(text),
-                "requested_workdir": _redact_text(match.group(1)),
-                "fallback_workdir": _redact_text(match.group(2)),
-            }
+    text = _tool_result_text(message)
+    match = re.search(r'Warning: workdir "([^"]+)" is unavailable; using "([^"]+)"\.', text)
+    if match:
+        fallback_path = Path(match.group(2)).expanduser().resolve(strict=False)
+        fallback_allowed = policy.allows("workdir", fallback_path)
+        outcome = operation_outcome or _operation_outcome(message)
+        possible_exposure = not fallback_allowed and outcome in {"succeeded", "unknown"}
+        return {
+            "rule_id": "workdir_fallback",
+            "tool_call_id": tool_call_id
+            or str(message.get("toolCallId") or message.get("tool_call_id") or f"result-line-{line_number}"),
+            "tool_name": tool_name,
+            "candidate_source": "tool_result.warning",
+            "access_mode": "workdir",
+            "operation_outcome": outcome,
+            "command_excerpt": _redact_text(text),
+            "requested_workdir": _redact_text(match.group(1)),
+            "fallback_workdir": _redact_text(str(fallback_path)),
+            "fallback_allowed": fallback_allowed,
+            "resource_provenance": "unknown",
+            "information_exposure": "possible" if possible_exposure else "none",
+            "boundary_effect": "warning" if fallback_allowed else "violated",
+            "evidence": {
+                "call_line": call_line,
+                "result_line": line_number,
+                "result_is_error": bool(message.get("isError", False)),
+                "exit_code": None,
+                "result_excerpt": _redact_text(text, limit=240),
+            },
+        }
     return None
 
 
@@ -1308,6 +1930,43 @@ def _path_is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _normalize_access_scopes(
+    scopes: tuple[AccessScope, ...] | list[AccessScope],
+) -> tuple[AccessScope, ...]:
+    normalized: dict[tuple[str, str, str], AccessScope] = {}
+    for scope in scopes:
+        scope_id = str(scope.scope_id or "").strip()
+        source = str(scope.source or "").strip()
+        kind = str(scope.kind or "").strip().lower()
+        if not scope_id:
+            raise ValueError("Workspace access scope id must be non-empty.")
+        if kind not in {"directory", "file"}:
+            raise ValueError(f"Unsupported workspace access scope kind: {scope.kind}")
+        resolved = Path(scope.path).expanduser().resolve(strict=False)
+        if resolved == Path(resolved.anchor):
+            raise ValueError("Filesystem root cannot be used as a workspace access scope.")
+        if resolved.exists():
+            if kind == "directory" and not resolved.is_dir():
+                raise ValueError(f"Directory access scope is not a directory: {resolved}")
+            if kind == "file" and not resolved.is_file():
+                raise ValueError(f"File access scope is not a file: {resolved}")
+        key = (scope_id, str(resolved), kind)
+        candidate = AccessScope(scope_id=scope_id, path=resolved, kind=kind, source=source)
+        previous = normalized.get(key)
+        if previous is None or candidate.source < previous.source:
+            normalized[key] = candidate
+    return tuple(
+        sorted(normalized.values(), key=lambda item: (item.scope_id, str(item.path), item.kind, item.source))
+    )
+
+
+def _access_scope_matches(candidate: Path, scope: AccessScope) -> bool:
+    resolved = Path(candidate).expanduser().resolve(strict=False)
+    if scope.kind == "file":
+        return resolved == scope.path
+    return _path_is_within(resolved, scope.path)
 
 
 _EXEC_TOOLS = frozenset({"exec", "execute", "shell", "bash", "command"})
@@ -1738,36 +2397,113 @@ def _transcript_audit_failure(
     return finding
 
 
-def _allowed_scope_matches(candidate: Path, root: Path) -> bool:
-    resolved_root = root.expanduser().resolve(strict=False)
-    if resolved_root.is_file():
-        return candidate == resolved_root
-    return _path_is_within(candidate, resolved_root)
+_READ_TOOLS = frozenset({"read", "read_file", "image", "open_file"})
+_LIST_TOOLS = frozenset({"list", "list_directory", "ls"})
+_SEARCH_TOOLS = frozenset({"search", "find", "glob"})
+_WRITE_TOOLS = frozenset({"write", "write_file", "create", "create_file", "save"})
+_MUTATE_TOOLS = frozenset({"edit", "delete", "remove", "move", "rename", "copy"})
+_EXECUTE_TOOLS = frozenset({"execute_file", "run_file"})
+
+
+def _access_mode_for_candidate(tool_name: str, candidate: PathCandidate) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    source_key = candidate.source.rsplit(".", 1)[-1]
+    if candidate.source in {"exec.workdir", "exec.cwd"}:
+        return "workdir"
+    if normalized_tool in _EXEC_TOOLS:
+        return "unknown"
+    if normalized_tool in _READ_TOOLS:
+        return "read"
+    if normalized_tool in _LIST_TOOLS:
+        return "list"
+    if normalized_tool in _SEARCH_TOOLS:
+        return "search"
+    if normalized_tool in _WRITE_TOOLS:
+        return "write"
+    if normalized_tool in _MUTATE_TOOLS:
+        if normalized_tool == "copy" and source_key == "source":
+            return "read"
+        return "mutate"
+    if normalized_tool in _EXECUTE_TOOLS:
+        return "execute"
+    return "unknown"
+
+
+def _failed_result_contains_external_content(message: Mapping[str, Any] | None) -> bool:
+    text = _tool_result_text(message).strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if "benchmark_workspace_guard_blocked" in lowered or "benchmark_workdir_invalid" in lowered:
+        return False
+    error_markers = (
+        "enoent",
+        "no such file",
+        "permission denied",
+        "access denied",
+        "not found",
+        '"status": "error"',
+        "command exited with code",
+    )
+    return not any(marker in lowered for marker in error_markers)
+
+
+def _information_exposure(
+    *,
+    access_mode: str,
+    operation_outcome: str,
+    result: Mapping[str, Any] | None,
+) -> str:
+    if access_mode in {"write", "mutate"}:
+        return "none"
+    if access_mode == "workdir":
+        return "possible" if operation_outcome in {"succeeded", "unknown"} else "none"
+    if access_mode in {"read", "list", "search", "execute"}:
+        if operation_outcome == "succeeded":
+            return "confirmed"
+        if operation_outcome == "unknown":
+            return "possible"
+        return "confirmed" if _failed_result_contains_external_content(result) else "none"
+    if operation_outcome in {"succeeded", "unknown"}:
+        return "possible"
+    return "confirmed" if _failed_result_contains_external_content(result) else "none"
+
+
+def _result_exit_code(message: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(message, Mapping):
+        return None
+    details = message.get("details")
+    details = details if isinstance(details, Mapping) else {}
+    value = details.get("exitCode", details.get("exit_code"))
+    if isinstance(value, int):
+        return value
+    match = re.search(r"Command exited with code\s+(-?\d+)", _tool_result_text(message))
+    return int(match.group(1)) if match else None
 
 
 def _forbidden_access_findings(
     *,
-    tool_name: str,
-    arguments: Any,
+    event: ToolEvent,
     workspace: Path,
-    protected_roots: tuple[ProtectedRoot, ...],
-    allowed_roots: list[Path],
+    policy: WorkspaceAccessPolicy,
     environment: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     candidates = _candidate_paths(
-        tool_name,
-        arguments,
+        event.tool_name,
+        event.arguments,
         workspace=workspace,
         environment=environment,
     )
+    outcome = _operation_outcome(event.result)
     for candidate in candidates:
-        if any(_allowed_scope_matches(candidate.resolved_path, root) for root in allowed_roots):
+        access_mode = _access_mode_for_candidate(event.tool_name, candidate)
+        if policy.allows(access_mode, candidate.resolved_path):
             continue
         matches = [
             root
-            for root in protected_roots
+            for root in policy.protected_roots
             if _path_is_within(candidate.resolved_path, root.path)
         ]
         if not matches:
@@ -1779,13 +2515,30 @@ def _forbidden_access_findings(
         seen.add(finding_key)
         findings.append(
             {
-                "rule_id": "forbidden_path",
+                "rule_id": "protected_path_access",
+                "tool_call_id": event.tool_call_id,
                 "policy_id": matched.policy_id,
-                "tool_name": str(tool_name or "").strip().lower(),
+                "tool_name": str(event.tool_name or "").strip().lower(),
                 "candidate_source": candidate.source,
+                "access_mode": access_mode,
+                "operation_outcome": outcome,
                 "resolved_path": str(candidate.resolved_path),
                 "matched_root": str(matched.path),
-                "command_excerpt": _command_excerpt(tool_name, arguments),
+                "resource_provenance": "unknown",
+                "information_exposure": _information_exposure(
+                    access_mode=access_mode,
+                    operation_outcome=outcome,
+                    result=event.result,
+                ),
+                "boundary_effect": "violated",
+                "command_excerpt": _command_excerpt(event.tool_name, event.arguments),
+                "evidence": {
+                    "call_line": event.call_line,
+                    "result_line": event.result_line,
+                    "result_is_error": bool(event.result and event.result.get("isError") is True),
+                    "exit_code": _result_exit_code(event.result),
+                    "result_excerpt": _redact_text(_tool_result_text(event.result), limit=240),
+                },
             }
         )
     return findings

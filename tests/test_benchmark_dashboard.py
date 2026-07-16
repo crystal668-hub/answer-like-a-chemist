@@ -187,6 +187,43 @@ def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> N
     assert record["subset"] == "verifier_grounded_rdkit"
 
 
+def test_record_detail_exposes_workspace_adjudication_and_findings(tmp_path: Path) -> None:
+    run_root = tmp_path / "workspace-adjudication-run"
+    result = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="r-boundary",
+        runner_meta={
+            "workspace_isolation": {
+                "policy_digest": "a" * 64,
+                "audit_execution_status": "complete",
+                "boundary_status": "violated",
+                "contamination_status": "clear",
+                "adjudication": "scoreable_degraded",
+                "findings": [
+                    {
+                        "access_mode": "write",
+                        "operation_outcome": "succeeded",
+                        "policy_id": "benchmark_runtime_root",
+                        "resolved_path": "/tmp/sibling/generated.py",
+                    }
+                ],
+                "cleanup": {"failed_count": 0},
+            }
+        },
+    )
+    write_json(run_root / "results.json", {"schema_version": 3, "results": [result], "groups": []})
+
+    record = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).get_record(
+        run_root.name,
+        "r-boundary",
+    )
+
+    isolation = record["groups"][0]["workspace_isolation"]
+    assert isolation["adjudication"] == "scoreable_degraded"
+    assert isolation["contamination_status"] == "clear"
+    assert isolation["findings"][0]["access_mode"] == "write"
+
+
 def test_list_runs_reconciles_stale_progress_state_with_per_record_outputs(tmp_path: Path) -> None:
     run_root = tmp_path / "stale-progress-run"
     payloads = [

@@ -14,6 +14,7 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     ProtectedRoot,
     ContaminationAudit,
+    adjudicate_workspace_findings,
     WorkspaceTemplate,
     WorkspaceIsolationError,
 )
@@ -140,8 +141,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(2, len(captured_commands))
         first_prompt = self._message_from_command(captured_commands[0])
         self.assertIn("BASE PROMPT", first_prompt)
-        self.assertIn("BENCHMARK SCRATCH DIRECTORY", first_prompt)
-        self.assertIn("Do not set exec.workdir", first_prompt)
+        self.assertIn("BENCHMARK WORKSPACE FILE CONTRACT", first_prompt)
+        self.assertIn("omit workdir", first_prompt)
         self.assertIn('cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&', first_prompt)
         retry_prompt = self._message_from_command(captured_commands[1])
         self.assertIn("BASE PROMPT", retry_prompt)
@@ -159,11 +160,11 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
 
         self.assertEqual(2, len(captured_commands))
         self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[0]))
-        self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[0]))
-        self.assertIn("Do not set exec.workdir", self._message_from_command(captured_commands[0]))
+        self.assertIn("BENCHMARK WORKSPACE FILE CONTRACT", self._message_from_command(captured_commands[0]))
+        self.assertIn("omit workdir", self._message_from_command(captured_commands[0]))
         self.assertIn('cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&', self._message_from_command(captured_commands[0]))
         self.assertIn("BASE PROMPT", self._message_from_command(captured_commands[1]))
-        self.assertIn("BENCHMARK SCRATCH DIRECTORY", self._message_from_command(captured_commands[1]))
+        self.assertIn("BENCHMARK WORKSPACE FILE CONTRACT", self._message_from_command(captured_commands[1]))
         for environment in captured_envs:
             self.assertIn("BENCHMARK_WORKSPACE_DIR", environment)
             self.assertIn("BENCHMARK_SKILL_SCRATCH_DIR", environment)
@@ -206,7 +207,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual("no_timeout", result.runner_meta["timeout_mode"])
         self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])
 
-    def test_skills_on_attempt_uses_record_session_scratch_directory(self) -> None:
+    def test_skills_on_attempt_uses_stable_workspace_scratch_directory(self) -> None:
         captured_commands: list[list[str]] = []
         captured_envs: list[dict[str, str]] = []
         runner = self._runner(captured_commands=captured_commands, captured_envs=captured_envs, timeout_once=False)
@@ -220,10 +221,12 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertTrue(str(scratch_dir).startswith(str(self.workspace_manager.runtime_root)))
         self.assertEqual(str(scratch_dir / "requests"), captured_envs[0]["BENCHMARK_SKILL_REQUEST_DIR"])
         self.assertEqual(str(scratch_dir / "outputs"), captured_envs[0]["BENCHMARK_SKILL_OUTPUT_DIR"])
-        self.assertIn(str(scratch_dir), self._message_from_command(captured_commands[0]))
+        self.assertNotIn(str(scratch_dir), self._message_from_command(captured_commands[0]))
+        self.assertEqual("scratch", scratch_dir.name)
         scratch_meta = result.runner_meta["skill_scratch"]
         self.assertEqual(str(scratch_dir), scratch_meta["scratch_dir"])
-        self.assertTrue(scratch_meta["record_slug"].startswith("record-1-"))
+        self.assertEqual("record-1", scratch_meta["record_id"])
+        self.assertEqual(2, scratch_meta["scratch_contract_version"])
         self.assertEqual(session_id, scratch_meta["session_id"])
         self.assertEqual("single_llm_skills_on", scratch_meta["group_id"])
 
@@ -310,8 +313,40 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
 
         self.assertFalse(result.should_score())
         self.assertEqual("benchmark_workspace_contamination", result.failure.code)
-        self.assertTrue(result.runner_meta["workspace_isolation"]["contaminated"])
+        isolation = result.runner_meta["workspace_isolation"]
+        self.assertEqual("confirmed", isolation["contamination_status"])
+        self.assertEqual("non_evaluable", isolation["adjudication"])
         self.assertTrue(Path(result.runner_meta["workspace_isolation"]["archive_manifest"]).is_file())
+
+    def test_write_only_boundary_finding_preserves_scoreable_answer(self) -> None:
+        finding = {
+            "rule_id": "protected_path_access",
+            "tool_call_id": "call-write",
+            "policy_id": "benchmark_runtime_root",
+            "tool_name": "write",
+            "candidate_source": "write.path",
+            "access_mode": "write",
+            "operation_outcome": "succeeded",
+            "resolved_path": "/tmp/benchmark-runtime/sibling/generated.py",
+            "matched_root": "/tmp/benchmark-runtime",
+            "resource_provenance": "unknown",
+            "information_exposure": "none",
+            "boundary_effect": "violated",
+            "evidence": {},
+        }
+        runner = self._runner(
+            captured_commands=[],
+            timeout_once=False,
+            contamination_auditor=lambda **_kwargs: adjudicate_workspace_findings((finding,)),
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertTrue(result.should_score())
+        self.assertEqual("X", result.answer.short_answer_text)
+        isolation = result.runner_meta["workspace_isolation"]
+        self.assertEqual("scoreable_degraded", isolation["adjudication"])
+        self.assertEqual("clear", isolation["contamination_status"])
 
     def test_seal_failure_discards_scoreable_answer(self) -> None:
         runner = self._runner(captured_commands=[], timeout_once=False)
@@ -398,7 +433,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
 
         self.assertEqual("provider_rate_limit_error", result.failure.code)
-        self.assertEqual("clean", result.runner_meta["workspace_isolation"]["audit_status"])
+        isolation = result.runner_meta["workspace_isolation"]
+        self.assertEqual("complete", isolation["audit_execution_status"])
+        self.assertEqual("clear", isolation["contamination_status"])
         transcript_path = result.runner_meta["session_isolation"]["postflight_entry_session_file"]
         self.assertTrue(Path(transcript_path).is_file())
         self.assertEqual("provider_rate_limit_error", result.raw["execution_error"]["code"])

@@ -460,6 +460,31 @@ def test_build_input_bundle_keeps_complete_answer_text_for_review(tmp_path: Path
     assert answer_preview["original_chars"] == len(long_answer)
 
 
+def test_build_input_bundle_includes_workspace_adjudication_evidence(tmp_path: Path) -> None:
+    output_root = tmp_path / "run"
+    isolation = {
+        "audit_execution_status": "complete",
+        "boundary_status": "violated",
+        "contamination_status": "clear",
+        "adjudication": "scoreable_degraded",
+        "findings": [{"access_mode": "write", "operation_outcome": "succeeded"}],
+        "cleanup": {"failed_count": 0},
+    }
+    result = minimal_record_payload(
+        group_id="single_llm_skills_on",
+        record_id="r-boundary",
+        runner="single_llm",
+        runner_meta={"workspace_isolation": isolation},
+    )
+    write_json(output_root / "results.json", {"schema_version": 3, "results": [result], "groups": []})
+
+    bundle = automated_evaluation.build_input_bundle(output_root)
+
+    bundled = bundle["records"][0]["groups"][0]["workspace_isolation"]
+    assert bundled["adjudication"] == "scoreable_degraded"
+    assert bundled["findings"][0]["access_mode"] == "write"
+
+
 def test_chemqa_artifact_summary_reads_archive_files(tmp_path: Path) -> None:
     archive_dir = tmp_path / "artifacts" / "chemqa_skills_on" / "r1" / "run-1"
     write_json(archive_dir / "artifact_manifest.json", {"artifacts": [{"name": "final_answer_artifact"}]})
@@ -630,6 +655,7 @@ def test_automated_evaluation_prompt_requests_chinese_user_facing_content(tmp_pa
     assert "cross_record_patterns" in prompt
     assert "architecture_recommendations" in prompt
     assert "per_record_analysis" in prompt
+    assert "write-only violation" in prompt
     assert "最终答案只返回 JSON" in prompt
 
 

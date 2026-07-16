@@ -145,6 +145,37 @@ def _diagnostics_payload(result: dict[str, Any], skill_audit: dict[str, Any]) ->
     }
 
 
+def _workspace_isolation_payload(runner_meta: dict[str, Any]) -> dict[str, Any]:
+    isolation = runner_meta.get("workspace_isolation")
+    if not isinstance(isolation, dict):
+        return {}
+    if "adjudication" in isolation:
+        return {
+            key: isolation.get(key)
+            for key in (
+                "policy_digest",
+                "audit_execution_status",
+                "boundary_status",
+                "contamination_status",
+                "adjudication",
+                "findings",
+                "cleanup",
+            )
+        }
+    legacy_status = str(isolation.get("audit_status") or "").strip()
+    if not legacy_status:
+        return {}
+    return {
+        "legacy_schema": True,
+        "audit_execution_status": "unavailable" if legacy_status == "unavailable" else "complete",
+        "boundary_status": "clean" if legacy_status == "clean" else "unknown",
+        "contamination_status": "clear" if legacy_status == "clean" else "indeterminate",
+        "adjudication": "scoreable" if legacy_status == "clean" else "non_evaluable",
+        "findings": isolation.get("findings") or [],
+        "cleanup": isolation.get("cleanup") or {},
+    }
+
+
 class BenchmarkDashboard:
     def __init__(
         self,
@@ -395,6 +426,7 @@ class BenchmarkDashboard:
                         "error": result.get("error"),
                     },
                     "diagnostics": _diagnostics_payload(result, skill_audit),
+                    "workspace_isolation": _workspace_isolation_payload(runner_meta),
                     "annotations": self.annotation_store.list_annotations(
                         run_id=run_id,
                         record_id=str(result.get("record_id") or record_id),

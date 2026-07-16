@@ -123,7 +123,7 @@ class ChemQAWorkspaceIsolationTests(unittest.TestCase):
                 self.assertTrue((archive_workspace / "previous-role-output.txt").is_file())
                 self.assertFalse(Path(slot_meta["active_workspace"]).exists())
 
-    def test_run_local_explicit_session_transcripts_are_audited_clean(self) -> None:
+    def test_run_local_out_of_scratch_writes_are_scoreable_degraded(self) -> None:
         config_path = self.root / "config.json"
         agent_ids = ["debateA-coordinator", *[f"debateA-{index}" for index in range(1, 6)]]
         config_path.write_text(
@@ -213,12 +213,17 @@ class ChemQAWorkspaceIsolationTests(unittest.TestCase):
 
         self.assertEqual(RunStatus.COMPLETED, result.status)
         isolation = result.runner_meta["workspace_isolation"]
-        self.assertEqual("clean", isolation["audit_status"])
-        self.assertEqual([], isolation["findings"])
+        self.assertEqual("complete", isolation["audit_execution_status"])
+        self.assertEqual("violated", isolation["boundary_status"])
+        self.assertEqual("clear", isolation["contamination_status"])
+        self.assertEqual("scoreable_degraded", isolation["adjudication"])
+        self.assertEqual(6, len(isolation["findings"]))
+        self.assertTrue(all(item["access_mode"] == "write" for item in isolation["findings"]))
         for slot_meta in isolation["slots"].values():
             manifest = json.loads(Path(slot_meta["archive_manifest"]).read_text(encoding="utf-8"))
-            self.assertEqual("clean", manifest["contamination_audit"]["status"])
-            self.assertEqual(0, manifest["contamination_audit"]["finding_count"])
+            self.assertEqual("scoreable_degraded", manifest["workspace_isolation"]["adjudication"])
+            self.assertEqual("clear", manifest["workspace_isolation"]["contamination_status"])
+            self.assertEqual(1, manifest["workspace_isolation"]["finding_count"])
 
     def test_one_slot_archive_failure_discards_completed_answer(self) -> None:
         def fake_run_prepared(runner, record, group, *, run_id, input_bundle):

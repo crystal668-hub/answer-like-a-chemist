@@ -734,7 +734,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("legacy-record", entry.record_id)
-            self.assertEqual(2, entry.schema_version)
+            self.assertEqual(3, entry.schema_version)
             self.assertEqual("completed", entry.run_lifecycle_status)
             self.assertEqual("completed", entry.protocol_completion_status)
             self.assertIsNone(entry.protocol_acceptance_status)
@@ -2067,7 +2067,8 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["session_contaminated_count"])
         self.assertEqual(1, summary["groups"]["g1"]["workspace_isolation_ok_count"])
         self.assertEqual(1, summary["groups"]["g1"]["workspace_isolation_failed_count"])
-        self.assertEqual(1, summary["groups"]["g1"]["workspace_contaminated_count"])
+        self.assertEqual(0, summary["groups"]["g1"]["workspace_contaminated_count"])
+        self.assertEqual(1, summary["groups"]["g1"]["contamination_indeterminate_count"])
         self.assertEqual(1, summary["groups"]["g1"]["workspace_archive_failed_count"])
 
         sample[0].runner_meta["workspace_isolation"]["audit_status"] = "unavailable"
@@ -2658,7 +2659,8 @@ Points: 0.5, Item: Second criterion
                             client.evaluate_json("score this")
 
             self.assertTrue(client.last_workspace_isolation["archive_ok"])
-            self.assertTrue(client.last_workspace_isolation["contaminated"])
+            self.assertEqual("confirmed", client.last_workspace_isolation["contamination_status"])
+            self.assertEqual("non_evaluable", client.last_workspace_isolation["adjudication"])
 
     def test_judge_client_clears_stale_main_session_before_openclaw_call(self) -> None:
         captured: dict[str, object] = {}

@@ -1,6 +1,6 @@
 # Benchmark Attempt Workspace Behavior and Contamination Adjudication Specification
 
-状态：`APPROVED / READY FOR IMPLEMENTATION`
+状态：`IMPLEMENTED / DESIGNATED HISTORY RECOVERY PENDING`
 
 日期：2026-07-16
 

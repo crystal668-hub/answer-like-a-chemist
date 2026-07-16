@@ -19,8 +19,11 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceLease,
     AttemptWorkspaceManager,
     ContaminationAudit,
+    WorkspaceAudit,
     WorkspaceIsolationError,
     WorkspaceLeaseSet,
+    adjudicate_workspace_findings,
+    ensure_workspace_audit,
 )
 
 
@@ -1233,8 +1236,8 @@ class ChemQARunner:
         self._workspace_attempt_archives.append(archive_meta)
         self._current_lease_set = None
         self._active_slot_workspaces = {}
-        contaminated = any(audit.status != "clean" for audit in audits.values())
-        if contaminated:
+        non_evaluable = any(audit.adjudication == "non_evaluable" for audit in audits.values())
+        if non_evaluable:
             raise WorkspaceIsolationError(
                 "benchmark_workspace_contamination",
                 "ChemQA recovery workspace audit was contaminated or unavailable.",
@@ -1324,7 +1327,7 @@ class ChemQARunner:
         lease: AttemptWorkspaceLease,
         result: RunnerResult,
         input_bundle: Any,
-    ) -> ContaminationAudit:
+    ) -> WorkspaceAudit:
         if self._session_audit_resolver is None:
             session_audit: dict[str, Any] = {}
         else:
@@ -1350,22 +1353,28 @@ class ChemQARunner:
                     "audit_error": type(exc).__name__,
                 }
         runner_meta = {**result.runner_meta, "session_isolation": session_audit}
-        allowed_roots = [*self.allowed_workspace_roots]
         bundle_dir = getattr(input_bundle, "bundle_dir", None)
-        if bundle_dir is not None:
-            allowed_roots.append(Path(bundle_dir).expanduser().resolve())
+        policy = self.workspace_manager.policy_for_lease(
+            lease,
+            role="chemqa",
+            skills_enabled=True,
+            always_read_scopes=([Path(bundle_dir)] if bundle_dir is not None else []),
+            read_scopes=self.allowed_workspace_roots,
+        )
         if self._contamination_auditor is not None:
-            return self._contamination_auditor(
+            return ensure_workspace_audit(self._contamination_auditor(
                 lease=lease,
                 runner_meta=runner_meta,
-                allowed_roots=allowed_roots,
+                allowed_roots=[scope.path for scope in policy.read_scopes],
                 environment=os.environ,
-            )
+                policy=policy,
+            ))
         return self.workspace_manager.audit_attempt(
             lease,
             runner_meta,
-            allowed_roots=allowed_roots,
+            allowed_roots=[scope.path for scope in policy.read_scopes],
             environment=os.environ,
+            policy=policy,
         )
 
     def run(self, record: Any, group: Any) -> RunnerResult:
@@ -1380,7 +1389,7 @@ class ChemQARunner:
             return self._workspace_failure_result(
                 error=error,
                 isolation_meta={
-                    "schema_version": 1,
+                    "schema_version": 3,
                     "run_id": self.workspace_manager.run_id,
                     "invocation_id": self.workspace_manager.invocation_id,
                     "group_id": str(group.id),
@@ -1388,7 +1397,10 @@ class ChemQARunner:
                     "attempt_index": 0,
                     "preflight_ok": False,
                     "archive_ok": False,
-                    "contaminated": False,
+                    "audit_execution_status": "unavailable",
+                    "boundary_status": "unknown",
+                    "contamination_status": "indeterminate",
+                    "adjudication": "non_evaluable",
                     "findings": [],
                     "slots": {},
                 },
@@ -1412,10 +1424,13 @@ class ChemQARunner:
                 result = self._workspace_failure_result(
                     error=error,
                     isolation_meta={
-                        "schema_version": 1,
+                        "schema_version": 3,
                         "preflight_ok": True,
                         "archive_ok": False,
-                        "contaminated": error.code == "benchmark_workspace_contamination",
+                        "audit_execution_status": "unavailable",
+                        "boundary_status": "unknown",
+                        "contamination_status": "indeterminate",
+                        "adjudication": "non_evaluable",
                         "findings": list(error.details.get("audits") or []),
                         "slots": {},
                         "attempt_archives": list(self._workspace_attempt_archives),
@@ -1439,10 +1454,13 @@ class ChemQARunner:
                         "ChemQA attempt ended without an active workspace lease set to archive.",
                     ),
                     isolation_meta={
-                        "schema_version": 1,
+                        "schema_version": 3,
                         "preflight_ok": False,
                         "archive_ok": False,
-                        "contaminated": False,
+                        "audit_execution_status": "unavailable",
+                        "boundary_status": "unknown",
+                        "contamination_status": "indeterminate",
+                        "adjudication": "non_evaluable",
                         "findings": [],
                         "slots": {},
                         "attempt_archives": list(self._workspace_attempt_archives),
@@ -1464,8 +1482,32 @@ class ChemQARunner:
                 for agent_id, audit in audits.items()
                 for finding in audit.findings
             ]
-            contaminated = any(audit.status == "contaminated" for audit in audits.values())
-            audit_unavailable = any(audit.status == "unavailable" for audit in audits.values())
+            audit_execution_status = (
+                "unavailable"
+                if any(audit.audit_execution_status == "unavailable" for audit in audits.values())
+                else "complete"
+            )
+            combined_audit = adjudicate_workspace_findings(
+                all_findings,
+                audit_execution_status=audit_execution_status,
+                recovery={
+                    "slots": {
+                        agent_id: dict(audit.recovery)
+                        for agent_id, audit in audits.items()
+                    },
+                    "model_reinvoked": False,
+                },
+            )
+            cleanup_by_agent = {
+                agent_id: self.workspace_manager.cleanup_boundary_writes(audit)
+                for agent_id, audit in audits.items()
+            }
+            combined_cleanup = {
+                "attempted_count": sum(item["attempted_count"] for item in cleanup_by_agent.values()),
+                "succeeded_count": sum(item["succeeded_count"] for item in cleanup_by_agent.values()),
+                "failed_count": sum(item["failed_count"] for item in cleanup_by_agent.values()),
+                "slots": cleanup_by_agent,
+            }
             isolation_meta.update(
                 {
                     "run_id": self.workspace_manager.run_id,
@@ -1473,26 +1515,42 @@ class ChemQARunner:
                     "group_id": str(group.id),
                     "record_id": str(record.record_id),
                     "attempt_index": 0,
-                    "contaminated": contaminated,
-                    "audit_status": "unavailable" if audit_unavailable else ("contaminated" if contaminated else "clean"),
-                    "findings": all_findings,
                     "attempt_archives": list(self._workspace_attempt_archives),
+                    "cleanup": combined_cleanup,
+                    **combined_audit.to_payload(),
                 }
             )
-            if contaminated or audit_unavailable:
+            for lease in final_lease_set.leases:
+                bundle_dir = getattr(input_bundle, "bundle_dir", None)
+                policy = self.workspace_manager.policy_for_lease(
+                    lease,
+                    role="chemqa",
+                    skills_enabled=bool(getattr(group, "skills_enabled", True)),
+                    always_read_scopes=([Path(bundle_dir)] if bundle_dir is not None else []),
+                    read_scopes=self.allowed_workspace_roots,
+                )
+                isolation_meta["slots"][lease.identity.agent_id].update(
+                    {"policy_digest": policy.digest, "policy": policy.to_payload()}
+                )
+            if combined_audit.adjudication == "non_evaluable":
                 result = self._workspace_failure_result(
                     error=WorkspaceIsolationError(
                         "benchmark_workspace_contamination",
-                        "ChemQA workspace contamination was detected."
-                        if contaminated
-                        else "ChemQA workspace contamination audit was unavailable.",
-                        details={"audit_status": isolation_meta["audit_status"], "findings": all_findings},
+                        "ChemQA workspace information contamination was detected or could not be excluded.",
+                        details={
+                            "audit_execution_status": combined_audit.audit_execution_status,
+                            "contamination_status": combined_audit.contamination_status,
+                            "adjudication": combined_audit.adjudication,
+                            "findings": all_findings,
+                        },
                     ),
                     isolation_meta=isolation_meta,
                     run_id=run_id,
                     original_result=result,
                 )
             else:
+                if combined_audit.adjudication == "scoreable_degraded":
+                    result.runner_meta["degraded_execution"] = True
                 result.runner_meta["workspace_isolation"] = isolation_meta
 
             seal_errors: list[WorkspaceIsolationError] = []

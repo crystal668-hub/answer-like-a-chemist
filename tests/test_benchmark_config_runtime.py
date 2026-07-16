@@ -17,6 +17,7 @@ from benchmarking.runtime.config_pool import (
     ConfigPool,
     RuntimeConfigContext,
     RuntimeConfigError,
+    actual_slot_ids,
     build_run_scoped_config_payload,
 )
 from benchmarking.skills.tree import benchmark_skill_allowlist
@@ -353,12 +354,11 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             )
             guard = payload["plugins"]["entries"][BENCHMARK_WORKDIR_GUARD_PLUGIN_ID]
             self.assertIs(guard["enabled"], True)
-            self.assertEqual(
-                {
-                    "benchmark-single-skills-on": agents["benchmark-single-skills-on"]["workspace"],
-                },
-                guard["config"]["agentWorkspaces"],
-            )
+            policy = guard["config"]["agentPolicies"]["benchmark-single-skills-on"]
+            self.assertEqual("single_llm", policy["role"])
+            self.assertTrue(policy["skills_enabled"])
+            self.assertEqual(agents["benchmark-single-skills-on"]["workspace"], policy["read_scopes"][0]["path"])
+            self.assertRegex(policy["policy_digest"], r"^[0-9a-f]{64}$")
             self.assertEqual(
                 str(
                     self._workspace_manager(root).active_workspace_path(
@@ -370,6 +370,48 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             )
             self.assertFalse(Path(agents["benchmark-single-skills-on"]["workspace"]).exists())
 
+    def test_skills_off_guard_policy_excludes_skills_and_wrapper_scopes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            skills_root = root / "workspace" / "skills"
+            context = RuntimeConfigContext(
+                agents_root=root / "agents",
+                judge_agent_id="benchmark-judge",
+                chemqa_slot_sets={},
+                experiment_specs={
+                    "single_llm_skills_off": ExperimentSpec(
+                        id="single_llm_skills_off",
+                        label="skills off",
+                        runner_kind="single_llm",
+                        websearch_enabled=False,
+                        skills_enabled=False,
+                        single_agent_id="benchmark-single-skills-off",
+                    )
+                },
+                benchmark_skills_root=skills_root,
+            )
+            payload = build_run_scoped_config_payload(
+                {"agents": {"list": []}, "plugins": {"entries": {}}},
+                context=context,
+                group=RuntimeConfigGroup(
+                    id="single_llm_skills_off",
+                    label="skills off",
+                    runner="single_llm",
+                    websearch=False,
+                    skills_enabled=False,
+                ),
+                single_agent_model="runner",
+                judge_model="judge",
+                workspace_manager=self._workspace_manager(root),
+            )
+
+            guard = payload["plugins"]["entries"][BENCHMARK_WORKDIR_GUARD_PLUGIN_ID]
+            policy = guard["config"]["agentPolicies"]["benchmark-single-skills-off"]
+            serialized = json.dumps(policy)
+            self.assertFalse(policy["skills_enabled"])
+            self.assertNotIn(str(skills_root.resolve()), serialized)
+            self.assertNotIn("run_skill.py", serialized)
+            self.assertNotIn(str(skills_root.resolve()), payload.get("skills", {}).get("load", {}).get("extraDirs", []))
     def test_build_run_scoped_config_payload_does_not_write_skill_exec_tools_md_for_skills_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -463,7 +505,10 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-5"]["skills"])
             self.assertFalse(Path(agents["debateA-1"]["workspace"]).exists())
             self.assertNotEqual(agents["debateA-1"]["workspace"], agents["debateA-2"]["workspace"])
-            self.assertNotIn(BENCHMARK_WORKDIR_GUARD_PLUGIN_ID, payload["plugins"]["entries"])
+            guard = payload["plugins"]["entries"][BENCHMARK_WORKDIR_GUARD_PLUGIN_ID]
+            policies = guard["config"]["agentPolicies"]
+            self.assertEqual(set(actual_slot_ids("A").values()), set(policies))
+            self.assertTrue(all(policy["role"] == "chemqa" for policy in policies.values()))
 
     def test_build_run_scoped_config_payload_wraps_renderer_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

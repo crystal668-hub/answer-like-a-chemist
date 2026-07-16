@@ -7,12 +7,17 @@ from pathlib import Path
 
 from benchmarking.runtime.agent_workspace import (
     SENTINEL_FILENAME,
+    AccessScope,
     AttemptIdentity,
     AttemptOutcome,
     AttemptWorkspaceManager,
     ProtectedRoot,
+    WorkspaceAccessPolicy,
+    WorkspaceAudit,
     WorkspaceIsolationError,
     WorkspaceTemplate,
+    adjudicate_workspace_findings,
+    default_workspace_templates,
 )
 
 
@@ -118,6 +123,71 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         )
         return audit
 
+    def _audit_tool_event(
+        self,
+        *,
+        tool_name: str,
+        arguments: object,
+        result: dict[str, object] | None,
+        allowed_roots: tuple[Path, ...] | list[Path] = (),
+        environment: dict[str, str] | None = None,
+    ) -> WorkspaceAudit:
+        index = self.audit_index
+        self.audit_index += 1
+        identity = self._identity(attempt_index=index, session_id=f"event-session-{index}")
+        lease = self.manager.prepare(identity)
+        resolved_arguments = arguments(lease) if callable(arguments) else arguments
+        call_id = f"call-{index}"
+        lines = [
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": call_id,
+                            "name": tool_name,
+                            "arguments": resolved_arguments,
+                        }
+                    ],
+                },
+            }
+        ]
+        if result is not None:
+            lines.append(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": call_id,
+                        "toolName": tool_name,
+                        "content": [{"type": "text", "text": str(result.get("text") or "")}],
+                        "isError": bool(result.get("isError", False)),
+                        "details": result.get("details") or {},
+                    },
+                }
+            )
+        transcript = self.root / f"event-transcript-{index}.jsonl"
+        transcript.write_text(
+            "".join(json.dumps(line) + "\n" for line in lines),
+            encoding="utf-8",
+        )
+        audit = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+            allowed_roots=allowed_roots,
+            environment=environment,
+        )
+        self.manager.seal(
+            lease,
+            AttemptOutcome(
+                runner_status="completed" if audit.adjudication != "non_evaluable" else "failed",
+                contamination_audit=audit,
+            ),
+        )
+        return audit
+
     def test_prepare_creates_exact_sentinel_and_current_scratch_atomically(self) -> None:
         identity = self._identity()
         lease = self.manager.prepare(identity)
@@ -130,8 +200,265 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertTrue(lease.request_dir.is_dir())
         self.assertTrue(lease.output_dir.is_dir())
         self.assertTrue(lease.notes_dir.is_dir())
-        self.assertEqual({"AGENTS.md", SENTINEL_FILENAME, ".benchmark-scratch"}, {path.name for path in lease.active_workspace.iterdir()})
+        self.assertEqual({"AGENTS.md", SENTINEL_FILENAME, "scratch"}, {path.name for path in lease.active_workspace.iterdir()})
+        self.assertEqual(lease.active_workspace / "scratch", lease.scratch_dir)
+        self.assertTrue((lease.scratch_dir / "tmp").is_dir())
         self.manager.seal(lease, AttemptOutcome(runner_status="completed"))
+
+    def test_workspace_access_policy_digest_is_order_independent_and_exact_files_stay_exact(self) -> None:
+        workspace = (self.root / "policy-workspace").resolve()
+        scratch = workspace / "scratch"
+        skill_root = (self.root / "skills").resolve()
+        wrapper = (self.root / "scripts" / "run_skill.py").resolve()
+        scopes = (
+            AccessScope("skill-root", skill_root, "directory", "test.skills"),
+            AccessScope("skill-wrapper", wrapper, "file", "test.wrapper"),
+        )
+        first = WorkspaceAccessPolicy(
+            schema_version=1,
+            role="single_llm",
+            skills_enabled=True,
+            read_scopes=(AccessScope("workspace", workspace, "directory", "test.workspace"), *scopes),
+            write_scopes=(AccessScope("scratch", scratch, "directory", "test.scratch"),),
+            exec_workdir_scopes=(AccessScope("workspace", workspace, "directory", "test.workspace"),),
+            protected_roots=self.manager.protected_roots,
+        )
+        second = WorkspaceAccessPolicy(
+            schema_version=1,
+            role="single_llm",
+            skills_enabled=True,
+            read_scopes=tuple(reversed(first.read_scopes)),
+            write_scopes=first.write_scopes,
+            exec_workdir_scopes=first.exec_workdir_scopes,
+            protected_roots=tuple(reversed(first.protected_roots)),
+        )
+
+        self.assertEqual(first.digest, second.digest)
+        self.assertTrue(first.allows("read", wrapper))
+        self.assertFalse(first.allows("read", wrapper / "child"))
+
+    def test_skills_off_policy_excludes_skill_root_and_wrapper(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        skill_root = self.root / "skills"
+        wrapper = self.root / "scripts" / "run_skill.py"
+        policy = self.manager.policy_for_lease(
+            lease,
+            role="single_llm",
+            skills_enabled=False,
+            read_scopes=(skill_root, wrapper),
+        )
+
+        self.assertFalse(policy.allows("read", skill_root / "rdkit" / "SKILL.md"))
+        self.assertFalse(policy.allows("read", wrapper))
+        self.assertTrue(policy.allows("write", lease.scratch_dir / "notes" / "answer.txt"))
+        self.manager.seal(lease, AttemptOutcome(runner_status="completed"))
+
+    def test_default_role_templates_share_canonical_base_contract(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        templates = default_workspace_templates(project_root)
+        manager = AttemptWorkspaceManager(
+            runtime_root=self.root / "template-runtime",
+            output_root=self.root / "template-output",
+            run_id="template-run",
+            invocation_id="template-invocation",
+            templates=templates,
+            protected_roots=(
+                ProtectedRoot("benchmark_runtime_root", self.root / "template-runtime", "test.runtime"),
+                ProtectedRoot("current_output_root", self.root / "template-output", "test.output"),
+            ),
+        )
+        contracts: dict[str, str] = {}
+        for index, template_id in enumerate(templates):
+            identity = AttemptIdentity(
+                run_id="template-run",
+                invocation_id="template-invocation",
+                group_id=f"group-{index}",
+                runner_kind="judge" if template_id == "judge-v1" else "single_llm",
+                agent_id=f"agent-{index}",
+                record_id=f"record-{index}",
+                attempt_index=0,
+                session_id=f"session-{index}",
+                template_id=template_id,
+            )
+            lease = manager.prepare(identity)
+            contracts[template_id] = (lease.active_workspace / "AGENTS.md").read_text(encoding="utf-8")
+            manager.seal(lease, AttemptOutcome(runner_status="completed"))
+
+        base_rule = "structured file tools, use only workspace-relative `scratch/...` paths."
+        self.assertTrue(all(base_rule in contract for contract in contracts.values()))
+        self.assertIn("Skill use is optional", contracts["single-llm-skills-on-v1"])
+        self.assertIn("Skills and local skill scripts are unavailable", contracts["single-llm-skills-off-v1"])
+        self.assertIn("Return only the requested JSON verdict", contracts["judge-v1"])
+
+    def test_tool_result_outcomes_and_access_modes_are_preserved(self) -> None:
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        cases = (
+            ({"text": "blocked: benchmark_workspace_guard_blocked", "isError": True}, "blocked"),
+            ({"text": "ENOENT: no such file", "isError": True}, "failed"),
+            ({"text": "contents", "isError": False}, "succeeded"),
+            (None, "unknown"),
+        )
+        for result, expected_outcome in cases:
+            with self.subTest(expected_outcome=expected_outcome):
+                audit = self._audit_tool_event(
+                    tool_name="read",
+                    arguments={"path": str(protected)},
+                    result=result,
+                )
+                finding = audit.findings[0]
+                self.assertTrue(finding["tool_call_id"])
+                self.assertEqual("read", finding["access_mode"])
+                self.assertEqual(expected_outcome, finding["operation_outcome"])
+                self.assertIn("call_line", finding["evidence"])
+                self.assertIn("result_line", finding["evidence"])
+
+    def test_tool_semantics_registry_covers_all_access_modes(self) -> None:
+        protected = self.root / "datasets" / "track" / "resource"
+        cases = (
+            ("list", {"path": str(protected)}, "list"),
+            ("search", {"directory": str(protected)}, "search"),
+            ("execute_file", {"path": str(protected)}, "execute"),
+            ("edit", {"path": str(protected), "old_text": "a", "new_text": "b"}, "mutate"),
+            ("unregistered_file_tool", {"path": str(protected)}, "unknown"),
+        )
+        for tool_name, arguments, expected_mode in cases:
+            with self.subTest(tool_name=tool_name):
+                audit = self._audit_tool_event(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result={"text": "benchmark_workspace_guard_blocked", "isError": True},
+                )
+                self.assertEqual(expected_mode, audit.findings[0]["access_mode"])
+                self.assertEqual("blocked", audit.findings[0]["operation_outcome"])
+                self.assertEqual("scoreable_degraded", audit.adjudication)
+
+    def test_failed_protected_read_with_returned_content_is_still_contaminated(self) -> None:
+        audit = self._audit_tool_event(
+            tool_name="read",
+            arguments={"path": str(self.root / "datasets" / "secret.txt")},
+            result={"text": "protected answer contents", "isError": True},
+        )
+
+        self.assertEqual("failed", audit.findings[0]["operation_outcome"])
+        self.assertEqual("confirmed", audit.findings[0]["information_exposure"])
+        self.assertEqual("non_evaluable", audit.adjudication)
+
+    def test_outside_workdir_fallback_depends_on_operation_outcome(self) -> None:
+        policy = WorkspaceAccessPolicy(
+            schema_version=1,
+            role="single_llm",
+            skills_enabled=False,
+            read_scopes=(AccessScope("workspace", self.root / "workspace", "directory", "test"),),
+            write_scopes=(AccessScope("scratch", self.root / "workspace" / "scratch", "directory", "test"),),
+            exec_workdir_scopes=(AccessScope("workspace", self.root / "workspace", "directory", "test"),),
+            protected_roots=self.manager.protected_roots,
+        )
+        for text, expected_contamination, expected_adjudication in (
+            (
+                'Warning: workdir "/missing" is unavailable; using "/outside".\n(Command exited with code 1)',
+                "clear",
+                "scoreable_degraded",
+            ),
+            (
+                'Warning: workdir "/missing" is unavailable; using "/outside".',
+                "indeterminate",
+                "non_evaluable",
+            ),
+        ):
+            with self.subTest(expected_adjudication=expected_adjudication):
+                result_message = {
+                    "role": "toolResult",
+                    "toolName": "exec",
+                    "content": [{"type": "text", "text": text}],
+                    "isError": expected_adjudication == "scoreable_degraded",
+                }
+                from benchmarking.runtime.agent_workspace import _workdir_fallback_finding
+
+                parsed = _workdir_fallback_finding(result_message, line_number=1, policy=policy)
+                audit = adjudicate_workspace_findings((parsed,))
+                self.assertEqual(expected_contamination, audit.contamination_status)
+                self.assertEqual(expected_adjudication, audit.adjudication)
+
+    def test_write_only_boundary_violation_is_scoreable_degraded(self) -> None:
+        protected_target = self.root / "output" / "sibling-run" / "generated.py"
+        audit = self._audit_tool_event(
+            tool_name="write",
+            arguments={"path": str(protected_target), "content": "print('current attempt')\n"},
+            result={"text": "Wrote file", "isError": False},
+        )
+
+        self.assertEqual("violated", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable_degraded", audit.adjudication)
+        self.assertEqual("write", audit.findings[0]["access_mode"])
+        self.assertEqual("none", audit.findings[0]["information_exposure"])
+
+    def test_successful_protected_read_is_non_evaluable(self) -> None:
+        audit = self._audit_tool_event(
+            tool_name="read",
+            arguments={"path": str(self.root / "datasets" / "track" / "tasks.jsonl")},
+            result={"text": "protected record contents", "isError": False},
+        )
+
+        self.assertEqual("violated", audit.boundary_status)
+        self.assertEqual("confirmed", audit.contamination_status)
+        self.assertEqual("non_evaluable", audit.adjudication)
+
+    def test_allowed_workdir_fallback_is_warning_and_scoreable(self) -> None:
+        finding = {
+            "rule_id": "workdir_fallback",
+            "tool_call_id": "call-1",
+            "tool_name": "exec",
+            "candidate_source": "tool_result.warning",
+            "access_mode": "workdir",
+            "operation_outcome": "failed",
+            "requested_workdir": "/missing/attempt/output",
+            "fallback_workdir": str(self.root / "workspace"),
+            "fallback_allowed": True,
+            "resource_provenance": "unknown",
+            "information_exposure": "none",
+            "boundary_effect": "warning",
+            "evidence": {},
+        }
+        audit = adjudicate_workspace_findings((finding,))
+
+        self.assertEqual("warning", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable", audit.adjudication)
+
+    def test_cleanup_deletes_only_proven_current_attempt_owned_targets(self) -> None:
+        owned = self.root / "output" / "owned" / "generated.txt"
+        unknown = self.root / "output" / "unknown" / "keep.txt"
+        owned.parent.mkdir(parents=True)
+        unknown.parent.mkdir(parents=True)
+        owned.write_text("owned", encoding="utf-8")
+        unknown.write_text("keep", encoding="utf-8")
+        base = {
+            "rule_id": "protected_path_access",
+            "tool_call_id": "call-write",
+            "policy_id": "current_output_root",
+            "tool_name": "write",
+            "candidate_source": "write.path",
+            "access_mode": "write",
+            "operation_outcome": "succeeded",
+            "matched_root": str((self.root / "output").resolve()),
+            "information_exposure": "none",
+            "boundary_effect": "violated",
+            "evidence": {},
+        }
+        audit = adjudicate_workspace_findings(
+            (
+                {**base, "resolved_path": str(owned), "resource_provenance": "current_attempt_owned"},
+                {**base, "resolved_path": str(unknown), "resource_provenance": "unknown"},
+            )
+        )
+
+        cleanup = self.manager.cleanup_boundary_writes(audit)
+
+        self.assertEqual(1, cleanup["attempted_count"])
+        self.assertEqual(1, cleanup["succeeded_count"])
+        self.assertFalse(owned.exists())
+        self.assertEqual("keep", unknown.read_text(encoding="utf-8"))
 
     def test_identity_scope_and_outside_runtime_paths_fail_closed(self) -> None:
         with self.assertRaisesRegex(WorkspaceIsolationError, "scope") as raised:
@@ -492,7 +819,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                 )
                 self.assertEqual("contaminated", audit.status)
                 finding = audit.findings[0]
-                self.assertEqual("forbidden_path", finding["rule_id"])
+                self.assertEqual("protected_path_access", finding["rule_id"])
                 self.assertEqual(expected_policy, finding["policy_id"])
                 self.assertEqual(str(path.resolve(strict=False)), finding["resolved_path"])
                 matched_root = next(
@@ -766,13 +1093,15 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         )
 
         self.assertEqual("clean", clean.status)
-        self.assertEqual("contaminated", contaminated.status)
+        self.assertEqual("violated", contaminated.boundary_status)
+        self.assertEqual("clear", contaminated.contamination_status)
+        self.assertEqual("scoreable_degraded", contaminated.adjudication)
         finding = contaminated.findings[0]
-        self.assertEqual("forbidden_path", finding["rule_id"])
+        self.assertEqual("protected_path_access", finding["rule_id"])
         self.assertEqual("benchmark_dataset_root", finding["policy_id"])
         self.assertIn("resolved_path", finding)
         self.assertIn("matched_root", finding)
-        self.assertEqual({"forbidden_path"}, {item["rule_id"] for item in contaminated.findings})
+        self.assertEqual({"protected_path_access"}, {item["rule_id"] for item in contaminated.findings})
         self.manager.seal(
             lease,
             AttemptOutcome(runner_status="failed", contamination_audit=contaminated),
@@ -939,7 +1268,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("clean", audit.status)
         self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
 
-    def test_workdir_fallback_tool_result_marks_attempt_contaminated(self) -> None:
+    def test_workdir_fallback_to_allowed_workspace_is_warning_only(self) -> None:
         lease = self.manager.prepare(self._identity())
         transcript = self.root / "workdir-fallback-transcript.jsonl"
         transcript.write_text(
@@ -970,11 +1299,14 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
             {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
         )
 
-        self.assertEqual("contaminated", audit.status)
+        self.assertEqual("clean", audit.status)
+        self.assertEqual("warning", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable", audit.adjudication)
         self.assertEqual("workdir_fallback", audit.findings[0]["rule_id"])
         self.assertEqual("/missing/attempt/output", audit.findings[0]["requested_workdir"])
         self.assertEqual(str(lease.active_workspace), audit.findings[0]["fallback_workdir"])
-        self.manager.seal(lease, AttemptOutcome(runner_status="failed", contamination_audit=audit))
+        self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
 
     def test_forbidden_path_audit_unavailable_fails_closed_contract(self) -> None:
         lease = self.manager.prepare(self._identity())
@@ -982,6 +1314,59 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("unavailable", audit.status)
         self.assertEqual("transcript_unavailable", audit.findings[0]["rule_id"])
         self.manager.seal(lease, AttemptOutcome(runner_status="failed", contamination_audit=audit))
+
+    def test_missing_active_transcript_recovers_from_exact_archive_reference(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        archived = self.root / "archived-session.jsonl"
+        archived.write_text(
+            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        audit = self.manager.audit_attempt(
+            lease,
+            {
+                "session_isolation": {
+                    "postflight_entry_session_file": str(self.root / "missing.jsonl"),
+                    "archived_session_file": str(archived),
+                }
+            },
+        )
+
+        self.assertEqual("complete", audit.audit_execution_status)
+        self.assertEqual("scoreable", audit.adjudication)
+        self.assertTrue(audit.recovery["attempted"])
+        self.assertTrue(audit.recovery["succeeded"])
+        self.assertFalse(audit.recovery["model_reinvoked"])
+        self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
+
+    def test_parser_failure_recovers_from_archive_transcript(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        malformed = self.root / "malformed-session.jsonl"
+        archived = self.root / "parser-recovery-archive.jsonl"
+        malformed.write_text("{not-json}\n", encoding="utf-8")
+        archived.write_text(
+            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}})
+            + "\n",
+            encoding="utf-8",
+        )
+
+        audit = self.manager.audit_attempt(
+            lease,
+            {
+                "session_isolation": {
+                    "postflight_entry_session_file": str(malformed),
+                    "archived_session_file": str(archived),
+                }
+            },
+        )
+
+        self.assertEqual("complete", audit.audit_execution_status)
+        self.assertEqual("scoreable", audit.adjudication)
+        self.assertTrue(audit.recovery["succeeded"])
+        self.assertEqual("archive", audit.recovery["source"])
+        self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
 
     def test_prepare_set_is_all_or_quarantined(self) -> None:
         first = self._identity(session_id="session-a")

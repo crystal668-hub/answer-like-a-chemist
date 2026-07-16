@@ -8,7 +8,11 @@ from typing import Any, Protocol
 
 from benchmarking.runtime.config import ConfigRenderError, render_run_config
 from benchmarking.core.experiments import ExperimentSpec
-from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager
+from benchmarking.runtime.agent_workspace import (
+    AttemptWorkspaceManager,
+    WorkspaceAccessPolicy,
+    build_workspace_access_policy,
+)
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
@@ -106,7 +110,7 @@ def _ensure_benchmark_skills_extra_dir(payload: dict[str, Any], skills_root: Pat
 def _enable_benchmark_workdir_guard(
     payload: dict[str, Any],
     *,
-    runner_agents: tuple[ProvisionedAgent, ...],
+    agent_policies: Mapping[str, WorkspaceAccessPolicy],
 ) -> None:
     plugins = payload.setdefault("plugins", {})
     load = plugins.setdefault("load", {})
@@ -127,9 +131,9 @@ def _enable_benchmark_workdir_guard(
     entries[BENCHMARK_WORKDIR_GUARD_PLUGIN_ID] = {
         "enabled": True,
         "config": {
-            "agentWorkspaces": {
-                agent.agent_id: str(agent.workspace.resolve())
-                for agent in runner_agents
+            "agentPolicies": {
+                agent_id: policy.to_payload()
+                for agent_id, policy in sorted(agent_policies.items())
             }
         },
     }
@@ -176,7 +180,13 @@ def build_run_scoped_config_payload(
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
-        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+        judge_policy = build_workspace_access_policy(
+            active_workspace=judge.workspace,
+            role="judge",
+            skills_enabled=False,
+            protected_roots=workspace_manager.protected_roots,
+        )
+        _enable_benchmark_workdir_guard(payload, agent_policies={judge.agent_id: judge_policy})
         return payload
 
     if group.runner == "single_llm":
@@ -210,8 +220,23 @@ def build_run_scoped_config_payload(
             judge_model=judge_model,
             runner_model=single_agent_model,
         )
-        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
-        _enable_benchmark_workdir_guard(payload, runner_agents=tuple(runner_agents))
+        skill_scopes = (
+            context.benchmark_skills_root,
+            context.benchmark_skills_root.parent / "scripts" / "run_skill.py",
+        ) if single_spec.skills_enabled else ()
+        if single_spec.skills_enabled:
+            _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+        policies = {
+            runner.agent_id: build_workspace_access_policy(
+                active_workspace=runner.workspace,
+                role="single_llm",
+                skills_enabled=single_spec.skills_enabled,
+                protected_roots=workspace_manager.protected_roots,
+                skill_read_scopes=skill_scopes,
+            )
+            for runner in runner_agents
+        }
+        _enable_benchmark_workdir_guard(payload, agent_policies=policies)
         return payload
 
     slot_set = spec.slot_set or context.chemqa_slot_sets[group.id]
@@ -243,7 +268,19 @@ def build_run_scoped_config_payload(
         judge_model=judge_model,
         runner_model=single_agent_model,
     )
-    _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+    if chemqa_spec.skills_enabled:
+        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
+    policies = {
+        runner.agent_id: build_workspace_access_policy(
+            active_workspace=runner.workspace,
+            role="chemqa",
+            skills_enabled=chemqa_spec.skills_enabled,
+            protected_roots=workspace_manager.protected_roots,
+            skill_read_scopes=(context.benchmark_skills_root,) if chemqa_spec.skills_enabled else (),
+        )
+        for runner in runner_agents
+    }
+    _enable_benchmark_workdir_guard(payload, agent_policies=policies)
     return payload
 
 

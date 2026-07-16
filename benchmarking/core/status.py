@@ -135,6 +135,9 @@ def build_result_axes_from_runner(run_result: Any) -> dict[str, Any]:
     runner_meta = getattr(run_result, "runner_meta", None) or {}
     raw = getattr(run_result, "raw", None) or {}
     recovery = getattr(run_result, "recovery", None)
+    workspace_isolation = runner_meta.get("workspace_isolation")
+    workspace_isolation = workspace_isolation if isinstance(workspace_isolation, dict) else {}
+    boundary_degraded = workspace_isolation.get("adjudication") == "scoreable_degraded"
     scored = bool(run_result.should_score())
     run_lifecycle_status = "completed" if normalized_status in {"completed", "recovered"} else "failed"
 
@@ -147,7 +150,7 @@ def build_result_axes_from_runner(run_result: Any) -> dict[str, Any]:
         protocol_completion_status = "missing"
 
     axes: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_lifecycle_status": run_lifecycle_status,
         "protocol_completion_status": protocol_completion_status,
         "protocol_acceptance_status": runner_meta.get("acceptance_status"),
@@ -196,7 +199,7 @@ def build_result_axes_from_runner(run_result: Any) -> dict[str, Any]:
                 evaluable=scored,
                 scored=scored,
                 recovery_mode="none",
-                degraded_execution=False,
+                degraded_execution=boundary_degraded or bool(runner_meta.get("degraded_execution")),
             )
         else:
             axes.update(

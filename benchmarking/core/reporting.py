@@ -149,7 +149,22 @@ def session_contaminated(item: GroupRecordResult) -> bool:
 
 def workspace_isolation_audit(item: GroupRecordResult) -> dict[str, Any]:
     audit = (item.runner_meta or {}).get("workspace_isolation") or {}
-    return audit if isinstance(audit, dict) else {}
+    if not isinstance(audit, dict):
+        return {}
+    if "adjudication" in audit:
+        return audit
+    legacy_status = str(audit.get("audit_status") or "").strip()
+    if not legacy_status:
+        return audit
+    adapted = dict(audit)
+    adapted.update(
+        legacy_schema=True,
+        audit_execution_status="unavailable" if legacy_status == "unavailable" else "complete",
+        boundary_status="clean" if legacy_status == "clean" else "unknown",
+        contamination_status="clear" if legacy_status == "clean" else "indeterminate",
+        adjudication="scoreable" if legacy_status == "clean" else "non_evaluable",
+    )
+    return adapted
 
 
 def workspace_isolation_ok(item: GroupRecordResult) -> bool:
@@ -157,9 +172,9 @@ def workspace_isolation_ok(item: GroupRecordResult) -> bool:
     return bool(
         audit
         and audit.get("preflight_ok") is True
-        and audit.get("audit_status") == "clean"
+        and audit.get("audit_execution_status") == "complete"
+        and audit.get("adjudication") in {"scoreable", "scoreable_degraded"}
         and audit.get("archive_ok") is True
-        and audit.get("contaminated") is not True
     )
 
 
@@ -169,6 +184,8 @@ def workspace_isolation_failed(item: GroupRecordResult) -> bool:
 
 
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
+    scored_items = [item for item in items if item.scored]
+    score_divisor = len(scored_items)
     return {
         "count": len(items),
         "pass_count": sum(1 for item in items if item.evaluation["passed"]),
@@ -201,7 +218,32 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
         "workspace_isolation_ok_count": sum(1 for item in items if workspace_isolation_ok(item)),
         "workspace_isolation_failed_count": sum(1 for item in items if workspace_isolation_failed(item)),
         "workspace_contaminated_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("contaminated") is True
+            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "confirmed"
+        ),
+        "boundary_warning_count": sum(
+            1 for item in items if workspace_isolation_audit(item).get("boundary_status") == "warning"
+        ),
+        "boundary_violation_count": sum(
+            1 for item in items if workspace_isolation_audit(item).get("boundary_status") == "violated"
+        ),
+        "scoreable_degraded_boundary_count": sum(
+            1
+            for item in items
+            if workspace_isolation_audit(item).get("adjudication") == "scoreable_degraded"
+        ),
+        "information_contamination_count": sum(
+            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "confirmed"
+        ),
+        "contamination_indeterminate_count": sum(
+            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "indeterminate"
+        ),
+        "audit_unavailable_count": sum(
+            1 for item in items if workspace_isolation_audit(item).get("audit_execution_status") == "unavailable"
+        ),
+        "boundary_cleanup_failed_count": sum(
+            1
+            for item in items
+            if (workspace_isolation_audit(item).get("cleanup") or {}).get("failed_count", 0)
         ),
         "workspace_archive_failed_count": sum(
             1
@@ -209,8 +251,16 @@ def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
             if workspace_isolation_audit(item)
             and workspace_isolation_audit(item).get("archive_ok") is False
         ),
-        "avg_score": sum(float(item.evaluation["score"]) for item in items) / len(items),
-        "avg_normalized_score": sum(float(item.evaluation["normalized_score"]) for item in items) / len(items),
+        "avg_score": (
+            sum(float(item.evaluation["score"]) for item in scored_items) / score_divisor
+            if score_divisor
+            else 0.0
+        ),
+        "avg_normalized_score": (
+            sum(float(item.evaluation["normalized_score"]) for item in scored_items) / score_divisor
+            if score_divisor
+            else 0.0
+        ),
         "avg_elapsed_seconds": sum(float(item.elapsed_seconds) for item in items) / len(items),
         "avg_answer_accuracy": average_optional_metric(items, "answer_accuracy"),
         "avg_rpf": average_optional_metric(items, "rpf"),
@@ -304,7 +354,7 @@ def build_error_group_record_result(
     )
     compatible_answer_text = answer_text or full_text or short_text
     return GroupRecordResult(
-        schema_version=2,
+        schema_version=3,
         group_id=str(getattr(group, "id", "") or ""),
         group_label=str(getattr(group, "label", "") or ""),
         runner=str(getattr(group, "runner", "") or ""),

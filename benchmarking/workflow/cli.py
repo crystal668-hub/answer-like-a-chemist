@@ -71,8 +71,10 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     ContaminationAudit,
     ProtectedRoot,
+    WorkspaceAudit,
     WorkspaceIsolationError,
     default_workspace_templates,
+    ensure_workspace_audit,
 )
 from benchmarking.runtime.config_pool import (
     ConfigPool as _RuntimeConfigPool,
@@ -1215,6 +1217,8 @@ class JudgeClient:
                     "BENCHMARK_SKILL_REQUEST_DIR": str(lease.request_dir),
                     "BENCHMARK_SKILL_OUTPUT_DIR": str(lease.output_dir),
                     "BENCHMARK_SKILL_NOTES_DIR": str(lease.notes_dir),
+                    "BENCHMARK_PROJECT_ROOT": str(runtime_paths.project_root),
+                    "BENCHMARK_SKILL_RUNNER": str(runtime_paths.project_root / "scripts" / "run_skill.py"),
                 }
             )
             outcome_status = "failed"
@@ -1249,24 +1253,29 @@ class JudgeClient:
                 parsed = safe_json_extract(reply)
                 if not isinstance(parsed, dict):
                     raise BenchmarkError(f"Judge must return a JSON object, got: {reply}")
+                policy = self.workspace_manager.policy_for_lease(
+                    lease,
+                    role="judge",
+                    skills_enabled=False,
+                )
                 if self._contamination_auditor is not None:
-                    contamination_audit = self._contamination_auditor(
+                    contamination_audit = ensure_workspace_audit(self._contamination_auditor(
                         lease=lease,
                         runner_meta={"session_isolation": audit},
                         allowed_roots=[],
                         environment=env,
-                    )
+                        policy=policy,
+                    ))
                 else:
                     contamination_audit = self.workspace_manager.audit_attempt(
                         lease,
                         {"session_isolation": audit},
                         environment=env,
+                        policy=policy,
                     )
-                if contamination_audit.status != "clean":
+                if ensure_workspace_audit(contamination_audit).adjudication == "non_evaluable":
                     raise BenchmarkError(
-                        "Judge workspace contamination detected."
-                        if contamination_audit.status == "contaminated"
-                        else "Judge workspace contamination audit unavailable."
+                        "Judge workspace information contamination was detected or could not be excluded."
                     )
                 outcome_status = "completed"
             except SessionIsolationError as exc:
@@ -1274,13 +1283,14 @@ class JudgeClient:
             except Exception as exc:
                 call_error = exc
             isolation_meta = lease.to_meta()
-            isolation_meta.update(
-                {
-                    "contaminated": contamination_audit.status == "contaminated",
-                    "audit_status": contamination_audit.status,
-                    "findings": [dict(finding) for finding in contamination_audit.findings],
-                }
+            normalized_audit = ensure_workspace_audit(contamination_audit)
+            isolation_meta.update(normalized_audit.to_payload())
+            policy = self.workspace_manager.policy_for_lease(
+                lease,
+                role="judge",
+                skills_enabled=False,
             )
+            isolation_meta.update({"policy_digest": policy.digest, "policy": policy.to_payload()})
             try:
                 archive = self.workspace_manager.seal(
                     lease,
@@ -1834,7 +1844,7 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
         payload = {
             **payload,
             # Upconvert schema-v1 per-record payloads so historical outputs remain loadable.
-            "schema_version": 2,
+            "schema_version": 3,
             "run_lifecycle_status": run_lifecycle_status,
             "protocol_completion_status": protocol_completion_status,
             "protocol_acceptance_status": None,
@@ -2167,6 +2177,8 @@ def run_benchmark_web_search_preflight(
                 "BENCHMARK_SKILL_REQUEST_DIR": str(lease.request_dir),
                 "BENCHMARK_SKILL_OUTPUT_DIR": str(lease.output_dir),
                 "BENCHMARK_SKILL_NOTES_DIR": str(lease.notes_dir),
+                "BENCHMARK_PROJECT_ROOT": str(runtime_paths.project_root),
+                "BENCHMARK_SKILL_RUNNER": str(runtime_paths.project_root / "scripts" / "run_skill.py"),
             }
         )
         report = run_web_search_preflight(
@@ -2177,20 +2189,22 @@ def run_benchmark_web_search_preflight(
             base_env=environment,
         )
         transcript_path = str(report.get("transcript_path") or "").strip()
+        policy = config_pool.workspace_manager.policy_for_lease(
+            lease,
+            role="single_llm",
+            skills_enabled=bool(getattr(group, "skills_enabled", False)),
+            read_scopes=(runtime_paths.skills_root, runtime_paths.project_root / "scripts" / "run_skill.py"),
+        )
         contamination_audit = config_pool.workspace_manager.audit_attempt(
             lease,
             {"session_isolation": {"postflight_entry_session_file": transcript_path}},
             environment=environment,
+            policy=policy,
         )
         isolation_meta = lease.to_meta()
-        isolation_meta.update(
-            {
-                "contaminated": contamination_audit.status == "contaminated",
-                "audit_status": contamination_audit.status,
-                "findings": [dict(finding) for finding in contamination_audit.findings],
-            }
-        )
-        if contamination_audit.status != "clean":
+        isolation_meta.update(contamination_audit.to_payload())
+        isolation_meta.update({"policy_digest": policy.digest, "policy": policy.to_payload()})
+        if contamination_audit.adjudication == "non_evaluable":
             report["available"] = False
             report["error"] = "web_search preflight workspace contamination audit failed"
         try:
@@ -2470,8 +2484,26 @@ def main() -> int:
             asdict(item),
         )
     summary = aggregate_results(results)
+    workspace_policies: dict[str, dict[str, Any]] = {}
+    for item in results:
+        isolation = (item.runner_meta or {}).get("workspace_isolation") or {}
+        if not isinstance(isolation, dict):
+            continue
+        policy = isolation.get("policy")
+        digest = str(isolation.get("policy_digest") or "")
+        if isinstance(policy, dict) and digest:
+            workspace_policies[digest] = policy
+        slots = isolation.get("slots")
+        if isinstance(slots, dict):
+            for slot in slots.values():
+                if not isinstance(slot, dict):
+                    continue
+                slot_policy = slot.get("policy")
+                slot_digest = str(slot.get("policy_digest") or "")
+                if isinstance(slot_policy, dict) and slot_digest:
+                    workspace_policies[slot_digest] = slot_policy
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status_axes_description": {
             "run_lifecycle_status": "completed|failed|cancelled",
             "protocol_completion_status": "completed|failed|missing|not_applicable",
@@ -2480,6 +2512,12 @@ def main() -> int:
             "evaluable": "whether a record has a trustworthy scoreable answer",
             "scored": "whether evaluator execution occurred",
             "recovery_mode": "none|candidate_submission|run-status-final-answer-preview|archived_final_answer|protocol_reconstruction",
+            "workspace_isolation": {
+                "audit_execution_status": "complete|unavailable",
+                "boundary_status": "clean|warning|violated|unknown",
+                "contamination_status": "clear|confirmed|indeterminate",
+                "adjudication": "scoreable|scoreable_degraded|non_evaluable",
+            },
         },
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "benchmark_root": str(Path(args.benchmark_root).expanduser().resolve()),
@@ -2495,10 +2533,13 @@ def main() -> int:
         },
         "timeout_mode": timeout_mode,
         "workspace_isolation": {
-            "schema_version": 1,
+            "schema_version": 3,
             "run_id": run_id,
             "invocation_id": invocation_id,
+            "scratch_contract_version": 2,
+            "security_boundary": "runtime_guard_and_transcript_audit_not_os_sandbox",
             "forbidden_path_policy": workspace_manager.forbidden_path_policy_manifest(),
+            "access_policies": [workspace_policies[key] for key in sorted(workspace_policies)],
         },
         "merge_existing_per_record": args.merge_existing_per_record,
         "random_sampling": {
@@ -2552,7 +2593,7 @@ def main() -> int:
         },
         "timeout_mode": timeout_mode,
         "workspace_isolation": {
-            "schema_version": 1,
+            "schema_version": 3,
             "run_id": run_id,
             "invocation_id": invocation_id,
             "runtime_runs_root": str(workspace_manager.runtime_root),
@@ -2561,7 +2602,10 @@ def main() -> int:
             "quarantine_root": str(workspace_manager.quarantine_root),
             "templates": workspace_manager.template_manifest(),
             "startup_recovery": workspace_startup_recovery,
+            "scratch_contract_version": 2,
+            "security_boundary": "runtime_guard_and_transcript_audit_not_os_sandbox",
             "forbidden_path_policy": workspace_manager.forbidden_path_policy_manifest(),
+            "access_policies": [workspace_policies[key] for key in sorted(workspace_policies)],
         },
         "groups": {
             group_id: {

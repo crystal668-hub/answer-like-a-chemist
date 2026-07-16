@@ -1,7 +1,7 @@
 {
   "id": "benchmark-workdir-guard",
-  "name": "Benchmark Workdir Guard",
-  "description": "Blocks invalid explicit exec workdirs before benchmark commands run.",
+  "name": "Benchmark Workspace Guard",
+  "description": "Blocks structured filesystem operations outside the current benchmark policy.",
   "activation": {
     "onStartup": true
   },
@@ -9,13 +9,13 @@
     "type": "object",
     "additionalProperties": false,
     "required": [
-      "agentWorkspaces"
+      "agentPolicies"
     ],
     "properties": {
-      "agentWorkspaces": {
+      "agentPolicies": {
         "type": "object",
         "additionalProperties": {
-          "type": "string"
+          "type": "object"
         }
       }
     }

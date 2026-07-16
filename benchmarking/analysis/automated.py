@@ -252,6 +252,8 @@ def group_results_by_record(results: list[dict[str, Any]]) -> list[dict[str, Any
         )
         for item in items:
             runner_meta = item.get("runner_meta") if isinstance(item.get("runner_meta"), dict) else {}
+            workspace_isolation = runner_meta.get("workspace_isolation")
+            workspace_isolation = workspace_isolation if isinstance(workspace_isolation, dict) else {}
             trajectory = summarize_result_trajectory(item, runner_meta=runner_meta)
             records[-1]["groups"].append(
                 {
@@ -276,6 +278,7 @@ def group_results_by_record(results: list[dict[str, Any]]) -> list[dict[str, Any
                         "error": item.get("error"),
                     },
                     "skill_use_audit": runner_meta.get("skill_use_audit") or {},
+                    "workspace_isolation": workspace_isolation,
                     "trajectory": trajectory,
                 }
             )
@@ -350,6 +353,8 @@ def automated_evaluation_prompt(input_bundle_path: Path, report_schema_path: Pat
         "evidence、rationale、recommendation、details、comparison、summary 等字段值。\n"
         "保留 JSON 字段名、枚举值、record_id、group_id、metric 名称和文件路径原样，不要翻译结构化字段名。\n"
         "逐题分析需要比较实验组、最终答案、评分细节和轨迹证据。\n"
+        "必须区分已评分但存在 boundary violation 与因 information contamination 不可评测；"
+        "不得把 write-only violation 描述为作弊或已获得外部答案。\n"
         "只能使用输入中提供的参考答案、评估器细节和轨迹摘要作为证据。\n"
         "不要修改文件。除非需要只读检查，否则不要运行项目命令。\n\n"
         f"Input bundle: {input_bundle_path}\n"

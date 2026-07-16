@@ -270,6 +270,10 @@ function renderGroups(record) {
     .map((group) => {
       const evalPayload = group.evaluation || {};
       const verifier = group.verifier;
+      const isolation = group.workspace_isolation || {};
+      const findings = (isolation.findings || []).map((finding) => `
+        <li>${escapeHtml(finding.access_mode || "unknown")} / ${escapeHtml(finding.operation_outcome || "unknown")} · ${escapeHtml(finding.policy_id || "")} · ${escapeHtml(finding.resolved_path || "")}</li>
+      `).join("");
       return `<section class="group-card">
         <div class="row-top">
           <span class="id-text">${escapeHtml(group.group_id)}</span>
@@ -280,6 +284,10 @@ function renderGroups(record) {
           ${badge(`elapsed ${Math.round(group.diagnostics?.elapsed_seconds || 0)}s`)}
           ${badge(group.status_axes?.answer_availability || "answer")}
           ${group.status_axes?.degraded_execution ? badge("degraded", "running") : ""}
+          ${isolation.adjudication ? badge(isolation.adjudication, isolation.adjudication === "non_evaluable" ? "failed" : "running") : ""}
+          ${isolation.boundary_status ? badge(`boundary ${isolation.boundary_status}`) : ""}
+          ${isolation.contamination_status ? badge(`contamination ${isolation.contamination_status}`, isolation.contamination_status === "confirmed" ? "failed" : "") : ""}
+          ${isolation.legacy_schema ? badge("legacy isolation schema") : ""}
         </div>
         ${verifier ? `<p class="muted">Verifier: ${escapeHtml(verifier.status || "")} · ${escapeHtml(verifier.canonical_smiles || "")}</p>` : ""}
         <div class="answer-block">${escapeHtml(group.answer_text || "无答案")}</div>
@@ -291,6 +299,7 @@ function renderGroups(record) {
           ${!group.skills_enabled ? `<span>Exec failures: ${escapeHtml(group.diagnostics?.exec_tool_failure_count ?? "-")}</span>` : ""}
           <span>Recovery: ${escapeHtml(group.status_axes?.recovery_mode || "none")}</span>
         </div>
+        ${findings ? `<details><summary>Workspace boundary findings</summary><ul>${findings}</ul></details>` : ""}
       </section>`;
     })
     .join("");

@@ -12,15 +12,16 @@ BENCHMARK_TOOLS_FILENAME = "TOOLS.md"
 
 def render_single_agent_skill_tools_md() -> str:
     run_skill_command = (
-        'python /Users/xutao/.openclaw/workspace/scripts/run_skill.py '
-        '--workspace-root /Users/xutao/.openclaw/workspace '
+        'cd "$BENCHMARK_SKILL_SCRATCH_DIR" && mkdir -p "outputs/OUTPUT_NAME" && '
+        'python "$BENCHMARK_SKILL_RUNNER" '
+        '--workspace-root "$BENCHMARK_PROJECT_ROOT" '
         '--execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" '
         "--script SCRIPT_PATH -- "
-        "--request-json REQUEST_JSON_PATH "
-        "--output-dir OUTPUT_DIR "
+        '--request-json "requests/REQUEST_NAME.json" '
+        '--output-dir "outputs/OUTPUT_NAME" '
         "--json"
     )
-    request_write_template = 'write {"path": "REQUEST_JSON_PATH", "content": "REQUEST_JSON_STRING"}'
+    request_write_template = 'write {"path": "scratch/requests/REQUEST_NAME.json", "content": "REQUEST_JSON_STRING"}'
     run_skill_exec_template = f"exec {json.dumps({'command': run_skill_command})}"
     return "\n".join(
         [
@@ -42,11 +43,11 @@ def render_single_agent_skill_tools_md() -> str:
             "",
             "Replace every uppercase placeholder before running:",
             "",
-            "- BENCHMARK_SKILL_SCRATCH_DIR: set by the benchmark runner to `.benchmark-scratch/<record>/<session_id>` inside this workspace.",
-            "- REQUEST_JSON_PATH: an absolute path under the current scratch directory, preferably `$BENCHMARK_SKILL_REQUEST_DIR/<name>.json`.",
+            "- BENCHMARK_SKILL_SCRATCH_DIR: set by the benchmark runner to the stable `scratch/` directory inside this attempt workspace.",
+            "- REQUEST_NAME: a short filename stem used under `scratch/requests/`.",
             "- REQUEST_JSON_STRING: valid compact JSON for the selected script contract.",
             "- SCRIPT_PATH: a real path like skills/<skill>/scripts/<script>.py, chosen from the skill docs or scripts directory.",
-            "- OUTPUT_DIR: an absolute output directory under the current scratch directory, preferably `$BENCHMARK_SKILL_OUTPUT_DIR/<name>`.",
+            "- OUTPUT_NAME: a short directory name used under `scratch/outputs/`.",
             "",
             "Do not write request JSON, downloaded papers, temporary scripts, notes, or skill outputs in the workspace root.",
             "Keep all benchmark exploration artifacts under the current scratch directory.",
@@ -61,7 +62,7 @@ def render_single_agent_skill_tools_md() -> str:
             "- `script`, `cmd`, or `command` are invalid tool names.",
             "- `exec {}` is invalid because the required `command` field is missing.",
             "- direct `python skills/...` bypasses the canonical wrapper.",
-            "- pipes, redirects, inline Python, `head`, `tail`, and temporary runner scripts are invalid for skill execution.",
+            "- canonical skill source must not be executed directly; current-attempt temporary scripts belong in `scratch/tmp/`.",
             "- `bash`, `reasoning`, and `system-event-scheduler` are invalid tool names.",
             "",
             "Do not search for alternate runners or call skill scripts directly with `python` or `python3`.",
