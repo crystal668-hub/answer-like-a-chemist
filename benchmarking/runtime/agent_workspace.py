@@ -1267,6 +1267,18 @@ _NON_ACCESS_ARGUMENT_KEYS = {
 }
 
 
+_SENSITIVE_RESOURCE_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9_-])sample[_-]answers(?=[./\\\s\"'`,;|&<>]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])gold(?=[/\\]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])verifier[_-]specs?(?=[./\\\s\"'`,;|&<>]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])data[/\\]verifier-grounded-releases(?=[/\\]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])verifier-grounded-benchmark[/\\]tasks(?=[/\\]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])verifier_grounded_benchmark(?=[/\\\s\"'`,;|&<>]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])formal-benchmarks(?=[/\\]|$)"),
+    re.compile(r"(?<![A-Za-z0-9_-])task\.ya?ml(?=[/\\\s\"'`,;|&<>]|$)"),
+)
+
+
 def _access_arguments(tool_name: str, arguments: Any) -> Any:
     if not isinstance(arguments, Mapping):
         return arguments
@@ -1312,20 +1324,7 @@ def _forbidden_access_finding(
     raw_text = _argument_text(_access_arguments(tool_name, arguments))
     expanded = _expand_environment(raw_text, environment)
     lowered = expanded.lower()
-    sensitive_markers = (
-        "sample_answers",
-        "sample-answers",
-        "/gold/",
-        "verifier_specs",
-        "verifier-specs",
-        "data/verifier-grounded-releases",
-        "verifier-grounded-benchmark/tasks",
-        "/verifier-grounded",
-        "/verifier_grounded",
-        "verifier_grounded_benchmark",
-        "formal-benchmarks",
-    )
-    if any(marker in lowered for marker in sensitive_markers) or re.search(r"(?:^|[/\\])task\.ya?ml(?:$|[\s\"'])", lowered):
+    if any(pattern.search(lowered) for pattern in _SENSITIVE_RESOURCE_PATTERNS):
         return {
             "rule_id": "verifier_or_gold_path",
             "tool_name": tool_name,

@@ -297,6 +297,106 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                     AttemptOutcome(runner_status="failed", contamination_audit=audit),
                 )
 
+    def test_forbidden_path_audit_allows_verifier_grounded_run_directory(self) -> None:
+        run_id = "verifier-grounded-rdkit-qwen3.7-max-20260716-010815"
+        manager = AttemptWorkspaceManager(
+            runtime_root=self.root / "runtime" / "runs",
+            output_root=self.root / "output",
+            run_id=run_id,
+            invocation_id="invocation-1",
+            templates=self.manager.templates,
+        )
+        identity = AttemptIdentity(
+            run_id=run_id,
+            invocation_id="invocation-1",
+            group_id="single_llm_skills_on",
+            runner_kind="single_llm",
+            agent_id="benchmark-agent",
+            record_id="record/one",
+            attempt_index=0,
+            session_id="session-verifier-grounded",
+            template_id="single-v1",
+        )
+        lease = manager.prepare(identity)
+        transcript = self.root / "verifier-grounded-transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "name": "exec",
+                                "arguments": {
+                                    "command": (
+                                        f'cd "{lease.scratch_dir}" && '
+                                        "mkdir -p requests outputs && python -c 'print(1)'"
+                                    )
+                                },
+                            }
+                        ],
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        audit = manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+            environment={"BENCHMARK_SKILL_SCRATCH_DIR": str(lease.scratch_dir)},
+        )
+
+        self.assertEqual("clean", audit.status)
+        manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
+
+    def test_forbidden_path_audit_still_detects_verifier_resource_paths(self) -> None:
+        commands = (
+            "cat /tmp/formal-benchmarks/verifier_grounded_rdkit/data/tasks.jsonl",
+            "cat /tmp/verifier-grounded-benchmark/tasks/task.yaml",
+            "cat /tmp/data/verifier-grounded-releases/0.1.1/manifest.json",
+            "cat /tmp/sample_answers.jsonl",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                identity = self._identity(attempt_index=index, session_id=f"verifier-session-{index}")
+                lease = self.manager.prepare(identity)
+                transcript = self.root / f"verifier-resource-transcript-{index}.jsonl"
+                transcript.write_text(
+                    json.dumps(
+                        {
+                            "type": "message",
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "toolCall",
+                                        "name": "exec",
+                                        "arguments": {"command": command},
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                audit = self.manager.audit_attempt(
+                    lease,
+                    {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+                )
+
+                self.assertEqual("contaminated", audit.status)
+                self.assertEqual("verifier_or_gold_path", audit.findings[0]["rule_id"])
+                self.manager.seal(
+                    lease,
+                    AttemptOutcome(runner_status="failed", contamination_audit=audit),
+                )
+
     def test_forbidden_path_audit_allows_current_workspace_and_skill_root(self) -> None:
         lease = self.manager.prepare(self._identity())
         skill_root = self.root / "workspace" / "skills"
