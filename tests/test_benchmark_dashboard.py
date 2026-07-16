@@ -187,6 +187,59 @@ def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> N
     assert record["subset"] == "verifier_grounded_rdkit"
 
 
+def test_list_runs_reconciles_stale_progress_state_with_per_record_outputs(tmp_path: Path) -> None:
+    run_root = tmp_path / "stale-progress-run"
+    payloads = [
+        result_payload(
+            group_id=group_id,
+            record_id=record_id,
+            dataset="verifier_grounded_property_calculation",
+            subset="verifier_grounded_property_calculation",
+            eval_kind="verifier_grounded",
+        )
+        for group_id in ("single_llm_skills_on", "single_llm_skills_off")
+        for record_id in ("property_calc_free_energy_001", "property_calc_crystal_phase_002")
+    ]
+    write_json(
+        run_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-07-16T12:00:00+0800",
+            "records": 2,
+            "groups": [{"id": "single_llm_skills_on"}, {"id": "single_llm_skills_off"}],
+            "results": payloads,
+            "summary": {},
+        },
+    )
+    for payload in payloads:
+        record_file = str(payload["record_id"]).replace("_", "-")
+        write_json(run_root / "per-record" / str(payload["group_id"]) / f"{record_file}.json", payload)
+    write_json(
+        run_root / "progress" / "state.json",
+        {
+            "status": "completed",
+            "total": 3,
+            "completed": 3,
+            "groups": {
+                "single_llm_skills_on": {"completed_records": ["property_calc_crystal_phase_002"], "completed_count": 1},
+                "single_llm_skills_off": {
+                    "completed_records": ["property_calc_free_energy_001", "property_calc_crystal_phase_002"],
+                    "completed_count": 2,
+                },
+            },
+        },
+    )
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    run = dashboard.list_runs()[0]
+
+    assert run["progress"]["source"] == "progress_state"
+    assert run["progress"]["total"] == 4
+    assert run["progress"]["completed"] == 4
+    assert run["progress"]["groups"]["single_llm_skills_on"]["completed_count"] == 2
+    assert run["progress"]["groups"]["single_llm_skills_off"]["completed_count"] == 2
+
+
 def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Path) -> None:
     verifier_details = {
         "status": "ok",

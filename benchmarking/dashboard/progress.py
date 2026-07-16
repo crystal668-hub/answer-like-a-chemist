@@ -150,7 +150,16 @@ class ProgressWriter:
 
 def _fallback_group_progress(run_root: Path, group_id: str) -> dict[str, Any]:
     group_dir = run_root / "per-record" / group_id
-    records = sorted(path.stem for path in group_dir.glob("*.json")) if group_dir.is_dir() else []
+    records = []
+    if group_dir.is_dir():
+        for path in sorted(group_dir.glob("*.json")):
+            loaded = {}
+            try:
+                loaded = _read_json(path)
+            except Exception:
+                pass
+            record_id = str(loaded.get("record_id") or path.stem) if isinstance(loaded, dict) else path.stem
+            records.append(record_id)
     return {
         "status": "completed" if records else "pending",
         "current_record_id": None,
@@ -188,6 +197,49 @@ def _fallback_status(run_root: Path) -> str:
     return "pending"
 
 
+def _reconcile_progress_state(
+    payload: dict[str, Any],
+    root: Path,
+    *,
+    expected_total: int | None,
+    group_ids: list[str] | tuple[str, ...] | None,
+) -> dict[str, Any]:
+    groups = list(group_ids or [])
+    state_groups = payload.get("groups") if isinstance(payload.get("groups"), dict) else {}
+    if not groups:
+        groups = sorted(str(group_id) for group_id in state_groups)
+    if not groups:
+        per_record_root = root / "per-record"
+        groups = sorted(path.name for path in per_record_root.iterdir() if path.is_dir()) if per_record_root.is_dir() else []
+
+    reconciled_groups: dict[str, Any] = {}
+    for group_id in groups:
+        state_group = state_groups.get(group_id) if isinstance(state_groups.get(group_id), dict) else {}
+        fallback_group = _fallback_group_progress(root, group_id)
+        fallback_completed = fallback_group.get("completed_records") or []
+        if fallback_completed:
+            merged_group = {**fallback_group, **state_group}
+            merged_group["completed_records"] = fallback_completed
+            merged_group["completed_count"] = len(fallback_completed)
+            if not merged_group.get("status") or merged_group.get("status") == "pending":
+                merged_group["status"] = fallback_group["status"]
+        else:
+            completed = state_group.get("completed_records") if isinstance(state_group, dict) else []
+            merged_group = dict(state_group)
+            merged_group["completed_records"] = completed if isinstance(completed, list) else []
+            merged_group["completed_count"] = int(merged_group.get("completed_count") or len(merged_group["completed_records"]))
+        reconciled_groups[group_id] = merged_group
+
+    completed = sum(int(group.get("completed_count") or 0) for group in reconciled_groups.values())
+    totals = [int(payload.get("total") or 0), completed]
+    if expected_total is not None:
+        totals.append(int(expected_total))
+    payload["total"] = max(totals)
+    payload["completed"] = max(int(payload.get("completed") or 0), completed)
+    payload["groups"] = reconciled_groups
+    return payload
+
+
 def load_progress(
     run_root: str | Path,
     *,
@@ -200,7 +252,7 @@ def load_progress(
         payload = _read_json(state_path)
         if isinstance(payload, dict):
             payload.setdefault("source", "progress_state")
-            return payload
+            return _reconcile_progress_state(payload, root, expected_total=expected_total, group_ids=group_ids)
 
     groups = list(group_ids or [])
     if not groups:
