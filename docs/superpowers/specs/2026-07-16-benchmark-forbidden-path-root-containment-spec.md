@@ -277,7 +277,8 @@ class PathCandidate:
 
 ### 7.3 Exec token 提取
 
-首版使用 `shlex` 做 lexical tokenization，不构建完整 shell AST。以下 token 形式必须支持：
+审计器使用 heredoc-aware projection 加 `shlex` 做 lexical tokenization，不构建完整 shell AST。以下
+token 形式必须支持：
 
 - `/absolute/path`；
 - `./relative/path`、`../relative/path` 和包含 `..` path component 的相对路径；
@@ -285,6 +286,13 @@ class PathCandidate:
 - `$VAR/path` 和 `${VAR}/path`；
 - `--flag=/absolute/path`、`NAME=/absolute/path` 中 `=` 右侧的 path expression；
 - shell 标点相邻的 quoted/unquoted path token。
+
+对 `<<` / `<<-` heredoc，projection 必须识别 quoted/unquoted delimiter 和同一命令声明的多个
+delimiter。Heredoc body 不是 shell 语法，不能直接交给 `shlex`；审计器将其中的引号和嵌入语言
+控制符转换为空白，同时保留可确定的 path 字符，使 Python 三引号、普通单双引号或类似 shell 的
+文本不会造成 `No closing quotation`，但 body 中明确写出的 protected absolute/env/relative path
+仍以 `candidate_source=exec.heredoc` 进入 containment 判定。`<<<` here-string 不得当作 heredoc。
+声明后缺失终止 delimiter 仍属于 parser failure，audit unavailable。
 
 HTTP(S) URL、普通英文、run id 和不含路径语法的文件名不作为 candidate。`shlex` 无法处理的
 输入不得退回“扫描完整字符串中的敏感词”；应只使用可确定提取的 token，解析器本身异常则令
@@ -312,13 +320,16 @@ ${VAR}
 
 - absolute candidate 直接 `resolve(strict=False)`；
 - `exec.workdir` / `cwd` 先相对当前 active workspace resolve；
-- command 中的 relative candidate 默认相对 active workspace resolve；
+- command 中的 relative candidate 默认相对 active workspace resolve；在简单线性
+  `cd <determinate-path> && ...` 或 `cd <determinate-path>; ...` 链中，后续 relative candidate
+  相对该有效目录 resolve，连续 `cd` 依次更新；
 - 已有 symlink 前缀必须解析，确保 workspace 外的 symlink alias 不能绕过 containment；
 - `.`、`..` 必须按 path component 归一化；
 - 不通过字符串替换规范化斜杠或 containment。
 
-首版不追踪复杂 shell 命令中连续 `cd` 后的动态 cwd。显式 absolute path、`cd` 的目标 path 和
-OpenClaw `workdir` 仍会被提取；更强的命令执行语义属于 OS sandbox 或后续 shell AST 工作。
+动态 `cd`、`cd -`、条件分支、pipeline 或 subshell 不能确定唯一 cwd 时，审计器把 relative base
+视为未知而不伪造 candidate；absolute candidate、`cd` 本身可确定的目标 path 和 OpenClaw
+`workdir` 仍会被提取。更强的命令执行语义属于 OS sandbox 或后续 shell AST 工作。
 
 ## 8. 判定算法
 
@@ -376,6 +387,9 @@ for candidate in candidates:
 - finding 不保存完整 environment 或未脱敏工具参数；
 - `workdir_fallback`、`transcript_unavailable` 和 `transcript_audit_failed` 保持独立 `rule_id`，不伪装
   成 path policy。
+- `transcript_audit_failed` 在可定位到 tool call 时额外保存 `transcript_line`、`tool_name`、脱敏后的
+  `command_excerpt`、`exception_type` 和脱敏后的 `exception_message`，方便区分 transcript 损坏、
+  heredoc/parser 缺陷和其他内部异常；这些诊断不改变 unavailable 的 fail-closed 语义。
 
 Runtime manifest 的 `workspace_isolation` 增加：
 
@@ -474,6 +488,11 @@ Web-search preflight 使用同一个 manager 和同一 protected policy。因为
 | 同时存在 `HOME`、`HOME2` | 不发生变量前缀替换 |
 | `cat ~/path` | 使用 attempt environment 的 `HOME` |
 | `--input=/protected/root/file` | contaminated |
+| Python heredoc body 含三引号/单双引号且路径均在 current scratch | clean |
+| heredoc body 含明确 protected absolute path | contaminated，`candidate_source=exec.heredoc` |
+| `<<<` here-string | 不作为 heredoc，不产生 parser failure |
+| `cd $SCRATCH/outputs/cand && cat ../../requests/file` | 按 effective cwd resolve 到 current scratch，clean |
+| `cd $SCRATCH/outputs/cand && cat <relative protected path>` | 按 effective cwd resolve 后 contaminated |
 | existing symlink alias 指向 protected root | resolve 后 contaminated |
 | 路径仅出现在 `write.content` 或 `edit.new_text` | 不作为 candidate |
 | `echo verifier-grounded` 或问题文本提及 `gold` | clean |

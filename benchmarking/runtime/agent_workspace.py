@@ -722,11 +722,24 @@ class AttemptWorkspaceManager:
         allowed = [lease.active_workspace, *allowed_roots]
         findings: list[dict[str, Any]] = []
         try:
-            for raw_line in transcript_path.read_text(encoding="utf-8").splitlines():
-                if not raw_line.strip():
-                    continue
+            transcript_lines = transcript_path.read_text(encoding="utf-8").splitlines()
+        except Exception as exc:
+            return ContaminationAudit(
+                status="unavailable",
+                findings=(_transcript_audit_failure(exc),),
+            )
+        for line_number, raw_line in enumerate(transcript_lines, start=1):
+            if not raw_line.strip():
+                continue
+            try:
                 payload = json.loads(raw_line)
-                for tool_name, arguments in _tool_calls_from_transcript_payload(payload):
+            except Exception as exc:
+                return ContaminationAudit(
+                    status="unavailable",
+                    findings=(_transcript_audit_failure(exc, line_number=line_number),),
+                )
+            for tool_name, arguments in _tool_calls_from_transcript_payload(payload):
+                try:
                     findings.extend(
                         _forbidden_access_findings(
                             tool_name=tool_name,
@@ -737,21 +750,27 @@ class AttemptWorkspaceManager:
                             environment=environment or {},
                         )
                     )
+                except Exception as exc:
+                    return ContaminationAudit(
+                        status="unavailable",
+                        findings=(
+                            _transcript_audit_failure(
+                                exc,
+                                line_number=line_number,
+                                tool_name=tool_name,
+                                arguments=arguments,
+                            ),
+                        ),
+                    )
+            try:
                 fallback_finding = _workdir_fallback_finding(payload)
                 if fallback_finding is not None:
                     findings.append(fallback_finding)
-        except Exception as exc:
-            return ContaminationAudit(
-                status="unavailable",
-                findings=(
-                    {
-                        "rule_id": "transcript_audit_failed",
-                        "tool_name": "",
-                        "command_excerpt": "",
-                        "exception_type": type(exc).__name__,
-                    },
-                ),
-            )
+            except Exception as exc:
+                return ContaminationAudit(
+                    status="unavailable",
+                    findings=(_transcript_audit_failure(exc, line_number=line_number),),
+                )
         return ContaminationAudit(status="contaminated" if findings else "clean", findings=tuple(findings))
 
     def _validate_identity_scope(self, identity: AttemptIdentity, *, allow_previous_invocation: bool = False) -> None:
@@ -1343,7 +1362,7 @@ def _resolve_candidate(
     raw_token: str,
     *,
     source: str,
-    workspace: Path,
+    base_dir: Path | None,
     environment: Mapping[str, str],
     require_path_syntax: bool,
 ) -> PathCandidate | None:
@@ -1361,7 +1380,9 @@ def _resolve_candidate(
         return None
     path = Path(expanded)
     if not path.is_absolute():
-        path = workspace / path
+        if base_dir is None:
+            return None
+        path = base_dir / path
     return PathCandidate(
         raw_token=token,
         expanded_token=expanded,
@@ -1418,11 +1439,212 @@ def _without_dynamic_command_substitutions(command: str) -> str:
     return "".join(result)
 
 
+_HEREDOC_BODY_START = "\x00OPENCLAW_AUDIT_HEREDOC_BODY_START\x00"
+_HEREDOC_BODY_END = "\x00OPENCLAW_AUDIT_HEREDOC_BODY_END\x00"
+_HEREDOC_BODY_UNSAFE = re.compile(r"[^A-Za-z0-9_./~${}=:+@%!-]+")
+_COMMAND_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
+_SHELL_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _heredoc_declarations(line: str) -> list[tuple[str, bool]]:
+    declarations: list[tuple[str, bool]] = []
+    index = 0
+    quote = ""
+    while index < len(line):
+        char = line[index]
+        if char == "\\" and quote != "'" and index + 1 < len(line):
+            index += 2
+            continue
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            index += 1
+            continue
+        if quote:
+            index += 1
+            continue
+        if char == "#" and (index == 0 or line[index - 1].isspace()):
+            break
+        if line.startswith("<<<", index):
+            index += 3
+            continue
+        if not line.startswith("<<", index):
+            index += 1
+            continue
+
+        cursor = index + 2
+        strip_tabs = cursor < len(line) and line[cursor] == "-"
+        if strip_tabs:
+            cursor += 1
+        while cursor < len(line) and line[cursor] in {" ", "\t"}:
+            cursor += 1
+
+        delimiter: list[str] = []
+        delimiter_quote = ""
+        word_started = False
+        while cursor < len(line):
+            char = line[cursor]
+            if not delimiter_quote and (char.isspace() or char in ";|&()<>"):
+                break
+            if char == "\\" and delimiter_quote != "'" and cursor + 1 < len(line):
+                word_started = True
+                delimiter.append(line[cursor + 1])
+                cursor += 2
+                continue
+            if char in {"'", '"'}:
+                word_started = True
+                if not delimiter_quote:
+                    delimiter_quote = char
+                elif delimiter_quote == char:
+                    delimiter_quote = ""
+                else:
+                    delimiter.append(char)
+                cursor += 1
+                continue
+            word_started = True
+            delimiter.append(char)
+            cursor += 1
+        if delimiter_quote:
+            raise ValueError("No closing quotation in here-document delimiter")
+        if not word_started:
+            raise ValueError("Missing here-document delimiter")
+        declarations.append(("".join(delimiter), strip_tabs))
+        index = cursor
+    return declarations
+
+
+def _command_audit_projection(command: str) -> str:
+    projected: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    body_open = False
+    for line in command.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        newline = line[len(content) :]
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            candidate = content.lstrip("\t") if strip_tabs else content
+            if candidate == delimiter:
+                projected.append(f" {_HEREDOC_BODY_END} ")
+                pending.pop(0)
+                body_open = False
+                if pending:
+                    projected.append(f" {_HEREDOC_BODY_START} ")
+                    body_open = True
+                else:
+                    projected.append(" ; ")
+                projected.append(newline or "\n")
+                continue
+            projected.append(_HEREDOC_BODY_UNSAFE.sub(" ", content))
+            projected.append(newline or "\n")
+            continue
+
+        projected.append(line)
+        declarations = _heredoc_declarations(content)
+        if declarations:
+            pending.extend(declarations)
+            projected.append(f" {_HEREDOC_BODY_START} ")
+            body_open = True
+
+    if pending or body_open:
+        delimiter = pending[0][0] if pending else ""
+        raise ValueError(f"Unterminated here-document: {delimiter}")
+    return "".join(projected)
+
+
 def _exec_tokens(command: str) -> list[str]:
-    lexer = shlex.shlex(_without_dynamic_command_substitutions(command), posix=True, punctuation_chars="|&;()<>")
+    projection = _command_audit_projection(command)
+    lexer = shlex.shlex(
+        _without_dynamic_command_substitutions(projection),
+        posix=True,
+        punctuation_chars="|&;()<>",
+    )
     lexer.whitespace_split = True
     lexer.commenters = ""
     return list(lexer)
+
+
+def _exec_command_candidates(
+    command: str,
+    *,
+    workspace: Path,
+    environment: Mapping[str, str],
+) -> list[PathCandidate]:
+    candidates: list[PathCandidate] = []
+    current_dir: Path | None = workspace
+    command_name = ""
+    pending_cd: Path | None = None
+    cd_target_seen = False
+    in_heredoc = False
+
+    for raw_token in _exec_tokens(command):
+        token = raw_token.strip()
+        if not token:
+            continue
+        if token == _HEREDOC_BODY_START:
+            in_heredoc = True
+            continue
+        if token == _HEREDOC_BODY_END:
+            in_heredoc = False
+            continue
+        if not in_heredoc and token in _COMMAND_SEPARATORS:
+            if command_name == "cd":
+                if token in {"&&", ";"}:
+                    if cd_target_seen:
+                        current_dir = pending_cd
+                    else:
+                        home = str(environment.get("HOME") or "").strip()
+                        current_dir = Path(home).expanduser().resolve(strict=False) if home else None
+                else:
+                    current_dir = None
+            command_name = ""
+            pending_cd = None
+            cd_target_seen = False
+            continue
+        if not in_heredoc and token in {"(", ")"}:
+            current_dir = None
+            command_name = ""
+            pending_cd = None
+            cd_target_seen = False
+            continue
+
+        path_token = token.rsplit("=", 1)[1] if "=" in token else token
+        source = "exec.heredoc" if in_heredoc else "exec.command"
+        candidate = _resolve_candidate(
+            path_token,
+            source=source,
+            base_dir=current_dir,
+            environment=environment,
+            require_path_syntax=True,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
+        if in_heredoc:
+            continue
+        if not command_name:
+            if _SHELL_ASSIGNMENT.match(token):
+                continue
+            command_name = token
+            continue
+        if command_name != "cd" or cd_target_seen or token == "--":
+            continue
+        cd_target_seen = True
+        if token == "-" or token.startswith("-"):
+            pending_cd = None
+            continue
+        cd_candidate = _resolve_candidate(
+            token,
+            source="exec.command",
+            base_dir=current_dir,
+            environment=environment,
+            require_path_syntax=False,
+        )
+        pending_cd = cd_candidate.resolved_path if cd_candidate is not None else None
+        if candidate is None and cd_candidate is not None:
+            candidates.append(cd_candidate)
+    return candidates
 
 
 def _candidate_paths(
@@ -1443,27 +1665,20 @@ def _candidate_paths(
             explicit_arguments = arguments
         else:
             return []
-        for raw_token in _exec_tokens(command):
-            token = raw_token.strip()
-            if not token or token in {"|", "||", "&", "&&", ";", "(", ")", "<", ">", "<<", ">>"}:
-                continue
-            path_token = token.rsplit("=", 1)[1] if "=" in token else token
-            candidate = _resolve_candidate(
-                path_token,
-                source="exec.command",
+        candidates.extend(
+            _exec_command_candidates(
+                command,
                 workspace=workspace,
                 environment=environment,
-                require_path_syntax=True,
             )
-            if candidate is not None:
-                candidates.append(candidate)
+        )
         for key in ("workdir", "cwd"):
             value = explicit_arguments.get(key)
             if isinstance(value, (str, os.PathLike)):
                 candidate = _resolve_candidate(
                     str(value),
                     source=f"exec.{key}",
-                    workspace=workspace,
+                    base_dir=workspace,
                     environment=environment,
                     require_path_syntax=False,
                 )
@@ -1480,7 +1695,7 @@ def _candidate_paths(
         candidate = _resolve_candidate(
             str(value),
             source=f"{normalized_tool or 'tool'}.{normalized_key}",
-            workspace=workspace,
+            base_dir=workspace,
             environment=environment,
             require_path_syntax=False,
         )
@@ -1500,6 +1715,27 @@ def _command_excerpt(tool_name: str, arguments: Any) -> str:
     else:
         payload = {key: value for key, value in arguments.items() if str(key).strip().lower() in _PATH_ARGUMENT_KEYS}
     return _redact_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
+def _transcript_audit_failure(
+    exc: Exception,
+    *,
+    line_number: int | None = None,
+    tool_name: str = "",
+    arguments: Any = None,
+) -> dict[str, Any]:
+    finding: dict[str, Any] = {
+        "rule_id": "transcript_audit_failed",
+        "tool_name": str(tool_name or "").strip().lower(),
+        "command_excerpt": _command_excerpt(tool_name, arguments) if tool_name else "",
+        "exception_type": type(exc).__name__,
+    }
+    message = _redact_text(str(exc), limit=240).strip()
+    if message:
+        finding["exception_message"] = message
+    if line_number is not None:
+        finding["transcript_line"] = line_number
+    return finding
 
 
 def _allowed_scope_matches(candidate: Path, root: Path) -> bool:

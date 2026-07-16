@@ -785,8 +785,89 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         )
 
         self.assertEqual("unavailable", audit.status)
-        self.assertEqual("transcript_audit_failed", audit.findings[0]["rule_id"])
-        self.assertNotIn("resolved_path", audit.findings[0])
+        finding = audit.findings[0]
+        self.assertEqual("transcript_audit_failed", finding["rule_id"])
+        self.assertEqual("exec", finding["tool_name"])
+        self.assertEqual(1, finding["transcript_line"])
+        self.assertEqual("No closing quotation", finding["exception_message"])
+        self.assertIn("/unterminated", finding["command_excerpt"])
+        self.assertNotIn("resolved_path", finding)
+
+    def test_heredoc_bodies_with_quotes_and_multiple_delimiters_audit_clean(self) -> None:
+        audit = self._audit_tool_call(
+            tool_name="exec",
+            arguments=lambda lease: {
+                "command": (
+                    f'cd "{lease.scratch_dir}" && python3 << \'PYEOF\'\n'
+                    "def calculate():\n"
+                    '    \"\"\"Docstring with \"quotes\" and shell-like << text.\"\"\"\n'
+                    '    open("outputs/result.json", "w")\n'
+                    "PYEOF\n"
+                    "cat > notes/first.txt <<FIRST <<-SECOND\n"
+                    "'quoted body'\n"
+                    "FIRST\n"
+                    "\t\"second body\"\n"
+                    "\tSECOND\n"
+                )
+            },
+        )
+
+        self.assertEqual("clean", audit.status)
+
+    def test_here_string_is_not_misclassified_as_heredoc(self) -> None:
+        audit = self._audit_tool_call(
+            tool_name="exec",
+            arguments={"command": "read value <<< \"quoted text\" && echo \"$value\""},
+        )
+
+        self.assertEqual("clean", audit.status)
+
+    def test_heredoc_body_still_reports_determinate_protected_path(self) -> None:
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        audit = self._audit_tool_call(
+            tool_name="exec",
+            arguments=lambda lease: {
+                "command": (
+                    f'cd "{lease.scratch_dir}" && python3 <<\'PYEOF\'\n'
+                    "from pathlib import Path\n"
+                    f'Path("{protected}").read_text()\n'
+                    "PYEOF\n"
+                )
+            },
+        )
+
+        self.assertEqual("contaminated", audit.status)
+        finding = audit.findings[0]
+        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
+        self.assertEqual("exec.heredoc", finding["candidate_source"])
+        self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
+
+    def test_cd_chain_resolves_relative_paths_from_effective_directory(self) -> None:
+        clean = self._audit_tool_call(
+            tool_name="exec",
+            arguments=lambda lease: {
+                "command": (
+                    f'cd "{lease.scratch_dir}" && mkdir -p outputs/cand1 && '
+                    "cd outputs/cand1 && xtb ../../requests/candidate.xyz"
+                )
+            },
+        )
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        contaminated = self._audit_tool_call(
+            tool_name="exec",
+            arguments=lambda lease: {
+                "command": (
+                    f'cd "{lease.scratch_dir}" && mkdir -p outputs/cand1 && '
+                    f'cd outputs/cand1 && cat "{os.path.relpath(protected, lease.scratch_dir / "outputs" / "cand1")}"'
+                )
+            },
+        )
+
+        self.assertEqual("clean", clean.status)
+        self.assertEqual("contaminated", contaminated.status)
+        finding = contaminated.findings[0]
+        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
+        self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
 
     def test_forbidden_path_audit_allows_current_workspace_and_skill_root(self) -> None:
         lease = self.manager.prepare(self._identity())
