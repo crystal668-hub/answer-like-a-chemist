@@ -222,6 +222,9 @@ def replay_workspace_adjudication(
         bundle = bundle if isinstance(bundle, dict) else {}
         bundle_dir = str(bundle.get("bundle_dir") or "").strip()
         skills_enabled = bool(payload.get("skills_enabled"))
+        historical_environment = _historical_environment(payload)
+        historical_scratch_text = historical_environment.get("BENCHMARK_SKILL_SCRATCH_DIR", "")
+        historical_scratch = [Path(historical_scratch_text)] if historical_scratch_text else []
         skill_scopes = (
             project_root / "skills",
             project_root / "scripts" / "run_skill.py",
@@ -232,11 +235,13 @@ def replay_workspace_adjudication(
             skills_enabled=skills_enabled,
             always_read_scopes=([Path(bundle_dir)] if bundle_dir else []),
             read_scopes=skill_scopes,
+            write_scopes=historical_scratch,
+            exec_workdir_scopes=historical_scratch,
         )
         audit = manager.audit_attempt(
             SimpleNamespace(active_workspace=active_workspace, identity=SimpleNamespace(runner_kind="single_llm")),
             runner_meta,
-            environment=_historical_environment(payload),
+            environment=historical_environment,
             policy=policy,
         )
         audit_payload = audit.to_payload()

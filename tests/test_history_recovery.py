@@ -121,6 +121,7 @@ def test_history_replay_is_dry_run_first_and_apply_snapshots_atomically(tmp_path
     assert dry_run["mode"] == "dry_run"
     assert dry_run["model_calls"] == 0
     assert dry_run["records"][0]["audit"]["adjudication"] == "scoreable_degraded"
+    assert dry_run["records"][0]["audit"]["finding_count"] == 1
     assert dry_run["records"][0]["historical_review"]["write_only"] is True
     assert record_path.read_bytes() == original
 
