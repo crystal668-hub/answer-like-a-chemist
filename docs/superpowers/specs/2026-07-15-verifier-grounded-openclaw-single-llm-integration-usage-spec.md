@@ -3,7 +3,7 @@
 - 日期：2026-07-15
 - 状态：`IMPLEMENTED`
 - 适用项目：OpenClaw chemistry benchmark orchestration
-- 适用 package：`verifier-grounded-benchmark==0.1.1`
+- 适用 package：`verifier-grounded-benchmark==0.2.0`
 
 ## 1. 目的
 
@@ -170,12 +170,12 @@ uv run python -m benchmarking.workflow.cli ...
 | 字段 | 固定值 |
 | --- | --- |
 | package | `verifier-grounded-benchmark` |
-| version | `0.1.1` |
-| source tag | `v0.1.1` |
-| source commit | `ae481b5ed8eab4207510b9027ad9c24e22839cf5` |
-| wheel | `verifier_grounded_benchmark-0.1.1-py3-none-any.whl` |
-| wheel size | `101483` bytes |
-| wheel SHA256 | `1eb64265449f844e8a1b1d0b2cd6010ecb543ca239d1d8929c6fd9df5c935a05` |
+| version | `0.2.0` |
+| source tag | `v0.2.0` |
+| source commit | `81c50b42516a5e154ba91106052c954a64550708` |
+| wheel | `verifier_grounded_benchmark-0.2.0-py3-none-any.whl` |
+| wheel size | `143055` bytes |
+| wheel SHA256 | `d2c2e12ec171bf5879dbf1fa74bde45fbf0a4de2e90339d9b98cce38d030a5a9` |
 | Python | `>=3.12,<3.13` |
 
 Release pin：
@@ -187,13 +187,13 @@ benchmarking/resources/verifier_grounded/release.json
 Verified wheel cache：
 
 ```text
-~/.openclaw/data/verifier-grounded-releases/0.1.1/
+~/.openclaw/data/verifier-grounded-releases/0.2.0/
 ```
 
 Isolated scorer runtime：
 
 ```text
-state/verifier-grounded-runtimes/0.1.1-1eb64265449f/
+state/verifier-grounded-runtimes/0.2.0-d2c2e12ec171/
 ```
 
 ## 7. Track 与 Dataset 映射
@@ -203,9 +203,9 @@ state/verifier-grounded-runtimes/0.1.1-1eb64265449f/
 
 | VGB track | OpenClaw dataset | 题数 | verifier timeout | JSONL SHA256 |
 | --- | --- | ---: | ---: | --- |
-| `rdkit` | `verifier_grounded_rdkit` | 11 | 180 秒 | `b4a2157887bda40bcdf61900884409edbe08171879c9c8fd344e475f8dba940c` |
-| `xtb` | `verifier_grounded_xtb_xyz` | 18 | 1800 秒 | `5bb32e59be1eea908fd39822f7f3e6a2050158791f6bf4aedf28927f5359549a` |
-| `property_calculation` | `verifier_grounded_property_calculation` | 2 | 180 秒 | `5dd6157552785347267e9c81eaa9ce2c0b7bbf6dcbb4ed305be0af7c676f8b21` |
+| `rdkit` | `verifier_grounded_rdkit` | 11 | 180 秒 | `71c5343e77f2fb62b58fc2fb6765703f178e2df7322cb7441353a480052e914d` |
+| `xtb` | `verifier_grounded_xtb_xyz` | 18 | 1800 秒 | `02c14b303beaf75878dd9473cbb2bdd13876a70f3a40e2c4910f64fb6103fe69` |
+| `property_calculation` | `verifier_grounded_property_calculation` | 2 | 180 秒 | `238cfccd73b9ed40ddfd03e52ea7a0fe5dedfdf937a738da7d5ba2d07886debf` |
 
 Runtime JSONL：
 
@@ -242,7 +242,7 @@ scripts/sync_verifier_grounded_datasets.py
 
 ### 8.2 PyPI 发布后
 
-外部用户从 PyPI 获取 `verifier-grounded-benchmark==0.1.1`，无需从本地 `dist/` 构建。获取的
+外部用户从 PyPI 获取 `verifier-grounded-benchmark==0.2.0`，无需从本地 `dist/` 构建。获取的
 wheel 仍必须在安装前匹配固定 SHA。
 
 后续可以增强 provisioning 的 PyPI 下载方式，但不得增加 agent 侧 fallback 或改变标准 API
@@ -572,8 +572,8 @@ benchmarking/workflow/verifier_grounded_cli.py
 
 ## 20. Release Metadata Follow-Up
 
-最终 OpenClaw 接入 commit 推送后，package repo `releases/v0.1.1/manifest.json` 中的
+最终 OpenClaw 接入 commit 推送后，package repo `releases/v0.2.0/manifest.json` 中的
 `integrations.openclaw.commit` 必须更新到最终 commit。
 
-本轮不修改三份 dataset 或 `release.json`，因此其既有 hash 应保持不变。该 back-reference 是
-release provenance，不构成新的运行时 adapter。
+三份 dataset 与 `release.json` 已从固定 `0.2.0` wheel 的公共 API 重新生成并冻结；该
+back-reference 是 release provenance，不构成新的运行时 adapter。

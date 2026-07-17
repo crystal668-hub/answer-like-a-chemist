@@ -10,9 +10,11 @@ from benchmarking.scoring import verifier_grounded_runtime as runtime
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = runtime.load_release_config()
 
-    assert config.version == "0.1.1"
-    assert config.source_tag == "v0.1.1"
-    assert len(config.wheel_sha256) == 64
+    assert config.version == "0.2.0"
+    assert config.source_tag == "v0.2.0"
+    assert config.source_commit == "81c50b42516a5e154ba91106052c954a64550708"
+    assert config.wheel_sha256 == "d2c2e12ec171bf5879dbf1fa74bde45fbf0a4de2e90339d9b98cce38d030a5a9"
+    assert config.wheel_size == 143055
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation": 2,
         "rdkit": 11,
@@ -48,7 +50,7 @@ def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
 
 def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     config = runtime.load_release_config()
-    expected = {"task_id": "rdkit_qed_max_001", "status": "ok", "scores": {"score": 0.5}}
+    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
     with patch.object(runtime, "_invoke_api", return_value=expected) as invoke:
         result = runtime.evaluate_answer(
             track="rdkit",

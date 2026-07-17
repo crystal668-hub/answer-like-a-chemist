@@ -225,7 +225,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                 "verifier_grounded": {
                     "release": {
                         "package": "verifier-grounded-benchmark",
-                        "version": "0.1.1",
+                        "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
                     "track": "rdkit",
@@ -238,7 +238,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
             self.assertEqual("Reasoning.\nFINAL ANSWER: c1ccccc1", answer_text)
             return {
                 "task_id": "rdkit_logp_window_003",
-                "status": "ok",
+                "status": "scored",
                 "canonical_smiles": "c1ccccc1",
                 "properties": {"logp": 1.6866},
                 "scores": {
@@ -281,7 +281,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                 "verifier_grounded": {
                     "release": {
                         "package": "verifier-grounded-benchmark",
-                        "version": "0.1.1",
+                        "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
                     "track": "rdkit",
@@ -293,7 +293,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         def verifier_runner(*, record, answer_text):
             return {
                 "task_id": "rdkit_logp_window_003",
-                "status": "error",
+                "status": "scored",
                 "failure_type": "parse_error",
                 "message": "missing final answer line",
                 "canonical_smiles": None,
@@ -316,6 +316,49 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         self.assertEqual("parse_error", result.details["failure_type"])
         self.assertEqual("missing final answer line", result.details["message"])
 
+    def test_verifier_grounded_infrastructure_error_is_not_converted_to_zero(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit_logp_window_003",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Propose one valid single-component small-molecule SMILES.",
+            reference_answer="No reference answer is exposed.",
+            payload={
+                "verifier_grounded": {
+                    "release": {
+                        "package": "verifier-grounded-benchmark",
+                        "version": "0.2.0",
+                        "wheel_sha256": "pinned",
+                    },
+                    "track": "rdkit",
+                    "task_id": "rdkit_logp_window_003",
+                }
+            },
+        )
+
+        def verifier_runner(*, record, answer_text):
+            return {
+                "task_id": "rdkit_logp_window_003",
+                "status": "error",
+                "failure_scope": "infrastructure",
+                "failure_type": "verifier_timeout",
+                "message": "verifier timed out",
+                "properties": {},
+                "scores": {"score": None, "constraint_scores": []},
+                "versions": {},
+            }
+
+        with self.assertRaisesRegex(EvaluationError, "verifier_timeout"):
+            evaluate_verifier_grounded(
+                record,
+                short_answer_text="c1ccccc1",
+                full_response_text="FINAL ANSWER: c1ccccc1",
+                answer_text="FINAL ANSWER: c1ccccc1",
+                judge=object(),
+                verifier_runner=verifier_runner,
+            )
+
     def test_verifier_grounded_rejects_record_task_mismatch_before_runtime(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit_qed_max_001",
@@ -328,7 +371,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                 "verifier_grounded": {
                     "release": {
                         "package": "verifier-grounded-benchmark",
-                        "version": "0.1.1",
+                        "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
                     "track": "rdkit",

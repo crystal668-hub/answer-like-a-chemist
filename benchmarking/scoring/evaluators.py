@@ -863,17 +863,26 @@ def evaluate_verifier_grounded(
         full_response_text=full_response_text,
     )
     verifier_result = verifier_runner(record=record, answer_text=candidate_answer_text)
-    scores = verifier_result.get("scores") if isinstance(verifier_result, dict) else {}
-    raw_score = scores.get("score") if isinstance(scores, dict) else 0.0
+    if not isinstance(verifier_result, dict):
+        raise EvaluationError("Pinned verifier returned a non-object result.")
+    status = verifier_result.get("status")
+    if status != "scored":
+        failure_type = verifier_result.get("failure_type") or "verifier_evaluation_error"
+        message = verifier_result.get("message") or "Pinned verifier did not produce a task score."
+        raise EvaluationError(f"Pinned verifier failed ({failure_type}): {message}")
+    scores = verifier_result.get("scores")
+    raw_score = scores.get("score") if isinstance(scores, dict) else None
     try:
         score = float(raw_score)
     except (TypeError, ValueError):
-        score = 0.0
+        raise EvaluationError("Pinned verifier returned a scored result without a numeric score.")
+    if not math.isfinite(score):
+        raise EvaluationError("Pinned verifier returned a non-finite score.")
     score = max(0.0, min(1.0, score))
     details = {
         "method": "isolated_wheel_api",
         "task_id": verifier_result.get("task_id"),
-        "status": verifier_result.get("status"),
+        "status": status,
         "failure_type": verifier_result.get("failure_type"),
         "message": verifier_result.get("message"),
         "canonical_smiles": verifier_result.get("canonical_smiles"),
