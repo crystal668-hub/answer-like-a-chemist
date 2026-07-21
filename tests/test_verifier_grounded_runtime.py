@@ -10,11 +10,11 @@ from benchmarking.scoring import verifier_grounded_runtime as runtime
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = runtime.load_release_config()
 
-    assert config.version == "0.2.0"
-    assert config.source_tag == "v0.2.0"
-    assert config.source_commit == "81c50b42516a5e154ba91106052c954a64550708"
-    assert config.wheel_sha256 == "d2c2e12ec171bf5879dbf1fa74bde45fbf0a4de2e90339d9b98cce38d030a5a9"
-    assert config.wheel_size == 143055
+    assert config.version == "0.3.0"
+    assert config.source_tag == "v0.3.0"
+    assert config.source_commit == "89ed5b9d83547bea98f6eeac4a03a131e33e8b90"
+    assert config.wheel_sha256 == "b93c18b818e8d19993e817de6439ccea910b36a8f386c551078b7c6b10420381"
+    assert config.wheel_size == 143722
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation": 2,
         "rdkit": 11,
