@@ -42,8 +42,10 @@ runbooks.
   `/Users/xutao/.openclaw/data/formal-benchmarks`; temporary datasets default to
   `/Users/xutao/.openclaw/data/temp-benchmarks`.
 - Benchmark run records are generated under
-  `workspace/state/benchmark-runs`. Verifier-grounded isolated runtimes and
-  dashboard metadata also live under `workspace/state/`.
+  `workspace/state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>`.
+  Formal and temporary inputs determine the top-level category; benchmark and
+  single-LLM model slugs provide the next two levels. Verifier-grounded isolated
+  runtimes and dashboard metadata also live under `workspace/state/`.
 - Active attempt workspaces default to `.openclaw/benchmark/workspaces`; live
   DebateClaw workspaces default to `.openclaw/debateclaw/workspaces`.
 
@@ -176,8 +178,9 @@ For each invocation, the CLI:
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.
-- The dashboard reads run artifacts and writes only its own annotation SQLite
-  database. It does not mutate benchmark results or launch benchmark processes.
+- The dashboard recursively discovers classified run directories, stops scanning
+  below each detected run, and writes only its own annotation SQLite database.
+  It does not mutate benchmark results or launch benchmark processes.
 
 ### Paper pipeline
 

@@ -273,7 +273,7 @@ uv run python -m benchmarking.workflow.cli [options]
 | `--no-timeout` | 无模型作答上限模式 |
 | `--no-analysis` | 关闭可选自动分析 |
 | `--print-selected-records` | 只预览题目，不调用 agent |
-| `--exact-output-dir` | 指定符合运行命名规范的输出目录 |
+| `--exact-output-dir` | 可选；覆盖默认分类目录并指定符合运行命名规范的输出目录 |
 
 必须显式提供 `--groups`。不得依赖通用 CLI 的三组默认值，因为本规格主要运行 single-LLM。
 
@@ -298,11 +298,10 @@ uv run python -m benchmarking.workflow.cli \
   --limit 1 \
   --single-agent-model qwen3.5-plus \
   --single-agent-thinking high \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-rdkit-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
-实际运行必须把示例时间戳替换为启动时的当前时间。
+CLI 自动使用启动时的当前时间生成 run ID 和分类输出路径。
 
 ### 10.3 按 task ID 运行
 
@@ -311,8 +310,7 @@ uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_xtb_xyz \
   --record-ids xtb_gap_window_001 \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-xtb-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ### 10.4 多题且保持给定顺序
@@ -322,8 +320,7 @@ uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_rdkit \
   --record-ids rdkit_sa_min_002,rdkit_qed_max_001 \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-rdkit-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ### 10.5 Skills-off
@@ -333,8 +330,7 @@ uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_off \
   --datasets verifier_grounded_property_calculation \
   --limit 1 \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-property-calculation-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ### 10.6 Skills-on/off 对照
@@ -345,8 +341,7 @@ uv run python -m benchmarking.workflow.cli \
   --datasets verifier_grounded_rdkit \
   --limit 2 \
   --max-concurrent-groups 1 \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-rdkit-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ### 10.7 完整 track
@@ -357,8 +352,7 @@ uv run python -m benchmarking.workflow.cli \
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_rdkit \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-rdkit-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ### 10.8 全部三个 tracks
@@ -367,8 +361,7 @@ uv run python -m benchmarking.workflow.cli \
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_rdkit,verifier_grounded_xtb_xyz,verifier_grounded_property_calculation \
-  --no-analysis \
-  --exact-output-dir state/benchmark-runs/verifier-grounded-all-qwen3.5-plus-20260715-120000
+  --no-analysis
 ```
 
 ## 11. Record 选择契约
@@ -478,11 +471,15 @@ xTB 实际评分要求 `xtb` executable。当前本机验证版本为 `6.7.1 (ed
 
 ## 16. 输出
 
-所有 benchmark records 存放在：
+所有 benchmark records 分类存放在：
 
 ```text
-state/benchmark-runs/
+state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>/
 ```
+
+输入文件全部位于临时 benchmark 根时使用 `temporary`，其他 run 使用 `formal`。单数据集使用
+dataset 名作为 benchmark；多数据集使用 `mixed-datasets`。benchmark、模型和 run ID 均使用
+文件系统安全 slug。`--exact-output-dir` 仅在调用者明确需要自定义路径时绕过该默认布局。
 
 run 名必须符合：
 

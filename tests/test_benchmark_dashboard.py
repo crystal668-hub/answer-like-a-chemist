@@ -129,6 +129,29 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
 
 
+def test_list_runs_discovers_classified_run_without_descending_into_run_artifacts(tmp_path: Path) -> None:
+    run_root = write_demo_run(
+        tmp_path / "formal" / "verifier-grounded-rdkit" / "qwen3-7-max",
+        run_id="verifier-grounded-rdkit-qwen3-7-max-20260721-120000",
+    )
+    write_demo_run(run_root / "recovery", run_id="snapshot")
+
+    runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).list_runs()
+
+    assert [item["run_id"] for item in runs] == [run_root.name]
+    assert runs[0]["path"] == str(run_root)
+
+
+def test_run_lookup_rejects_duplicate_ids_across_categories(tmp_path: Path) -> None:
+    write_demo_run(tmp_path / "formal" / "demo" / "model", run_id="duplicate-run")
+    write_demo_run(tmp_path / "temporary" / "demo" / "model", run_id="duplicate-run")
+
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    with pytest.raises(dashboard_service.RunNotFoundError, match="Ambiguous benchmark run id"):
+        dashboard.get_run("duplicate-run")
+
+
 def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> None:
     run_root = tmp_path / "vgb-run"
     payloads = [

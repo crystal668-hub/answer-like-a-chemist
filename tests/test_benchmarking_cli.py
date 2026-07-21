@@ -42,6 +42,77 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert all(spec.websearch_enabled is False for spec in benchmarking_cli.EXPERIMENT_SPECS.values())
 
 
+def test_default_run_output_root_classifies_formal_run_by_dataset_and_model(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    temp_root = tmp_path / "temp-benchmarks"
+    monkeypatch.setattr(benchmarking_cli.runtime_paths, "temp_benchmarks_root", temp_root)
+    record = benchmarking_cli.BenchmarkRecord(
+        record_id="r1",
+        dataset="verifier_grounded_rdkit",
+        source_file=str(tmp_path / "formal" / "rdkit.jsonl"),
+        prompt="question",
+        eval_kind="verifier_grounded",
+        reference_answer="hidden",
+        payload={},
+    )
+
+    output_root = benchmarking_cli.default_run_output_root(
+        output_dir=tmp_path / "runs",
+        dataset_files=[tmp_path / "formal" / "rdkit.jsonl"],
+        records=[record],
+        single_agent_model="qwen/qwen3.7-max",
+        timestamp="20260721-120000",
+    )
+
+    assert output_root == (
+        tmp_path
+        / "runs"
+        / "formal"
+        / "verifier-grounded-rdkit"
+        / "qwen3-7-max"
+        / "verifier-grounded-rdkit-qwen3-7-max-20260721-120000"
+    )
+
+
+def test_default_run_output_root_classifies_multi_dataset_temp_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    temp_root = tmp_path / "temp-benchmarks"
+    monkeypatch.setattr(benchmarking_cli.runtime_paths, "temp_benchmarks_root", temp_root)
+    records = [
+        benchmarking_cli.BenchmarkRecord(
+            record_id=f"r{index}",
+            dataset=dataset,
+            source_file=str(temp_root / f"{dataset}.jsonl"),
+            prompt="question",
+            eval_kind="generic_semantic",
+            reference_answer="answer",
+            payload={},
+        )
+        for index, dataset in enumerate(("chembench", "superchem"), start=1)
+    ]
+
+    output_root = benchmarking_cli.default_run_output_root(
+        output_dir=tmp_path / "runs",
+        dataset_files=[temp_root / "chembench.jsonl", temp_root / "superchem.jsonl"],
+        records=records,
+        single_agent_model="openai/gpt-5.5",
+        timestamp="20260721-120000",
+    )
+
+    assert output_root == (
+        tmp_path
+        / "runs"
+        / "temporary"
+        / "mixed-datasets"
+        / "gpt-5-5"
+        / "mixed-datasets-gpt-5-5-20260721-120000"
+    )
+
+
 def test_production_forbidden_path_policy_uses_explicit_runtime_roots_and_custom_dataset(
     monkeypatch,
     tmp_path,

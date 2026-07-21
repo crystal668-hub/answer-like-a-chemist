@@ -24,8 +24,7 @@ uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_rdkit \
   --limit 1 \
-  --no-analysis \
-  --exact-output-dir "state/benchmark-runs/verifier-grounded-rdkit-qwen3.5-plus-$(date +%Y%m%d-%H%M%S)"
+  --no-analysis
 ```
 
 Select an exact package task ID:
@@ -35,9 +34,11 @@ uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
   --datasets verifier_grounded_xtb_xyz \
   --record-ids xtb_gap_window_001 \
-  --no-analysis \
-  --exact-output-dir "state/benchmark-runs/verifier-grounded-xtb-qwen3.5-plus-$(date +%Y%m%d-%H%M%S)"
+  --no-analysis
 ```
+
+Without `--exact-output-dir`, runs are classified under
+`state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>`.
 
 Use `single_llm_skills_off` for the skills-disabled condition, or pass both
 single-LLM group IDs to compare them. Omit `--limit` and `--record-ids` to run

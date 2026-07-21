@@ -56,6 +56,9 @@ uv run --extra web-ui python -m benchmarking.dashboard.app \
 state/benchmark-runs
 ```
 
+该根目录按 `<formal|temporary>/<benchmark>/<model>/<run_id>` 分类。dashboard
+会递归发现其中的 run，并在识别到 run 后停止继续扫描其内部归档或 recovery 目录。
+
 默认元数据数据库：
 
 ```text
@@ -235,7 +238,7 @@ dashboard 的资产接口只允许读取当前 run 目录内的文件。
 例如允许读取：
 
 ```text
-state/benchmark-runs/<run_id>/input-bundles/<record_id>/images/img01.png
+state/benchmark-runs/<category>/<benchmark>/<model>/<run_id>/input-bundles/<record_id>/images/img01.png
 ```
 
 不允许通过 `../` 跳出 run 目录读取任意本地文件。
@@ -323,7 +326,7 @@ rm state/benchmark-dashboard/dashboard.sqlite
 确认 run 目录内存在 `input-bundles`：
 
 ```bash
-find state/benchmark-runs/<run_id>/input-bundles -maxdepth 3 -type f | head
+find state/benchmark-runs/<category>/<benchmark>/<model>/<run_id>/input-bundles -maxdepth 3 -type f | head
 ```
 
 如果原始 run 没有 materialized input bundle，dashboard 只能展示 per-record JSON 中的 prompt 文本。

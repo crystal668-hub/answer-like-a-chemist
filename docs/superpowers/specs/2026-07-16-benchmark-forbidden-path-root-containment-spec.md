@@ -517,7 +517,8 @@ Web-search preflight 使用同一个 manager 和同一 protected policy。因为
 ### 12.3 Trajectory 回归
 
 将最新 RDKit run
-`state/benchmark-runs/verifier-grounded-rdkit-qwen3.7-max-20260716-010815` 中触发首轮误判的 tool
+`state/benchmark-runs/formal/verifier-grounded-rdkit/qwen3-7-max/verifier-grounded-rdkit-qwen3.7-max-20260716-010815`
+中触发首轮误判的 tool
 call 提取为最小脱敏 fixture，并重放 `audit_attempt()`：
 
 - 合法 current scratch 操作必须为 `clean`；

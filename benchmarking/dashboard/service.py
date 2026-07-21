@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any
 
@@ -197,7 +198,12 @@ class BenchmarkDashboard:
             if self._looks_like_run(root):
                 candidates.append(root)
                 continue
-            candidates.extend(path for path in root.iterdir() if path.is_dir() and self._looks_like_run(path))
+            for current, directories, _files in os.walk(root):
+                path = Path(current)
+                if path == root or not self._looks_like_run(path):
+                    continue
+                candidates.append(path)
+                directories.clear()
         return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
 
     @staticmethod
@@ -205,9 +211,11 @@ class BenchmarkDashboard:
         return any((path / name).exists() for name in ("results.json", "runtime-manifest.json", "per-record", "waves", "progress"))
 
     def _run_dir(self, run_id: str) -> Path:
-        for path in self._candidate_run_dirs():
-            if path.name == run_id:
-                return path
+        matches = [path for path in self._candidate_run_dirs() if path.name == run_id]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise RunNotFoundError(f"Ambiguous benchmark run id: {run_id}")
         raise RunNotFoundError(f"Unknown benchmark run: {run_id}")
 
     def _load_results(self, run_root: Path) -> list[dict[str, Any]]:

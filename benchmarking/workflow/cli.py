@@ -316,10 +316,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="formal-benchmarks/ 根目录")
     parser.add_argument("--chemqa-root", default=str(DEFAULT_CHEMQA_ROOT), help="chemqa-review skill 根目录")
     parser.add_argument("--openclaw-config", default=str(DEFAULT_OPENCLAW_CONFIG), help="基础 OpenClaw 配置文件")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="结果输出目录")
+    parser.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="分类结果根目录；默认按用途、benchmark、模型和 run ID 分层",
+    )
     parser.add_argument(
         "--exact-output-dir",
-        help="若提供，则直接把该目录作为本次输出根目录，而不是自动创建 benchmark-时间戳 子目录",
+        help="若提供，则直接把该目录作为本次输出根目录，绕过默认分类层级",
     )
     parser.add_argument(
         "--merge-existing-per-record",
@@ -586,6 +590,28 @@ def slugify(value: str, *, limit: int = 64) -> str:
         return cleaned
     digest = hashlib.sha1(cleaned.encode("utf-8")).hexdigest()[:8]
     return f"{cleaned[: limit - 9]}-{digest}".strip("-")
+
+
+def default_run_output_root(
+    *,
+    output_dir: str | Path,
+    dataset_files: Iterable[Path],
+    records: Iterable[BenchmarkRecord],
+    single_agent_model: str,
+    timestamp: str,
+) -> Path:
+    resolved_files = [Path(path).expanduser().resolve() for path in dataset_files]
+    temporary_root = runtime_paths.temp_benchmarks_root.resolve()
+    category = (
+        "temporary"
+        if resolved_files and all(path.is_relative_to(temporary_root) for path in resolved_files)
+        else "formal"
+    )
+    datasets = sorted({record.dataset for record in records if record.dataset})
+    benchmark = slugify(datasets[0] if len(datasets) == 1 else "mixed-datasets")
+    model = slugify(str(single_agent_model).rsplit("/", 1)[-1])
+    run_id = f"{benchmark}-{model}-{timestamp}"
+    return Path(output_dir).expanduser().resolve() / category / benchmark / model / run_id
 
 
 def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = None) -> RuntimeConfigContext:
@@ -2287,7 +2313,13 @@ def main() -> int:
     if args.exact_output_dir:
         output_root = Path(args.exact_output_dir).expanduser().resolve()
     else:
-        output_root = Path(args.output_dir).expanduser().resolve() / f"benchmark-{now_stamp()}"
+        output_root = default_run_output_root(
+            output_dir=args.output_dir,
+            dataset_files=dataset_files,
+            records=records,
+            single_agent_model=args.single_agent_model,
+            timestamp=now_stamp(),
+        )
     ensure_dir(output_root)
     run_id = output_root.name
     invocation_id = str(uuid.uuid4())
