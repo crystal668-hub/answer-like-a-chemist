@@ -9,7 +9,6 @@ import os
 import random
 import re
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -83,8 +82,6 @@ from benchmarking.runtime.config_pool import (
     RuntimeConfigError,
     actual_slot_ids,
     build_run_scoped_config_payload as _build_run_scoped_config_payload,
-    logical_slot_ids,
-    slot_role_map,
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
 from benchmarking.runtime.session_isolation import (
@@ -283,10 +280,6 @@ def build_effective_experiment_specs(
 
 
 GroupRecordResult = _SharedGroupRecordResult
-
-
-def format_timestamp(epoch: float | None = None) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(epoch or time.time()))
 
 
 def cleanroom_skill_root() -> Path:

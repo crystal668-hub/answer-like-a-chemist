@@ -47,10 +47,6 @@ class RuntimeConfigContext:
     benchmark_skills_root: Path
 
 
-def logical_slot_ids() -> tuple[str, ...]:
-    return ("debate-coordinator", "debate-1", "debate-2", "debate-3", "debate-4", "debate-5")
-
-
 def actual_slot_ids(slot_set: str) -> dict[str, str]:
     normalized = str(slot_set).strip()
     prefix = f"debate{normalized}"
@@ -61,18 +57,6 @@ def actual_slot_ids(slot_set: str) -> dict[str, str]:
         "debate-3": f"{prefix}-3",
         "debate-4": f"{prefix}-4",
         "debate-5": f"{prefix}-5",
-    }
-
-
-def slot_role_map(slot_set: str) -> dict[str, str]:
-    slots = actual_slot_ids(slot_set)
-    return {
-        "debate-coordinator": slots["debate-coordinator"],
-        "proposer-1": slots["debate-1"],
-        "proposer-2": slots["debate-2"],
-        "proposer-3": slots["debate-3"],
-        "proposer-4": slots["debate-4"],
-        "proposer-5": slots["debate-5"],
     }
 
 

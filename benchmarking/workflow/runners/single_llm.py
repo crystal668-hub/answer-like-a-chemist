@@ -971,7 +971,6 @@ class SingleLLMRunner:
         environment: dict[str, str],
         policy: WorkspaceAccessPolicy,
     ) -> WorkspaceAudit:
-        bundle_dir = getattr(input_bundle, "bundle_dir", None)
         if self._contamination_auditor is not None:
             return ensure_workspace_audit(self._contamination_auditor(
                 lease=lease,

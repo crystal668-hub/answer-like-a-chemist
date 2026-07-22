@@ -6,7 +6,6 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +17,6 @@ from runtime_lease import (
     cleanup_report_filename_for_run,
     iso_now,
     lease_dir_from_manifest,
-    manifest_path,
     maybe_int,
     read_json,
 )
@@ -141,22 +139,6 @@ def pid_exists(pid: int) -> bool:
     return True
 
 
-def normalize_path_list(items: list[Any] | None) -> list[Path]:
-    normalized: list[Path] = []
-    seen: set[str] = set()
-    for item in items or []:
-        text = str(item or "").strip()
-        if not text:
-            continue
-        path = Path(text).expanduser().resolve()
-        key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append(path)
-    return normalized
-
-
 def iter_lease_payloads(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     lease_dir = lease_dir_from_manifest(manifest)
     if not lease_dir.is_dir():
@@ -175,103 +157,6 @@ def iter_lease_payloads(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         payload["_lease_path"] = str(path)
         payloads.append(payload)
     return payloads
-
-
-def session_paths_from_manifest(manifest: dict[str, Any]) -> list[Path]:
-    launch_home = str(manifest.get("launch_home") or "").strip()
-    if not launch_home:
-        return []
-    launch_root = Path(launch_home).expanduser().resolve()
-    session_assignments = dict(manifest.get("session_assignments") or {})
-    paths: list[Path] = []
-    seen: set[str] = set()
-    for slot_id, session_id in session_assignments.items():
-        slot = str(slot_id or "").strip()
-        session = str(session_id or "").strip()
-        if not slot or not session:
-            continue
-        session_dir = launch_root / ".openclaw" / "agents" / slot / "sessions"
-        candidates = [
-            session_dir / f"{session}.jsonl",
-            session_dir / f"{session}.jsonl.lock",
-            *sorted(session_dir.glob(f"{session}.checkpoint.*.jsonl")),
-            *sorted(session_dir.glob(f"{session}.checkpoint.*.jsonl.lock")),
-        ]
-        for path in candidates:
-            key = str(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(path)
-    return paths
-
-
-def candidate_session_stores(manifest: dict[str, Any]) -> list[Path]:
-    stores: list[Path] = []
-    session_assignments = dict(manifest.get("session_assignments") or {})
-    seen: set[str] = set()
-    for slot_id in session_assignments:
-        path = Path.home() / ".openclaw" / "agents" / str(slot_id) / "sessions" / "sessions.json"
-        key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        stores.append(path)
-    launch_home = str(manifest.get("launch_home") or "").strip()
-    if launch_home:
-        launch_root = Path(launch_home).expanduser().resolve()
-        for slot_id in session_assignments:
-            path = launch_root / ".openclaw" / "agents" / str(slot_id) / "sessions" / "sessions.json"
-            key = str(path)
-            if key in seen:
-                continue
-            seen.add(key)
-            stores.append(path)
-    return stores
-
-
-def session_store_entry_matches(entry: dict[str, Any], *, run_id: str, session_ids: set[str]) -> bool:
-    session_id = str(entry.get("sessionId") or "").strip()
-    session_file = str(entry.get("sessionFile") or "").strip()
-    if session_id and session_id in session_ids:
-        return True
-    if run_id and run_id in session_file:
-        return True
-    return False
-
-
-def scrub_session_store(path: Path, *, run_id: str, session_ids: set[str], dry_run: bool) -> dict[str, Any]:
-    if not path.is_file():
-        return {"path": str(path), "exists": False, "changed": False, "removed_keys": []}
-    payload = read_json(path)
-    if not isinstance(payload, dict):
-        return {"path": str(path), "exists": True, "changed": False, "removed_keys": [], "warning": "not-object"}
-    removed_keys: list[str] = []
-    updated = dict(payload)
-    for key, value in list(payload.items()):
-        if not isinstance(value, dict):
-            continue
-        if session_store_entry_matches(value, run_id=run_id, session_ids=session_ids):
-            updated.pop(key, None)
-            removed_keys.append(str(key))
-    changed = bool(removed_keys)
-    if changed and not dry_run:
-        path.write_text(json.dumps(updated, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return {"path": str(path), "exists": True, "changed": changed, "removed_keys": removed_keys}
-
-
-def remove_path(path: Path, *, dry_run: bool) -> bool:
-    if not path.exists():
-        return False
-    if dry_run:
-        return True
-    if path.is_dir():
-        for child in sorted(path.iterdir(), key=lambda item: item.name, reverse=True):
-            remove_path(child, dry_run=False)
-        path.rmdir()
-        return True
-    path.unlink()
-    return True
 
 
 def process_targets(
@@ -424,27 +309,6 @@ def wait_for_exit(targets: list[dict[str, Any]], *, timeout_seconds: float) -> l
         if remaining:
             time.sleep(0.2)
     return sorted(remaining)
-
-
-def postcheck_session_stores(manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    run_id = str(manifest.get("run_id") or "")
-    session_ids = {str(value).strip() for value in dict(manifest.get("session_assignments") or {}).values() if str(value).strip()}
-    leftovers: list[dict[str, Any]] = []
-    for path in candidate_session_stores(manifest):
-        if not path.is_file():
-            continue
-        try:
-            payload = read_json(path)
-        except Exception:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        for key, value in payload.items():
-            if not isinstance(value, dict):
-                continue
-            if session_store_entry_matches(value, run_id=run_id, session_ids=session_ids):
-                leftovers.append({"path": str(path), "key": str(key), "sessionId": value.get("sessionId")})
-    return leftovers
 
 
 def cleanup(context: CleanupContext, *, grace_seconds: float, kill_after_seconds: float, dry_run: bool) -> dict[str, Any]:

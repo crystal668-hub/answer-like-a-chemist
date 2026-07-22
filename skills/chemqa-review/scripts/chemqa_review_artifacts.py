@@ -105,10 +105,6 @@ def parse_metadata_fields(text: str) -> dict[str, str]:
     return fields
 
 
-def metadata_value(text: str, key: str) -> str:
-    return parse_metadata_fields(text).get(_normalize_metadata_key(key), "")
-
-
 def _strip_code_fences(text: str) -> str:
     stripped = text.strip()
     fence_match = re.match(r"^```(?:yaml|yml|json)?\s*(.*?)\s*```$", stripped, flags=re.DOTALL | re.IGNORECASE)
@@ -567,10 +563,6 @@ def repair_candidate_submission_text(text: str, *, owner: str = CANDIDATE_OWNER,
     return check_candidate_submission(text, owner=owner, answer_kind=answer_kind).normalized_text
 
 
-def validate_candidate_submission_shape(text: str, *, answer_kind: str = "") -> list[str]:
-    return check_candidate_submission(text, answer_kind=answer_kind).errors
-
-
 def check_formal_review(text: str, *, reviewer: str, target: str) -> ArtifactCheck:
     payload = _load_yaml_mapping(text) or {}
     warnings: list[str] = []
@@ -658,10 +650,6 @@ def check_transport_review(text: str, *, reviewer: str, target: str) -> Artifact
     return ArtifactCheck(canonical, normalized_text, errors, [])
 
 
-def repair_transport_review_text(text: str, *, reviewer: str, target: str) -> str:
-    return check_transport_review(text, reviewer=reviewer, target=target).normalized_text
-
-
 def validate_transport_review_shape(text: str, *, reviewer: str, target: str) -> list[str]:
     return check_transport_review(text, reviewer=reviewer, target=target).errors
 
@@ -733,10 +721,6 @@ def repair_rebuttal_text(text: str, *, owner: str = CANDIDATE_OWNER) -> str:
     return check_rebuttal(text, owner=owner).normalized_text
 
 
-def validate_rebuttal_shape(text: str, *, owner: str = CANDIDATE_OWNER) -> list[str]:
-    return check_rebuttal(text, owner=owner).errors
-
-
 def check_protocol(text: str) -> ArtifactCheck:
     payload = _load_yaml_mapping(text) or {}
     canonical = {
@@ -790,14 +774,6 @@ def check_protocol(text: str) -> ArtifactCheck:
     return ArtifactCheck(canonical, normalized_text, errors, [])
 
 
-def repair_protocol_text(text: str) -> str:
-    return check_protocol(text).normalized_text
-
-
-def validate_protocol_shape(text: str) -> list[str]:
-    return check_protocol(text).errors
-
-
 def check_terminal_failure(text: str) -> ArtifactCheck:
     payload = _load_yaml_mapping(text) or {}
     canonical = {
@@ -825,10 +801,6 @@ def check_terminal_failure(text: str) -> ArtifactCheck:
             errors.append(f"failure artifact is missing `{key}`")
     normalized_text = yaml_dump(canonical)
     return ArtifactCheck(canonical, normalized_text, errors, [])
-
-
-def validate_terminal_failure_shape(text: str) -> list[str]:
-    return check_terminal_failure(text).errors
 
 
 def parse_review_verdict(text: str) -> str:

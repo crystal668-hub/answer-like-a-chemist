@@ -228,10 +228,8 @@ class ChemQARunner:
         last_status: dict[str, Any] = {}
         last_signature = ""
         unchanged_polls = 0
-        last_recovery_attempt_at = 0.0
         recovery_attempts = 0
         while time.time() < deadline:
-            now = time.time()
             last_status = self._read_run_status(run_id)
             if self._is_chemqa_terminal_status(last_status):
                 return last_status
@@ -241,7 +239,6 @@ class ChemQARunner:
             else:
                 unchanged_polls = 0
                 last_signature = signature
-                last_recovery_attempt_at = 0.0
             if unchanged_polls >= max(1, int(policy.max_unchanged_status_polls)):
                 if recovery_attempts >= max(0, int(policy.max_recovery_attempts)):
                     error_message = (
@@ -252,7 +249,6 @@ class ChemQARunner:
                         raise self._benchmark_error_factory(error_message)
                     raise ConvergenceLimitExceeded(error_message)
                 recovery_attempts += 1
-                last_recovery_attempt_at = now
                 self._recover_stalled_run(run_id, last_status)
                 unchanged_polls = 0
             time.sleep(30)

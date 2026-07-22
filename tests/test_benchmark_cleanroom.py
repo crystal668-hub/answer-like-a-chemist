@@ -83,19 +83,17 @@ class BenchmarkCleanroomTests(unittest.TestCase):
         lease_payloads = [{"pid": 43210, "pgid": 43200, "role": "driver", "slot": "debate-1", "session_id": "demo-session"}]
         with mock.patch.object(cleanup_benchmark_run, "iter_lease_payloads", return_value=lease_payloads):
             with mock.patch.object(cleanup_benchmark_run, "process_targets", return_value=([], [{"pid": 43210, "pgid": 43200, "source": "lease", "cmdline": ""}], [])):
-                with mock.patch.object(cleanup_benchmark_run, "candidate_session_stores", return_value=[]):
-                    with mock.patch.object(cleanup_benchmark_run, "session_paths_from_manifest", return_value=[]):
-                        with mock.patch.object(cleanup_benchmark_run, "terminate_process_groups", return_value=[]):
-                            with mock.patch.object(cleanup_benchmark_run, "terminate_pids", return_value=[]):
-                                with mock.patch.object(cleanup_benchmark_run, "wait_for_exit", return_value=[43210]):
-                                    with mock.patch.object(cleanup_benchmark_run, "pid_exists", side_effect=lambda pid: pid == 43210):
-                                        with mock.patch.object(cleanup_benchmark_run, "process_snapshot", return_value=([], ["ps unavailable for postcheck"])):
-                                            report = cleanup_benchmark_run.cleanup(
-                                                context,
-                                                grace_seconds=0.0,
-                                                kill_after_seconds=0.0,
-                                                dry_run=False,
-                                            )
+                with mock.patch.object(cleanup_benchmark_run, "terminate_process_groups", return_value=[]):
+                    with mock.patch.object(cleanup_benchmark_run, "terminate_pids", return_value=[]):
+                        with mock.patch.object(cleanup_benchmark_run, "wait_for_exit", return_value=[43210]):
+                            with mock.patch.object(cleanup_benchmark_run, "pid_exists", side_effect=lambda pid: pid == 43210):
+                                with mock.patch.object(cleanup_benchmark_run, "process_snapshot", return_value=([], ["ps unavailable for postcheck"])):
+                                    report = cleanup_benchmark_run.cleanup(
+                                        context,
+                                        grace_seconds=0.0,
+                                        kill_after_seconds=0.0,
+                                        dry_run=False,
+                                    )
         self.assertFalse(report["success"])
         self.assertEqual([{"pid": 43210, "cmdline": ""}], report["postcheck"]["remaining_processes"])
         self.assertIn("ps unavailable for postcheck", report["warnings"])
@@ -202,51 +200,6 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             runtime_lease.atomic_write_json(path, {"status": "running"})
             self.assertEqual({"status": "running"}, runtime_lease.read_json(path))
 
-    def test_scrub_session_store_removes_only_matching_entries(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store_path = Path(tmpdir) / "sessions.json"
-            payload = {
-                "agent:debateA-1:main": {
-                    "sessionId": "demo-session",
-                    "sessionFile": "/tmp/demo-session.jsonl",
-                },
-                "agent:debateA-2:main": {
-                    "sessionId": "other-session",
-                    "sessionFile": "/tmp/other-session.jsonl",
-                },
-            }
-            store_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            result = cleanup_benchmark_run.scrub_session_store(
-                store_path,
-                run_id="demo-run",
-                session_ids={"demo-session"},
-                dry_run=False,
-            )
-            self.assertTrue(result["changed"])
-            updated = json.loads(store_path.read_text(encoding="utf-8"))
-            self.assertNotIn("agent:debateA-1:main", updated)
-            self.assertIn("agent:debateA-2:main", updated)
-
-    def test_session_paths_from_manifest_collects_jsonl_checkpoint_and_lock(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            launch_home = Path(tmpdir) / "launch-home"
-            session_dir = launch_home / ".openclaw" / "agents" / "debate-1" / "sessions"
-            session_dir.mkdir(parents=True, exist_ok=True)
-            (session_dir / "demo-session.jsonl").write_text("{}", encoding="utf-8")
-            (session_dir / "demo-session.jsonl.lock").write_text("", encoding="utf-8")
-            (session_dir / "demo-session.checkpoint.001.jsonl").write_text("{}", encoding="utf-8")
-            manifest = {
-                "run_id": "demo-run",
-                "launch_home": str(launch_home),
-                "session_assignments": {"debate-1": "demo-session"},
-            }
-            paths = cleanup_benchmark_run.session_paths_from_manifest(manifest)
-            names = sorted(path.name for path in paths)
-            self.assertEqual(
-                ["demo-session.checkpoint.001.jsonl", "demo-session.jsonl", "demo-session.jsonl.lock"],
-                names,
-            )
-
     def test_cleanup_preserves_benchmark_runtime_artifacts_and_session_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_root = Path(tmpdir) / "out"
@@ -272,17 +225,15 @@ class BenchmarkCleanroomTests(unittest.TestCase):
             context = cleanup_benchmark_run.CleanupContext(manifest=manifest, manifest_path=None)
             with mock.patch.object(cleanup_benchmark_run, "iter_lease_payloads", return_value=[]):
                 with mock.patch.object(cleanup_benchmark_run, "process_targets", return_value=([], [], [])):
-                    with mock.patch.object(cleanup_benchmark_run, "candidate_session_stores", return_value=[store_path]):
-                        with mock.patch.object(cleanup_benchmark_run, "session_paths_from_manifest", return_value=[]):
-                            with mock.patch.object(cleanup_benchmark_run, "terminate_process_groups", return_value=[]):
-                                with mock.patch.object(cleanup_benchmark_run, "terminate_pids", return_value=[]):
-                                    with mock.patch.object(cleanup_benchmark_run, "wait_for_exit", return_value=[]):
-                                        report = cleanup_benchmark_run.cleanup(
-                                            context,
-                                            grace_seconds=0.0,
-                                            kill_after_seconds=0.0,
-                                            dry_run=False,
-                                        )
+                    with mock.patch.object(cleanup_benchmark_run, "terminate_process_groups", return_value=[]):
+                        with mock.patch.object(cleanup_benchmark_run, "terminate_pids", return_value=[]):
+                            with mock.patch.object(cleanup_benchmark_run, "wait_for_exit", return_value=[]):
+                                report = cleanup_benchmark_run.cleanup(
+                                    context,
+                                    grace_seconds=0.0,
+                                    kill_after_seconds=0.0,
+                                    dry_run=False,
+                                )
 
             self.assertTrue(report["success"])
             self.assertEqual([], report["session_store_scrub"])

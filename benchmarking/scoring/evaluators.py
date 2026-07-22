@@ -361,36 +361,6 @@ CANDIDATE ANSWER:
     )
 
 
-def heuristic_semantic_match(expected: str, predicted: str) -> bool | None:
-    expected_short = extract_candidate_short_answer(expected)
-    predicted_short = extract_candidate_short_answer(predicted)
-    if not expected_short or not predicted_short:
-        return None
-    if is_numeric_scalar_answer(expected_short) and is_numeric_scalar_answer(predicted_short):
-        expected_num = parse_numeric_scalar(expected_short)
-        predicted_num = parse_numeric_scalar(predicted_short)
-        if expected_num is None or predicted_num is None:
-            return None
-        return math.isclose(expected_num, predicted_num, rel_tol=1e-4, abs_tol=1e-8)
-    expected_norm = normalize_loose(expected_short)
-    predicted_norm = normalize_loose(predicted_short)
-    if expected_norm == predicted_norm:
-        return True
-
-    def safe_contains(needle: str, haystack: str) -> bool:
-        if not needle or len(needle) < 3:
-            return False
-        if is_numeric_scalar_answer(needle):
-            return False
-        return needle in haystack
-
-    if safe_contains(expected_norm, predicted_norm):
-        return True
-    if safe_contains(predicted_norm, expected_norm):
-        return True
-    return None
-
-
 def evaluate_frontierscience_olympiad(
     record: BenchmarkRecord,
     *,
