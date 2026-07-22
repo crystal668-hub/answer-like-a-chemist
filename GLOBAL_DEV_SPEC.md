@@ -59,7 +59,7 @@ runbooks.
 | `benchmarking/scoring/` | Evaluator registry and implementations for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspaces and access policy, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
-| `benchmarking/workflow/` | CLI, prompts, wave/group orchestration, single-LLM runner, and ChemQA runner. |
+| `benchmarking/workflow/` | CLI, prompts, wave/group orchestration, single-LLM runner, and the ChemQA runner with dedicated artifact and workspace support modules. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, and dashboard-only annotations. |
 
