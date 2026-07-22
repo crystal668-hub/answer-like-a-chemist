@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from benchmarking.core.answer_processing import AgentResponseParseError, parse_agent_json_response
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.agent_workspace import (
@@ -28,7 +29,6 @@ from benchmarking.runtime.workspace_policy import (
     ProtectedRoot,
     ensure_workspace_audit,
 )
-from benchmarking.scoring.evaluators import safe_json_extract
 
 
 DEFAULT_JUDGE_THINKING = "high"
@@ -162,10 +162,10 @@ class JudgeClient:
                 payload = subprocess_utils.parse_json_stdout(result, command)
                 result_payload = subprocess_utils.unwrap_agent_payload(payload)
                 reply = subprocess_utils.summarize_payloads(list((result_payload.get("payloads") or [])))
-                candidate = safe_json_extract(reply)
-                if not isinstance(candidate, dict):
-                    raise JudgeError(f"Judge must return a JSON object, got: {reply}")
-                parsed = candidate
+                try:
+                    parsed = parse_agent_json_response(reply)
+                except AgentResponseParseError as exc:
+                    raise JudgeError(f"Unable to parse judge response: {exc}") from exc
                 policy = self.workspace_manager.policy_for_lease(
                     lease,
                     role="judge",

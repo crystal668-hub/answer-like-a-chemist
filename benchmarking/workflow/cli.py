@@ -24,6 +24,7 @@ from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.analysis.launcher import launch_automated_evaluation
+from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.datasets import BenchmarkRecord as _BenchmarkRecord, classify_subset
 from benchmarking.core.reporting import (
@@ -42,11 +43,8 @@ from benchmarking.runtime.agent_workspace import (
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
 from benchmarking.runtime.web_search_preflight import run_web_search_preflight
-from benchmarking.scoring.evaluation import evaluate_record, register_default_evaluators
-from benchmarking.scoring.evaluators import (
-    normalize_answer_tracks,
-    build_execution_error_evaluation,
-)
+from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
+from benchmarking.scoring.results import build_execution_error_evaluation
 from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
 from benchmarking.workflow import dataset_selection, experiments, run_state, runner_adapters, runtime_config
 from benchmarking.workflow.errors import BenchmarkError as _BenchmarkError

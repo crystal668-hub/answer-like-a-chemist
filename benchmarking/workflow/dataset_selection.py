@@ -13,8 +13,8 @@ from benchmarking.core.datasets import (
     load_records as load_benchmark_records,
     source_pair_key,
 )
+from benchmarking.core.answer_processing import normalize_space
 from benchmarking.runtime import paths as runtime_paths
-from benchmarking.scoring.evaluators import normalize_space
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.run_state import slugify
 

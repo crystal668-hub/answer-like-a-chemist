@@ -31,7 +31,8 @@ class WorkspaceLayoutTests(unittest.TestCase):
         }
 
         self.assertIn("core/contracts.py", clustered_files)
-        self.assertIn("scoring/evaluators.py", clustered_files)
+        self.assertIn("scoring/registry.py", clustered_files)
+        self.assertTrue((benchmarking_root / "scoring" / "evaluators").is_dir())
         self.assertIn("runtime/config.py", clustered_files)
         self.assertIn("runtime/paths.py", clustered_files)
         self.assertIn("skills/health.py", clustered_files)

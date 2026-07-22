@@ -19,7 +19,7 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceTemplate,
 )
 from benchmarking.runtime.workspace_policy import ProtectedRoot
-from benchmarking.scoring.evaluation import evaluate_record, register_default_evaluators
+from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
 
 
 def _timestamp() -> str:

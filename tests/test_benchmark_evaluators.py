@@ -1,19 +1,24 @@
 import unittest
 
 from benchmarking.core.datasets import BenchmarkRecord
-from benchmarking.scoring.evaluators import (
-    EvaluationError,
-    evaluate_chembench_open_ended,
+from benchmarking.core.answer_processing import (
+    AgentResponseParseError,
+    extract_candidate_short_answer,
+    parse_agent_json_response,
+)
+from benchmarking.scoring.errors import EvaluationError
+from benchmarking.scoring.evaluators.chembench import evaluate_chembench_open_ended
+from benchmarking.scoring.evaluators.frontierscience import (
     evaluate_frontierscience_olympiad,
     evaluate_frontierscience_research,
-    evaluate_generic_semantic,
-    evaluate_hle,
-    evaluate_verifier_grounded,
-    extract_candidate_short_answer,
     parse_frontierscience_research_rubric,
-    parse_superchem_option_answer,
+)
+from benchmarking.scoring.evaluators.generic import evaluate_generic_semantic
+from benchmarking.scoring.evaluators.hle import evaluate_hle
+from benchmarking.scoring.evaluators.superchem import parse_superchem_option_answer
+from benchmarking.scoring.evaluators.verifier_grounded import (
+    evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
-    safe_json_extract,
 )
 
 
@@ -426,7 +431,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
         self.assertEqual("A|D", parse_superchem_option_answer("Option A and D are correct.", valid_options=("A", "B", "C", "D")))
 
-    def test_safe_json_extract_repairs_unescaped_latex_backslashes(self) -> None:
+    def test_parse_agent_json_response_repairs_unescaped_latex_backslashes(self) -> None:
         reply = (
             '{"correct":false,"score":0.0,'
             '"rationale":"The candidate states \\(K_M = K_s + [S]^2/J_s\\), which differs.",'
@@ -434,10 +439,16 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
             '"candidate_answer":"K_M = K_s + [S]^2/J_s"}'
         )
 
-        parsed = safe_json_extract(reply)
+        parsed = parse_agent_json_response(reply)
 
         self.assertEqual(False, parsed["correct"])
         self.assertIn(r"\(K_M", parsed["rationale"])
+
+    def test_parse_agent_json_response_rejects_empty_and_non_object_payloads(self) -> None:
+        with self.assertRaisesRegex(AgentResponseParseError, "empty agent response"):
+            parse_agent_json_response("  ")
+        with self.assertRaisesRegex(AgentResponseParseError, "must be an object"):
+            parse_agent_json_response('["not", "an", "object"]')
 
 
 if __name__ == "__main__":

@@ -17,7 +17,11 @@ from typing import Iterator
 from unittest import mock
 
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.core.convergence import ConvergencePolicy
+from benchmarking.core.answer_processing import (
+    extract_candidate_short_answer,
+    normalize_answer_tracks,
+)
+from benchmarking.core.convergence import ConvergencePolicy, extract_final_answer_line
 from benchmarking.core.datasets import BenchmarkRecord, GradingSpec, classify_subset, load_records
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.core.reporting import (
@@ -34,9 +38,9 @@ from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.cleanroom import CleanroomRuntime
 from benchmarking.runtime.workspace_policy import ContaminationAudit
-from benchmarking.scoring import evaluation as scoring_evaluation
-from benchmarking.scoring import evaluators
-from benchmarking.scoring.evaluators import EvaluationResult
+from benchmarking.scoring import registry as scoring_evaluation
+from benchmarking.scoring.evaluators import chembench, frontierscience, superchem
+from benchmarking.scoring.results import EvaluationResult, build_execution_error_evaluation
 from benchmarking.skills.tree import load_chemistry_skill_inventory
 from benchmarking.workflow import cli as benchmark_test
 from benchmarking.workflow import dataset_selection, experiments, orchestration, run_state, runner_adapters, runtime_config
@@ -74,8 +78,8 @@ def build_error_result_for_test(**kwargs: object) -> GroupRecordResult:
     return shared_build_error_group_record_result(
         **kwargs,
         classify_subset_fn=classify_subset,
-        normalize_answer_tracks_fn=evaluators.normalize_answer_tracks,
-        build_execution_error_evaluation_fn=evaluators.build_execution_error_evaluation,
+        normalize_answer_tracks_fn=normalize_answer_tracks,
+        build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
     )
 
@@ -86,8 +90,8 @@ def materialize_failure_results_for_test(**kwargs: object) -> list[GroupRecordRe
         save_json_fn=run_state.save_json,
         slugify_fn=run_state.slugify,
         classify_subset_fn=classify_subset,
-        normalize_answer_tracks_fn=evaluators.normalize_answer_tracks,
-        build_execution_error_evaluation_fn=evaluators.build_execution_error_evaluation,
+        normalize_answer_tracks_fn=normalize_answer_tracks,
+        build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
     )
 
@@ -490,8 +494,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_extract_final_answer_line_prefers_explicit_marker(self) -> None:
         text = "reasoning\nFINAL ANSWER: 42\n"
-        self.assertEqual("42", evaluators.extract_final_answer_line(text))
-        self.assertEqual("42", evaluators.extract_candidate_short_answer(text))
+        self.assertEqual("42", extract_final_answer_line(text))
+        self.assertEqual("42", extract_candidate_short_answer(text))
 
     def test_hle_evaluator_registered_for_benchmark_dispatch(self) -> None:
         record = BenchmarkRecord(
@@ -570,7 +574,7 @@ Points: 1.0, Item: First criterion
 more detail
 Points: 0.5, Item: Second criterion
 """.strip()
-        items = evaluators.parse_frontierscience_research_rubric(rubric)
+        items = frontierscience.parse_frontierscience_research_rubric(rubric)
         self.assertEqual(2, len(items))
         self.assertEqual(1.0, items[0]["points"])
         self.assertIn("First criterion", items[0]["description"])
@@ -1147,7 +1151,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="4",
             payload={"target": "4", "preferred_score": "mae"},
         )
-        result = evaluators.evaluate_chembench_open_ended(
+        result = chembench.evaluate_chembench_open_ended(
             record,
             short_answer_text="wrong-short-answer",
             full_response_text="Reasoning\nFINAL ANSWER: 4",
@@ -1196,7 +1200,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="42",
             payload={"track": "olympiad"},
         )
-        result = evaluators.evaluate_frontierscience_olympiad(
+        result = frontierscience.evaluate_frontierscience_olympiad(
             record,
             short_answer_text="42",
             full_response_text="FINAL ANSWER: 42",
@@ -1254,7 +1258,7 @@ Points: 0.5, Item: Second criterion
             ),
             raw_payload={},
         )
-        self.assertEqual(("A", "C"), evaluators.superchem_valid_options(record))
+        self.assertEqual(("A", "C"), superchem.superchem_valid_options(record))
 
     def test_classify_subset(self) -> None:
         chembench_record = BenchmarkRecord(
@@ -1487,11 +1491,11 @@ Points: 0.5, Item: Second criterion
 
     def test_parse_superchem_option_answer_handles_common_formats(self) -> None:
         valid_options = ("A", "B", "C", "D")
-        self.assertEqual("B", evaluators.parse_superchem_option_answer("FINAL ANSWER: B", valid_options=valid_options))
-        self.assertEqual("A|D", evaluators.parse_superchem_option_answer("Option A and D are correct.", valid_options=valid_options))
+        self.assertEqual("B", superchem.parse_superchem_option_answer("FINAL ANSWER: B", valid_options=valid_options))
+        self.assertEqual("A|D", superchem.parse_superchem_option_answer("Option A and D are correct.", valid_options=valid_options))
         self.assertEqual(
             "B|C",
-            evaluators.parse_superchem_option_answer('{"answer": ["C", "B"]}', valid_options=valid_options),
+            superchem.parse_superchem_option_answer('{"answer": ["C", "B"]}', valid_options=valid_options),
         )
 
     def test_ensure_runtime_bundle_copies_superchem_images(self) -> None:
@@ -1855,7 +1859,7 @@ Points: 0.5, Item: Second criterion
                 "summary": "partial",
             }
         )
-        result = evaluators.evaluate_superchem_multiple_choice_rpf(
+        result = superchem.evaluate_superchem_multiple_choice_rpf(
             record,
             short_answer_text="A",
             full_response_text="Reasoning\nFINAL ANSWER: B",

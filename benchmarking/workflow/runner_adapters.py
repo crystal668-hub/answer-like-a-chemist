@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from benchmarking.core.answer_processing import normalize_answer_tracks, normalize_space
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.status import (
     is_chemqa_success_status,
@@ -26,7 +27,6 @@ from benchmarking.runtime.cleanroom import (
 from benchmarking.runtime.config_pool import actual_slot_ids
 from benchmarking.runtime.session_isolation import inspect_postflight_session
 from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
-from benchmarking.scoring.evaluators import normalize_answer_tracks, normalize_space
 from benchmarking.workflow.chemqa_response import (
     build_chemqa_full_response,
     build_chemqa_response_from_submission,

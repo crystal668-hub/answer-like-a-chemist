@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from benchmarking.scoring.evaluators import normalize_answer_tracks, normalize_space
+from benchmarking.core.answer_processing import normalize_answer_tracks, normalize_space
 
 
 def render_chemqa_submission_rationale(final_submission: dict[str, Any], *, final_answer_text: str = "") -> str:

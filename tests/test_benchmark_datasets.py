@@ -7,7 +7,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from benchmarking.core.datasets import BenchmarkRecord, GradingSpec, load_records
-from benchmarking.scoring.evaluation import EVALUATORS, EvaluationRegistryError, evaluate_record, register_evaluator
+from benchmarking.scoring.errors import EvaluationRegistryError
+from benchmarking.scoring.registry import EVALUATORS, evaluate_record, register_evaluator
 
 
 class BenchmarkDatasetsTests(unittest.TestCase):

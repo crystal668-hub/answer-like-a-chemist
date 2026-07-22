@@ -7,8 +7,9 @@ from .core.contracts import (
 )
 from .core.convergence import ConvergencePolicy
 from .core.datasets import BenchmarkRecord, GradingSpec
-from .scoring.evaluation import EVALUATORS, EvaluationRegistryError, evaluate_record, register_default_evaluators, register_evaluator
-from .scoring.evaluators import EvaluationResult
+from .scoring.errors import EvaluationRegistryError
+from .scoring.registry import EVALUATORS, evaluate_record, register_default_evaluators, register_evaluator
+from .scoring.results import EvaluationResult
 from .core.experiments import ExperimentSpec
 
 __all__ = [
