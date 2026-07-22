@@ -6,10 +6,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-import runtime_paths
-
 from benchmarking.dashboard.annotations import AnnotationStore
 from benchmarking.dashboard.progress import load_progress
+from benchmarking.runtime import paths as runtime_paths
 
 
 class DashboardError(RuntimeError):

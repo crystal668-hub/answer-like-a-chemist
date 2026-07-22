@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-import runtime_paths
+from benchmarking.runtime import paths as runtime_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +17,10 @@ class WorkspaceLayoutTests(unittest.TestCase):
         self.assertFalse((ROOT / "benchmarks").exists())
         self.assertFalse((ROOT / "temp-benchmarks").exists())
 
-    def test_review_loop_benchmark_entrypoint_is_removed(self) -> None:
+    def test_obsolete_root_entrypoints_are_removed(self) -> None:
+        self.assertFalse((ROOT / "benchmark_test.py").exists())
         self.assertFalse((ROOT / "benchmark_rl.py").exists())
+        self.assertFalse((ROOT / "runtime_paths.py").exists())
 
     def test_benchmarking_code_is_clustered_under_layered_packages(self) -> None:
         benchmarking_root = ROOT / "benchmarking"
@@ -31,6 +33,7 @@ class WorkspaceLayoutTests(unittest.TestCase):
         self.assertIn("core/contracts.py", clustered_files)
         self.assertIn("scoring/evaluators.py", clustered_files)
         self.assertIn("runtime/config.py", clustered_files)
+        self.assertIn("runtime/paths.py", clustered_files)
         self.assertIn("skills/health.py", clustered_files)
         self.assertIn("analysis/automated.py", clustered_files)
         self.assertIn("workflow/cli.py", clustered_files)

@@ -27,6 +27,7 @@ if str(_SOURCE_ROOT) not in sys.path:
 
 from benchmarking.runtime import bundles as _runtime_bundles
 from benchmarking.runtime import cleanroom as _cleanroom
+from benchmarking.runtime import paths as runtime_paths
 from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.analysis.launcher import analysis_paths, launch_automated_evaluation
 from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunStatus, RunnerResult
@@ -129,8 +130,6 @@ from benchmarking.workflow.runners import SingleLLMRunner as _BenchmarkingSingle
 from benchmarking.workflow.runners import build_runner
 
 _runner_factory = build_runner
-
-import runtime_paths
 
 
 DEFAULT_WORKSPACE = runtime_paths.project_root

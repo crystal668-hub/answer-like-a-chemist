@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-import runtime_paths
+from benchmarking.runtime import paths as runtime_paths
 
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]

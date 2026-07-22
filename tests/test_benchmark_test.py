@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import importlib.util
 import io
 import json
 import os
@@ -15,16 +14,9 @@ from pathlib import Path
 from typing import Iterator
 from unittest import mock
 
-
-MODULE_PATH = Path(__file__).resolve().parents[1] / "benchmark_test.py"
-SPEC = importlib.util.spec_from_file_location("benchmark_test", MODULE_PATH)
-benchmark_test = importlib.util.module_from_spec(SPEC)
-assert SPEC and SPEC.loader
-sys.modules[SPEC.name] = benchmark_test
-SPEC.loader.exec_module(benchmark_test)
-
 from benchmarking.core.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
 from benchmarking.core.reporting import build_error_group_record_result as shared_build_error_group_record_result
+from benchmarking.workflow import cli as benchmark_test
 
 
 @contextmanager
@@ -94,48 +86,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
-    def test_benchmark_test_loads_from_absolute_path_without_workspace_package_import(self) -> None:
-        code = f"""
-import importlib.util
-import json
-import os
-from pathlib import Path
-import sys
-
-module_path = Path({str(MODULE_PATH)!r})
-blocked = {{module_path.parent.resolve(), module_path.parent.parent.resolve()}}
-sys.path = [
-    entry
-    for entry in sys.path
-    if Path(entry or os.getcwd()).resolve() not in blocked
-]
-spec = importlib.util.spec_from_file_location("benchmark_test_isolated", module_path)
-module = importlib.util.module_from_spec(spec)
-assert spec and spec.loader
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-print(json.dumps({{
-    "answer_payload_module": module.AnswerPayload.__module__,
-    "runtime_paths_module": module.runtime_paths.__name__,
-}}))
-"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            env = dict(os.environ)
-            env.pop("PYTHONPATH", None)
-            completed = subprocess.run(
-                [sys.executable, "-c", code],
-                cwd=tmpdir,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        self.assertEqual("", completed.stderr)
-        self.assertEqual(0, completed.returncode)
-        payload = json.loads(completed.stdout)
-        self.assertEqual("benchmarking.core.contracts", payload["answer_payload_module"])
-        self.assertEqual("runtime_paths", payload["runtime_paths_module"])
-
     def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
         health_reports = {
             "rdkit": {"available": True},
@@ -188,7 +138,7 @@ print(json.dumps({{
             sys,
             "argv",
             [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--single-agent-id-override",
                 "custom-single-agent",
             ],
@@ -196,11 +146,11 @@ print(json.dumps({{
             args = benchmark_test.parse_args()
         self.assertEqual("custom-single-agent", args.single_agent_id_override)
 
-        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--keep-temp-configs"]):
+        with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--keep-temp-configs"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
 
-        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--single-agent", "custom"]):
+        with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--single-agent", "custom"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
 
@@ -209,7 +159,7 @@ print(json.dumps({{
             sys,
             "argv",
             [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--single-timeout",
                 "900",
                 "--max-unchanged-status-polls",
@@ -224,7 +174,7 @@ print(json.dumps({{
         self.assertEqual(1, args.max_unchanged_status_polls)
         self.assertEqual(1, args.max_recovery_attempts)
 
-        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--finalization-grace-seconds", "60"]):
+        with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--finalization-grace-seconds", "60"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
 
@@ -233,7 +183,7 @@ print(json.dumps({{
             sys,
             "argv",
             [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--single-timeout-retries",
                 "2",
                 "--single-timeout-retry-backoff-seconds",
@@ -246,7 +196,7 @@ print(json.dumps({{
         self.assertEqual("1,3", args.single_timeout_retry_backoff_seconds)
 
     def test_parse_args_accepts_thinking_overrides_and_rejects_invalid_values(self) -> None:
-        with mock.patch.object(sys, "argv", ["benchmark_test.py"]):
+        with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli"]):
             args = benchmark_test.parse_args()
         self.assertEqual("high", args.single_agent_thinking)
         self.assertEqual("high", args.judge_agent_thinking)
@@ -255,7 +205,7 @@ print(json.dumps({{
             sys,
             "argv",
             [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--single-agent-thinking",
                 "medium",
                 "--judge-agent-thinking",
@@ -266,7 +216,7 @@ print(json.dumps({{
         self.assertEqual("medium", args.single_agent_thinking)
         self.assertEqual("minimal", args.judge_agent_thinking)
 
-        with mock.patch.object(sys, "argv", ["benchmark_test.py", "--single-agent-thinking", "extreme"]):
+        with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--single-agent-thinking", "extreme"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()
 
@@ -275,7 +225,7 @@ print(json.dumps({{
             sys,
             "argv",
             [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--subsets",
                 "frontierscience_Research,superchem_multimodal",
             ],
@@ -330,7 +280,7 @@ print(json.dumps({{
                 return []
 
             argv = [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--benchmark-root",
                 str(root),
                 "--openclaw-config",
@@ -419,7 +369,7 @@ print(json.dumps({{
             )
 
             argv = [
-                "benchmark_test.py",
+                "benchmarking.workflow.cli",
                 "--benchmark-root",
                 str(root),
                 "--subsets",
@@ -2431,7 +2381,6 @@ Points: 0.5, Item: Second criterion
         summary = benchmark_test.aggregate_results(sample)
         self.assertEqual("benchmarking.core.reporting", benchmark_test.GroupRecordResult.__module__)
         self.assertEqual("benchmarking.core.reporting", benchmark_test.aggregate_results.__module__)
-        self.assertIs(benchmark_test.GroupRecordResult, benchmark_test._benchmark_cli.GroupRecordResult)
         self.assertEqual(["group_order", "groups", "group_subset"], list(summary.keys()))
         self.assertEqual(["g1"], summary["group_order"])
         self.assertIn("g1", summary["groups"])

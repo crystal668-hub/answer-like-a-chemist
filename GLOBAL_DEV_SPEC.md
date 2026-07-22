@@ -19,7 +19,7 @@ runbooks.
   tests run from this directory with `uv run ...` or its `.venv`.
 - Persistent source changes belong under this root. The primary source surfaces
   are `benchmarking/`, `skills/`, `scripts/`, `docs/`, `tests/`,
-  `benchmark_test.py`, `runtime_paths.py`, `pyproject.toml`, and `uv.lock`.
+  `pyproject.toml`, and `uv.lock`.
 
 ### OpenClaw runtime home
 
@@ -35,8 +35,8 @@ runbooks.
 
 ### Data and generated project state
 
-- `runtime_paths.py` owns default path resolution. `OPENCLAW_PROJECT_ROOT`,
-  `OPENCLAW_DATA_ROOT`, `OPENCLAW_SKILLS_ROOT`, and
+- `benchmarking.runtime.paths` owns default path resolution.
+  `OPENCLAW_PROJECT_ROOT`, `OPENCLAW_DATA_ROOT`, `OPENCLAW_SKILLS_ROOT`, and
   `OPENCLAW_BENCHMARKS_ROOT` provide supported overrides.
 - Formal benchmark datasets default to
   `/Users/xutao/.openclaw/data/formal-benchmarks`; temporary datasets default to
@@ -57,15 +57,15 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry and implementations for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Run-scoped OpenClaw configuration, attempt workspaces and access policy, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspaces and access policy, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI, prompts, wave/group orchestration, single-LLM runner, and ChemQA runner. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, and dashboard-only annotations. |
 
-`benchmark_test.py` is a compatibility facade over
-`benchmarking.workflow.cli`; it is not an implementation boundary.
-`runtime_paths.py` is the shared path authority used by the package and scripts.
+`benchmarking.runtime.paths` is the shared path authority used by the package
+and scripts. The benchmark CLI is owned directly by `benchmarking.workflow.cli`;
+there is no root-level compatibility facade.
 
 ### Skill bundles
 

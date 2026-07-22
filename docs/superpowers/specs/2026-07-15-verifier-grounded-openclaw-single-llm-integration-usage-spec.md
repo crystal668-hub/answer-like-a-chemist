@@ -133,7 +133,7 @@ vgb-score --track rdkit --answers answers.jsonl
 - 为未发布/旧 package 版本保留的 schema fallback；
 - 将 sample answer、gold 或 verifier spec 注入 agent prompt/workspace 的桥接逻辑；
 - 为了调用 package 而在 agent 主 `.venv` 中安装 VGB；
-- 把现有 legacy `benchmark_test.py` facade 作为新接入的推荐入口。
+- 恢复已移除的根级 benchmark CLI facade，或为新接入新增替代 shim。
 
 新文档和自动化必须调用 canonical module：
 

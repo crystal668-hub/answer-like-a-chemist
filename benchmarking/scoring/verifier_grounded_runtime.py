@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import runtime_paths
+from benchmarking.runtime import paths as runtime_paths
 
 
 DEFAULT_RELEASE_CONFIG = (

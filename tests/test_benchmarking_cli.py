@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.core.reporting import GroupRecordResult as ReportingGroupRecordResult
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -17,20 +14,6 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceTemplate,
 )
 from benchmarking.workflow import cli as benchmarking_cli
-
-
-def test_benchmark_test_is_thin_compatibility_facade() -> None:
-    module_path = Path(__file__).resolve().parents[1] / "benchmark_test.py"
-    spec = importlib.util.spec_from_file_location("benchmark_test_facade_probe", module_path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-
-    assert module.main is benchmarking_cli.main
-    assert module.GroupRecordResult is ReportingGroupRecordResult
-    assert module.GroupRecordResult.__module__ == "benchmarking.core.reporting"
-    assert module.BenchmarkRecord is benchmarking_cli.BenchmarkRecord
 
 
 def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
@@ -255,7 +238,7 @@ def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:
     monkeypatch.setattr(
         benchmarking_cli.sys,
         "argv",
-        ["benchmark_test.py", "--no-timeout"],
+        ["benchmarking.workflow.cli", "--no-timeout"],
     )
 
     args = benchmarking_cli.parse_args()
@@ -267,7 +250,7 @@ def test_parse_args_accepts_no_analysis_flag(monkeypatch) -> None:
     monkeypatch.setattr(
         benchmarking_cli.sys,
         "argv",
-        ["benchmark_test.py", "--no-analysis"],
+        ["benchmarking.workflow.cli", "--no-analysis"],
     )
 
     args = benchmarking_cli.parse_args()

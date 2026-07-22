@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import runtime_paths
+from benchmarking.runtime import paths as runtime_paths
 from benchmarking.skills.health import (
     HealthRequirement,
     check_skill_health,

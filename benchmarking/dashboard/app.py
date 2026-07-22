@@ -5,7 +5,6 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
-import runtime_paths
 from benchmarking.dashboard.annotations import AnnotationStore
 from benchmarking.dashboard.service import (
     AssetAccessError,
@@ -13,6 +12,7 @@ from benchmarking.dashboard.service import (
     RecordNotFoundError,
     RunNotFoundError,
 )
+from benchmarking.runtime import paths as runtime_paths
 
 
 FASTAPI_EXTRA_MESSAGE = (

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import runtime_paths
+from benchmarking.runtime import paths as runtime_paths
 from benchmarking.scoring.verifier_grounded_runtime import (
     ReleaseConfig,
     VerifierGroundedRuntimeError,
