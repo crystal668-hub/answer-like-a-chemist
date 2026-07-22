@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.core.datasets import load_records
-from benchmarking.scoring.verifier_grounded_runtime import load_release_config
+from benchmarking.runtime.vgb_bridge import load_release_config
 from scripts.sync_verifier_grounded_datasets import (
     REFERENCE_PLACEHOLDER,
     RESOURCE_DATASET_ROOT,

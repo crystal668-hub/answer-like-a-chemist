@@ -10,7 +10,7 @@ from typing import Any
 from benchmarking.analysis.launcher import analysis_paths
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.core.reporting import GroupRecordResult
-from benchmarking.scoring.verifier_grounded_runtime import (
+from benchmarking.runtime.vgb_bridge import (
     VerifierGroundedRuntimeError,
     load_public_sample_answers,
 )

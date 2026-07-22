@@ -57,7 +57,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess execution utilities, judge execution, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -81,6 +81,9 @@ results and run metadata, and `benchmarking.workflow.runner_adapters` binds the
 generic runners to runtime bundles, cleanroom, sessions, and workspace policy.
 `benchmarking.runtime.subprocess_utils` owns shared subprocess and stdout helpers,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
+`benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
+isolated process bridge, and public package API calls. The scoring evaluator
+only maps benchmark records and verifier results.
 `benchmarking.runtime.cleanroom.CleanroomRuntime` is the cleanroom dependency
 binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
@@ -202,9 +205,10 @@ For each invocation, the CLI:
   `generic_semantic` fallback. LLM-judge calls use a fresh isolated judge
   session and attempt workspace; pure answer and agent-response parsing lives in
   `benchmarking.core.answer_processing`.
-- Verifier-grounded tasks use the pinned package through a hash-addressed,
-  non-agent virtual environment and `python -I`; agent-visible datasets contain
-  public prompts and answer schemas, not hidden verifier material.
+- Verifier-grounded tasks use `benchmarking.runtime.vgb_bridge` to call the
+  pinned package through a hash-addressed, non-agent virtual environment and
+  `python -I`; agent-visible datasets contain public prompts and answer schemas,
+  not hidden verifier material.
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.

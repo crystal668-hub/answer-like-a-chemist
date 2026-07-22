@@ -536,7 +536,7 @@ wrapper stdout 而被误报为 `transcript_unavailable`，原始结构化 execut
 | 模块 | 责任 |
 | --- | --- |
 | `scripts/sync_verifier_grounded_datasets.py` | 标准 `prompts()` provisioning 与 sanitized JSONL 同步 |
-| `benchmarking/scoring/verifier_grounded_runtime.py` | 隔离 runtime、release 校验以及 `prompts()`、`evaluate_one()`、`sample_answers()` 公共 API 调用 |
+| `benchmarking/runtime/vgb_bridge.py` | 隔离 runtime、release 校验以及 `prompts()`、`evaluate_one()`、`sample_answers()` 公共 API 调用 |
 | `benchmarking/scoring/evaluators.py` | package result 到统一 `EvaluationResult` 的直接映射 |
 | `benchmarking/workflow/cli.py` | canonical benchmark CLI、通用 record selection 与 report-only public gold 映射 |
 | `benchmarking/workflow/runners/single_llm.py` | OpenClaw 外部模型调用与 attempt 生命周期 |

@@ -4,11 +4,11 @@ from unittest.mock import patch
 
 import pytest
 
-from benchmarking.scoring import verifier_grounded_runtime as runtime
+from benchmarking.runtime import vgb_bridge as bridge
 
 
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
-    config = runtime.load_release_config()
+    config = bridge.load_release_config()
 
     assert config.version == "0.3.0"
     assert config.source_tag == "v0.3.0"
@@ -28,7 +28,7 @@ def test_runtime_environment_does_not_inherit_agent_python_paths(monkeypatch) ->
     monkeypatch.setenv("PYTHONPATH", "/agent/source")
     monkeypatch.setenv("VIRTUAL_ENV", "/agent/venv")
 
-    env = runtime._runtime_env()
+    env = bridge._runtime_env()
 
     assert env["PATH"] == "/usr/bin"
     assert env["PYTHONNOUSERSITE"] == "1"
@@ -37,9 +37,9 @@ def test_runtime_environment_does_not_inherit_agent_python_paths(monkeypatch) ->
 
 
 def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
-    with patch.object(runtime, "_invoke_api") as invoke:
-        with pytest.raises(runtime.VerifierGroundedRuntimeError, match="does not match"):
-            runtime.evaluate_answer(
+    with patch.object(bridge, "_invoke_api") as invoke:
+        with pytest.raises(bridge.VerifierGroundedRuntimeError, match="does not match"):
+            bridge.evaluate_answer(
                 track="rdkit",
                 task_id="rdkit_qed_max_001",
                 answer_text="FINAL ANSWER: CCO",
@@ -49,10 +49,10 @@ def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
 
 
 def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
-    config = runtime.load_release_config()
+    config = bridge.load_release_config()
     expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
-    with patch.object(runtime, "_invoke_api", return_value=expected) as invoke:
-        result = runtime.evaluate_answer(
+    with patch.object(bridge, "_invoke_api", return_value=expected) as invoke:
+        result = bridge.evaluate_answer(
             track="rdkit",
             task_id="rdkit_qed_max_001",
             answer_text="FINAL ANSWER: CCO",
@@ -87,8 +87,8 @@ def test_load_public_sample_answers_calls_public_api_runtime() -> None:
             ],
         },
     ]
-    with patch.object(runtime, "_invoke_api", return_value={"sample_answers": expected}) as invoke:
-        result = runtime.load_public_sample_answers("property_calculation")
+    with patch.object(bridge, "_invoke_api", return_value={"sample_answers": expected}) as invoke:
+        result = bridge.load_public_sample_answers("property_calculation")
 
     assert result == expected
     assert invoke.call_args.args[1] == {
@@ -99,7 +99,7 @@ def test_load_public_sample_answers_calls_public_api_runtime() -> None:
 
 def test_load_public_sample_answers_rejects_incomplete_pinned_inventory() -> None:
     with patch.object(
-        runtime,
+        bridge,
         "_invoke_api",
         return_value={
             "sample_answers": [
@@ -111,5 +111,5 @@ def test_load_public_sample_answers_rejects_incomplete_pinned_inventory() -> Non
             ]
         },
     ):
-        with pytest.raises(runtime.VerifierGroundedRuntimeError, match="inventory"):
-            runtime.load_public_sample_answers("property_calculation")
+        with pytest.raises(bridge.VerifierGroundedRuntimeError, match="inventory"):
+            bridge.load_public_sample_answers("property_calculation")

@@ -7,7 +7,7 @@ from benchmarking.core.answer_processing import resolve_candidate_answer_text
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.scoring.errors import EvaluationError
 from benchmarking.scoring.results import EvaluationResult
-from benchmarking.scoring.verifier_grounded_runtime import VerifierGroundedRuntimeError, evaluate_answer
+from benchmarking.runtime.vgb_bridge import VerifierGroundedRuntimeError, evaluate_answer
 
 
 def _verifier_grounded_config(record: BenchmarkRecord) -> dict[str, Any]:
