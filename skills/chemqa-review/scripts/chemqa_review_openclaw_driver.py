@@ -47,6 +47,14 @@ from chemqa_review_artifacts import (
     terminal_failure_filename,
 )
 from control_store import FileControlStore
+from spawn_registry import (
+    budget_state_from_registry,
+    load_registry,
+    prepare_respawn_budget_state,
+    role_process_is_running as registry_role_process_is_running,
+    save_registry,
+    slot_from_registry_entry,
+)
 
 POLL_SECONDS_DEFAULT = 20
 STALE_TIMEOUT_SECONDS_DEFAULT = 300
@@ -905,36 +913,17 @@ class ChemQAReviewDriver:
 
     def load_spawn_registry(self) -> dict[str, Any]:
         path = self.spawn_registry_path()
-        if path is None or not path.is_file():
-            return {}
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            return load_registry(path)
         except json.JSONDecodeError as exc:
             raise DriverError(f"Spawn registry is not valid JSON: {path} ({exc})") from exc
-        return data if isinstance(data, dict) else {}
 
     def save_spawn_registry(self, payload: dict[str, Any]) -> None:
-        path = self.spawn_registry_path()
-        if path is None:
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        save_registry(self.spawn_registry_path(), payload)
 
     @staticmethod
     def _budget_state_from_registry(registry: dict[str, Any]) -> dict[str, Any]:
-        payload = registry.get("_budget_state") or {}
-        if not isinstance(payload, dict):
-            payload = {}
-        role_counts = payload.get("respawns_by_role") or {}
-        if not isinstance(role_counts, dict):
-            role_counts = {}
-        return {
-            "phase_signature": str(payload.get("phase_signature") or ""),
-            "respawns_by_role": {
-                str(role): int(count or 0)
-                for role, count in role_counts.items()
-            },
-        }
+        return budget_state_from_registry(registry)
 
     def current_phase_signature(self) -> str:
         try:
@@ -948,31 +937,11 @@ class ChemQAReviewDriver:
         return str(summary.get("phase_signature") or "")
 
     def _prepare_respawn_budget_state(self, registry: dict[str, Any], *, phase_signature: str) -> tuple[dict[str, Any], bool]:
-        budget_state = self._budget_state_from_registry(registry)
-        changed = False
-        if budget_state["phase_signature"] != phase_signature:
-            budget_state = {
-                "phase_signature": phase_signature,
-                "respawns_by_role": {},
-            }
-            changed = True
-        return budget_state, changed
+        return prepare_respawn_budget_state(registry, phase_signature=phase_signature)
 
     @staticmethod
     def _slot_from_registry_entry(entry: dict[str, Any] | None) -> str:
-        if not isinstance(entry, dict):
-            return ""
-        explicit = str(entry.get("slot") or "").strip()
-        if explicit:
-            return explicit
-        command = list(entry.get("command") or [])
-        for index, token in enumerate(command[:-1]):
-            if str(token) != "--slot":
-                continue
-            candidate = str(command[index + 1] or "").strip()
-            if candidate:
-                return candidate
-        return ""
+        return slot_from_registry_entry(entry)
 
     @staticmethod
     def slot_for_role(role: str) -> str:
@@ -982,24 +951,7 @@ class ChemQAReviewDriver:
         return self._debate_state_json("next-action", "--team", self.args.team, "--agent", agent, "--json")
 
     def role_process_is_running(self, role: str, entry: dict[str, Any]) -> bool:
-        pid = int(entry.get("pid") or 0)
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return False
-        proc_cmdline = Path("/proc") / str(pid) / "cmdline"
-        try:
-            raw = proc_cmdline.read_text(encoding="utf-8")
-        except OSError:
-            return True
-        joined = raw.replace("\x00", " ")
-        return (
-            "chemqa_review_openclaw_driver.py" in joined
-            and self.args.team in joined
-            and role in joined
-        )
+        return registry_role_process_is_running(role, entry, team=self.args.team)
 
     def role_should_be_running(self, role: str, next_action_payload: dict[str, Any]) -> bool:
         action = str(next_action_payload.get("action") or "")

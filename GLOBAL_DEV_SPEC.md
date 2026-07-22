@@ -73,8 +73,8 @@ there is no root-level compatibility facade.
   compilation, prompt and command materialization, slot provisioning, launch
   wrappers, and one-turn OpenClaw wrapper.
 - `skills/chemqa-review/` owns the fixed-lane ChemQA protocol, role driver,
-  liveness and recovery tools, typed Artifact Flow, and terminal artifact
-  reconstruction.
+  shared spawn-registry policy, liveness and recovery tools, typed Artifact
+  Flow, and terminal artifact reconstruction.
 - `skills/benchmark-cleanroom/` owns cleanup manifests, runtime leases, and
   benchmark-owned process termination.
 - Chemistry provider skills live as independent bundles under `skills/`.
