@@ -15,7 +15,7 @@ from benchmarking.runtime.agent_workspace import (
 )
 from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
 from benchmarking.runtime.session_isolation import inspect_postflight_session
-from benchmarking.workflow.cli import ChemQARunner
+from benchmarking.workflow.runner_adapters import ChemQARunner
 
 
 @dataclass(frozen=True)

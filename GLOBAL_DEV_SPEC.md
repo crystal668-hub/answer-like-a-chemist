@@ -57,9 +57,9 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry and implementations for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess execution utilities, judge execution, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
-| `benchmarking/workflow/` | CLI, prompts, wave/group orchestration, single-LLM runner, and the ChemQA runner with dedicated artifact and workspace support modules. |
+| `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, and dashboard-only annotations. |
 
@@ -72,6 +72,17 @@ Attempt workspace responsibilities are split by dependency direction:
 adjudication, `benchmarking.runtime.workspace_audit` owns transcript and path
 evidence parsing, and `benchmarking.runtime.agent_workspace` owns workspace
 templates, leases, recovery, sealing, quarantine, and audit orchestration.
+
+Benchmark workflow responsibilities follow the same ownership rule:
+`benchmarking.workflow.experiments` owns group definitions and effective specs,
+`benchmarking.workflow.dataset_selection` owns discovery, filtering, sampling,
+and output-root classification, `benchmarking.workflow.run_state` owns persisted
+results and run metadata, and `benchmarking.workflow.runner_adapters` binds the
+generic runners to runtime bundles, cleanroom, sessions, and workspace policy.
+`benchmarking.runtime.subprocess_utils` owns shared subprocess and stdout helpers,
+`benchmarking.runtime.judge` owns judge execution and isolation, and
+`benchmarking.runtime.cleanroom.CleanroomRuntime` is the cleanroom dependency
+binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
 ### Skill bundles
 
@@ -128,17 +139,21 @@ The implemented default experiment groups are:
 All three current group definitions disable generic web search and web fetch.
 For each invocation, the CLI:
 
-1. Discovers or accepts JSONL datasets, normalizes them to `BenchmarkRecord`,
-   applies record selection, and materializes run-local visual bundles when
-   required.
+1. Uses `benchmarking.workflow.dataset_selection` to discover or accept JSONL
+   datasets, normalize them to `BenchmarkRecord`, apply record selection, and
+   classify the run output root. Runner adapters materialize run-local visual
+   bundles when required.
 2. Runs skill health checks, filters skills-on allowlists, prepares a unique
    invocation identity, recovers sentinel-proven stale active workspaces, and
    writes run-scoped OpenClaw configs.
-3. Dispatches groups in waves. Each record runs through either the single-LLM
-   runner or the ChemQA runner, then through the registered evaluator when the
-   runner result is scoreable.
-4. Persists each record immediately, updates progress artifacts, aggregates only
-   `scored=true` records, and writes final results and the runtime manifest.
+3. Dispatches groups in waves through `benchmarking.workflow.orchestration` and
+   `benchmarking.workflow.runner_adapters`. Each record runs through either the
+   single-LLM runner or the ChemQA runner, then through the registered evaluator
+   when the runner result is scoreable.
+4. Uses `benchmarking.workflow.run_state` to persist each record immediately,
+   update run artifacts, aggregate only `scored=true` records, and support
+   historical per-record resume data; the CLI writes the final results and
+   runtime manifest.
 5. Starts detached automated analysis unless `--no-analysis` is selected.
 
 ### Single-LLM runner
@@ -286,7 +301,8 @@ boundary. Processes still run as the same local user.
 - Attempt isolation detects and adjudicates filesystem evidence but cannot prevent
   every same-user filesystem access performed inside arbitrary subprocesses.
 - The benchmark CLI still owns argument parsing, wave scheduling, final
-  aggregation, runtime-manifest writing, and compatibility facade hooks.
+  aggregation, and runtime-manifest composition; changes to these concerns can
+  therefore affect the whole benchmark entrypoint.
 - OpenClaw and ClawTeam integration is subprocess- and file-contract-based;
   correctness depends on session identifiers, manifests, status files, and
   process metadata remaining consistent.

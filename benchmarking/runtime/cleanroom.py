@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -213,3 +214,86 @@ def run_pending_cleanroom_cleanup(
         finally:
             unregister(manifest_path)
     return reports
+
+
+@dataclass(frozen=True)
+class CleanroomRuntime:
+    cleanroom_root: Path
+    runtime_lease: Any
+    current_python: Callable[[], str]
+    run_subprocess: Callable[..., subprocess.CompletedProcess[str]]
+
+    @classmethod
+    def load(
+        cls,
+        *,
+        cleanroom_root: Path,
+        current_python: Callable[[], str],
+        run_subprocess: Callable[..., subprocess.CompletedProcess[str]],
+    ) -> CleanroomRuntime:
+        module_path = cleanroom_root / "scripts" / "runtime_lease.py"
+        runtime_lease = load_cleanroom_runtime_lease_module(module_path)
+        return cls(
+            cleanroom_root=cleanroom_root,
+            runtime_lease=runtime_lease,
+            current_python=current_python,
+            run_subprocess=run_subprocess,
+        )
+
+    def cleanup_manifest_path(self, output_root: Path, run_id: str) -> Path:
+        return cleanup_manifest_path(
+            output_root,
+            run_id,
+            cleanroom_runtime_lease=self.runtime_lease,
+            cleanroom_root=self.cleanroom_root,
+        )
+
+    def build_cleanup_manifest_payload(self, **kwargs: Any) -> dict[str, Any]:
+        return build_cleanup_manifest_payload(
+            **kwargs,
+            cleanroom_runtime_lease=self.runtime_lease,
+            cleanroom_root=self.cleanroom_root,
+        )
+
+    def write_cleanup_manifest(self, path: Path, payload: dict[str, Any]) -> Path:
+        return write_cleanup_manifest(
+            path,
+            payload,
+            cleanroom_runtime_lease=self.runtime_lease,
+            cleanroom_root=self.cleanroom_root,
+        )
+
+    def update_cleanup_manifest(self, path: Path, patch: dict[str, Any]) -> dict[str, Any]:
+        return update_cleanup_manifest(
+            path,
+            patch,
+            cleanroom_runtime_lease=self.runtime_lease,
+            cleanroom_root=self.cleanroom_root,
+        )
+
+    def register_pending_cleanup_manifest(self, path: Path) -> None:
+        register_pending_cleanup_manifest(path, cleanup_callback=self.run_pending_cleanroom_cleanup)
+
+    def unregister_pending_cleanup_manifest(self, path: Path) -> None:
+        unregister_pending_cleanup_manifest(path)
+
+    def invoke_cleanroom_cleanup(
+        self,
+        manifest_path: Path,
+        *,
+        grace_seconds: float = 5.0,
+        kill_after_seconds: float = 10.0,
+    ) -> dict[str, Any]:
+        return invoke_cleanroom_cleanup(
+            manifest_path=manifest_path,
+            cleanroom_root=self.cleanroom_root,
+            current_python=self.current_python,
+            run_subprocess=self.run_subprocess,
+            grace_seconds=grace_seconds,
+            kill_after_seconds=kill_after_seconds,
+        )
+
+    def run_pending_cleanroom_cleanup(self) -> list[dict[str, Any]]:
+        return run_pending_cleanroom_cleanup(
+            invoke_cleanup=self.invoke_cleanroom_cleanup,
+        )

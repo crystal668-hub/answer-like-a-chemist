@@ -7,28 +7,57 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from contextlib import redirect_stdout
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator
 from unittest import mock
 
-from benchmarking.core.contracts import AnswerPayload, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.core.reporting import build_error_group_record_result as shared_build_error_group_record_result
+from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
+from benchmarking.core.convergence import ConvergencePolicy
+from benchmarking.core.datasets import BenchmarkRecord, GradingSpec, classify_subset, load_records
+from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.core.reporting import (
+    GroupRecordResult,
+    aggregate_results,
+    build_error_group_record_result as shared_build_error_group_record_result,
+    materialize_group_failure_results,
+)
+from benchmarking.core.status import is_chemqa_terminal_status, normalize_chemqa_run_status
+from benchmarking.runtime import bundles as runtime_bundles
+from benchmarking.runtime import config_pool as runtime_config_pool
+from benchmarking.runtime import judge as judge_runtime
+from benchmarking.runtime import paths as runtime_paths
+from benchmarking.runtime import subprocess_utils
+from benchmarking.runtime.cleanroom import CleanroomRuntime
+from benchmarking.runtime.workspace_policy import ContaminationAudit
+from benchmarking.scoring import evaluation as scoring_evaluation
+from benchmarking.scoring import evaluators
+from benchmarking.scoring.evaluators import EvaluationResult
+from benchmarking.skills.tree import load_chemistry_skill_inventory
 from benchmarking.workflow import cli as benchmark_test
+from benchmarking.workflow import dataset_selection, experiments, orchestration, run_state, runner_adapters, runtime_config
+from benchmarking.workflow.chemqa_response import (
+    build_chemqa_full_response,
+    build_chemqa_response_from_submission,
+)
+from benchmarking.workflow.errors import BenchmarkError
+from benchmarking.workflow.prompts import build_single_llm_prompt
 
 
 @contextmanager
 def patched_benchmark_runtime_paths() -> Iterator[None]:
-    original_agents_root = benchmark_test.runtime_paths.agents_root
+    original_agents_root = runtime_paths.agents_root
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        benchmark_test.runtime_paths.agents_root = root / "agents"
+        runtime_paths.agents_root = root / "agents"
         try:
             yield
         finally:
-            benchmark_test.runtime_paths.agents_root = original_agents_root
+            runtime_paths.agents_root = original_agents_root
 
 
 class JudgeStub:
@@ -41,11 +70,49 @@ class JudgeStub:
         return dict(self.payload)
 
 
+def build_error_result_for_test(**kwargs: object) -> GroupRecordResult:
+    return shared_build_error_group_record_result(
+        **kwargs,
+        classify_subset_fn=classify_subset,
+        normalize_answer_tracks_fn=evaluators.normalize_answer_tracks,
+        build_execution_error_evaluation_fn=evaluators.build_execution_error_evaluation,
+        deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
+    )
+
+
+def materialize_failure_results_for_test(**kwargs: object) -> list[GroupRecordResult]:
+    return materialize_group_failure_results(
+        **kwargs,
+        save_json_fn=run_state.save_json,
+        slugify_fn=run_state.slugify,
+        classify_subset_fn=classify_subset,
+        normalize_answer_tracks_fn=evaluators.normalize_answer_tracks,
+        build_execution_error_evaluation_fn=evaluators.build_execution_error_evaluation,
+        deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
+    )
+
+
+def run_group_for_test(**kwargs: object) -> list[GroupRecordResult]:
+    experiment_specs = kwargs.pop("experiment_specs", experiments.EXPERIMENT_SPECS)
+    kwargs.setdefault("single_agent_thinking", experiments.DEFAULT_SINGLE_AGENT_THINKING)
+    return orchestration.run_group(
+        **kwargs,
+        chemqa_slot_sets=experiments.CHEMQA_SLOT_SETS,
+        experiment_specs=experiment_specs,
+        build_runner_fn=runner_adapters.build_runner,
+        evaluate_answer_fn=scoring_evaluation.evaluate_record,
+        build_error_group_record_result_fn=build_error_result_for_test,
+        classify_subset_fn=classify_subset,
+        save_json_fn=run_state.save_json,
+        slugify_fn=run_state.slugify,
+    )
+
+
 class BenchmarkTestModuleTests(unittest.TestCase):
     def _single_llm_record(self, *, eval_kind: str = "superchem_multiple_choice_rpf") -> object:
         dataset = "superchem" if eval_kind == "superchem_multiple_choice_rpf" else "chembench"
         reference_answer = "B" if eval_kind == "superchem_multiple_choice_rpf" else "5"
-        return benchmark_test.BenchmarkRecord(
+        return BenchmarkRecord(
             record_id="demo",
             dataset=dataset,
             source_file="/tmp/demo.jsonl",
@@ -73,18 +140,18 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 },
             }
         }
-        return benchmark_test.subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
 
     def test_default_experiment_groups_are_three_skills_groups(self) -> None:
         self.assertEqual(
             ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
-            list(benchmark_test.EXPERIMENT_GROUPS),
+            list(experiments.EXPERIMENT_GROUPS),
         )
-        self.assertTrue(all(not group.websearch for group in benchmark_test.EXPERIMENT_GROUPS.values()))
-        self.assertTrue(all(not spec.websearch_enabled for spec in benchmark_test.EXPERIMENT_SPECS.values()))
-        self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
-        self.assertFalse(benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
-        self.assertTrue(benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
+        self.assertTrue(all(not group.websearch for group in experiments.EXPERIMENT_GROUPS.values()))
+        self.assertTrue(all(not spec.websearch_enabled for spec in experiments.EXPERIMENT_SPECS.values()))
+        self.assertTrue(experiments.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
+        self.assertFalse(experiments.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
+        self.assertTrue(experiments.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
     def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
         health_reports = {
@@ -92,7 +159,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             "paper-access": {"available": False, "unavailable_reasons": [{"kind": "missing_dependency", "name": "bs4"}]},
         }
         specs = {
-            "single_llm_skills_on": benchmark_test.ExperimentSpec(
+            "single_llm_skills_on": ExperimentSpec(
                 id="single_llm_skills_on",
                 label="demo",
                 runner_kind="single_llm",
@@ -103,28 +170,28 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             )
         }
 
-        effective = benchmark_test.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
+        effective = experiments.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
 
         self.assertEqual(("rdkit",), effective["single_llm_skills_on"].skill_allowlist)
 
     def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
         inventory_skills = [
             str(entry["skill"])
-            for entry in benchmark_test.load_chemistry_skill_inventory().get("skills", [])
+            for entry in load_chemistry_skill_inventory().get("skills", [])
         ]
 
-        self.assertEqual(inventory_skills, benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertEqual(86, len(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST))
-        self.assertIn("act-like-a-chemist", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("chem-calculator", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("pymatgen", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("paper-retrieval", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("paper-access", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("paper-parse", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertIn("paper-rerank", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertNotIn("benchmark-cleanroom", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertNotIn("chemqa-review", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
-        self.assertNotIn("debateclaw-v1", benchmark_test.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(inventory_skills, experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertEqual(86, len(experiments.BENCHMARK_SKILLS_ALLOWLIST))
+        self.assertIn("act-like-a-chemist", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("chem-calculator", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("pymatgen", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-retrieval", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-access", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-parse", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertIn("paper-rerank", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("benchmark-cleanroom", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("chemqa-review", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+        self.assertNotIn("debateclaw-v1", experiments.BENCHMARK_SKILLS_ALLOWLIST)
 
     def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
         source = Path("benchmarking/workflow/runners/single_llm.py").read_text(encoding="utf-8")
@@ -293,8 +360,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "custom-single-agent",
             ]
 
-            with mock.patch.object(benchmark_test, "ConfigPool", DummyConfigPool), \
-                mock.patch.object(benchmark_test, "JudgeClient", return_value=object()), \
+            with mock.patch.object(runtime_config_pool, "ConfigPool", DummyConfigPool), \
+                mock.patch.object(judge_runtime, "JudgeClient", return_value=object()), \
                 mock.patch.object(benchmark_test, "check_all_skill_health", return_value={}), \
                 mock.patch.object(
                     benchmark_test,
@@ -311,7 +378,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                         "reports": {"single_llm_skills_off": {"available": True}},
                     },
                 ), \
-                mock.patch.object(benchmark_test, "run_group", side_effect=fake_run_group), \
+                mock.patch.object(orchestration, "run_group", side_effect=fake_run_group), \
                 mock.patch.object(
                     benchmark_test,
                     "launch_automated_evaluation",
@@ -390,7 +457,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_filter_records_by_subsets_rejects_unknown_subset(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="chem-1",
                 dataset="chembench",
                 source_file="/tmp/chembench.jsonl",
@@ -401,8 +468,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             )
         ]
 
-        with self.assertRaisesRegex(benchmark_test.BenchmarkError, "Unknown subset"):
-            benchmark_test.filter_records_by_subsets(records, "hle_chemistry")
+        with self.assertRaisesRegex(BenchmarkError, "Unknown subset"):
+            dataset_selection.filter_records_by_subsets(records, "hle_chemistry")
 
     def test_current_python_prefers_virtualenv_python(self) -> None:
         original_virtual_env = os.environ.get("VIRTUAL_ENV")
@@ -413,62 +480,21 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 python_path.parent.mkdir(parents=True, exist_ok=True)
                 python_path.write_text("", encoding="utf-8")
                 os.environ["VIRTUAL_ENV"] = str(venv_root)
-                self.assertEqual(str(python_path), benchmark_test.current_python())
+                self.assertEqual(str(python_path), subprocess_utils.current_python())
         finally:
             if original_virtual_env is None:
                 os.environ.pop("VIRTUAL_ENV", None)
             else:
                 os.environ["VIRTUAL_ENV"] = original_virtual_env
 
-    def test_invoke_cleanroom_cleanup_uses_current_python(self) -> None:
-        original_current_python = benchmark_test.current_python
-        original_run_subprocess = benchmark_test.run_subprocess
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                captured: dict[str, object] = {}
-                manifest_path = Path(tmpdir) / "demo.manifest.json"
-                manifest_path.write_text("{}", encoding="utf-8")
-
-                benchmark_test.current_python = lambda: "/tmp/fake-venv/bin/python"
-
-                def fake_run_subprocess(command, **kwargs):
-                    captured["command"] = list(command)
-                    return benchmark_test.subprocess.CompletedProcess(
-                        command,
-                        0,
-                        stdout=json.dumps({"success": True}),
-                        stderr="",
-                    )
-
-                benchmark_test.run_subprocess = fake_run_subprocess
-                payload = benchmark_test.invoke_cleanroom_cleanup(manifest_path=manifest_path)
-                self.assertTrue(payload["success"])
-                self.assertEqual("/tmp/fake-venv/bin/python", captured["command"][0])
-        finally:
-            benchmark_test.current_python = original_current_python
-            benchmark_test.run_subprocess = original_run_subprocess
-
-    def test_cleanup_manifest_path_uses_cleanroom_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_root = Path(tmpdir)
-            path = benchmark_test.cleanup_manifest_path(output_root, "demo-run")
-            self.assertEqual((output_root / "cleanroom" / "manifests" / "demo-run.manifest.json").resolve(), path.resolve())
-
-    def test_register_and_unregister_pending_cleanup_manifest(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            manifest_path = Path(tmpdir) / "demo.manifest.json"
-            benchmark_test.register_pending_cleanup_manifest(manifest_path)
-            self.assertIn(manifest_path, benchmark_test.iter_pending_cleanup_manifests())
-            benchmark_test.unregister_pending_cleanup_manifest(manifest_path)
-            self.assertNotIn(manifest_path, benchmark_test.iter_pending_cleanup_manifests())
 
     def test_extract_final_answer_line_prefers_explicit_marker(self) -> None:
         text = "reasoning\nFINAL ANSWER: 42\n"
-        self.assertEqual("42", benchmark_test.extract_final_answer_line(text))
-        self.assertEqual("42", benchmark_test.extract_candidate_short_answer(text))
+        self.assertEqual("42", evaluators.extract_final_answer_line(text))
+        self.assertEqual("42", evaluators.extract_candidate_short_answer(text))
 
     def test_hle_evaluator_registered_for_benchmark_dispatch(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="hle-demo",
             dataset="hle",
             source_file="/tmp/hle.jsonl",
@@ -486,7 +512,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             }
         )
 
-        result = benchmark_test.evaluate_answer(
+        result = scoring_evaluation.evaluate_record(
             record,
             short_answer_text="PCC",
             full_response_text="Explanation: short\nAnswer: PCC\nConfidence: 90%",
@@ -498,7 +524,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_random_subset_sampling_includes_hle_chemistry(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="hle-demo",
                 dataset="hle",
                 source_file="/tmp/hle.jsonl",
@@ -509,20 +535,20 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             )
         ]
 
-        sampled = benchmark_test.sample_records_per_subset(records, per_subset_count=1, seed=7)
+        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=1, seed=7)
 
         self.assertEqual(["hle-demo"], [record.record_id for record in sampled])
 
     def test_runner_result_should_score_when_recovery_is_evaluable(self) -> None:
-        result = benchmark_test.RunnerResult(
-            status=benchmark_test.RunStatus.RECOVERED,
-            answer=benchmark_test.AnswerPayload(
+        result = RunnerResult(
+            status=RunStatus.RECOVERED,
+            answer=AnswerPayload(
                 short_answer_text="CCO",
                 full_response_text="FINAL ANSWER: CCO",
             ),
             raw={"run_status": {"status": "done", "terminal_state": "failed"}},
             runner_meta={"run_id": "demo-run"},
-            recovery=benchmark_test.RecoveryInfo(
+            recovery=RecoveryInfo(
                 source="candidate_submission",
                 scored=True,
                 evaluable=True,
@@ -544,26 +570,13 @@ Points: 1.0, Item: First criterion
 more detail
 Points: 0.5, Item: Second criterion
 """.strip()
-        items = benchmark_test.parse_frontierscience_research_rubric(rubric)
+        items = evaluators.parse_frontierscience_research_rubric(rubric)
         self.assertEqual(2, len(items))
         self.assertEqual(1.0, items[0]["points"])
         self.assertIn("First criterion", items[0]["description"])
         self.assertIn("more detail", items[0]["description"])
         self.assertEqual(0.5, items[1]["points"])
 
-    def test_build_temp_openclaw_config_payload_toggles_websearch(self) -> None:
-        base = {
-            "tools": {"web": {"search": {"enabled": False}, "fetch": {"enabled": False}}},
-            "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
-        }
-        enabled = benchmark_test.build_temp_openclaw_config_payload(base, enable_websearch=True)
-        disabled = benchmark_test.build_temp_openclaw_config_payload(base, enable_websearch=False)
-        self.assertIs(True, enabled["tools"]["web"]["search"]["enabled"])
-        self.assertIs(True, enabled["tools"]["web"]["fetch"]["enabled"])
-        self.assertIs(True, enabled["plugins"]["entries"]["duckduckgo"]["enabled"])
-        self.assertIs(False, disabled["tools"]["web"]["search"]["enabled"])
-        self.assertIs(False, disabled["tools"]["web"]["fetch"]["enabled"])
-        self.assertIs(False, disabled["plugins"]["entries"]["duckduckgo"]["enabled"])
 
     def test_build_group_waves_batches_in_selected_order(self) -> None:
         waves = benchmark_test.build_group_waves(
@@ -591,7 +604,7 @@ Points: 0.5, Item: Second criterion
             existing = root / "per-record" / "single_llm_skills_on"
             existing.mkdir(parents=True, exist_ok=True)
             (existing / "demo.json").write_text("{}\n", encoding="utf-8")
-            aggregate = benchmark_test.resolve_aggregate_group_ids(
+            aggregate = run_state.resolve_aggregate_group_ids(
                 ["chemqa_skills_on", "single_llm_skills_off"],
                 output_root=root,
                 merge_existing_per_record=True,
@@ -606,7 +619,7 @@ Points: 0.5, Item: Second criterion
             root = Path(tmpdir)
             group_dir = root / "per-record" / "single_llm_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
-            payload = benchmark_test.GroupRecordResult(
+            payload = GroupRecordResult(
                 schema_version=2,
                 group_id="single_llm_skills_on",
                 group_label="单一 LLM + 启用 websearch plugin",
@@ -638,8 +651,8 @@ Points: 0.5, Item: Second criterion
                 short_answer_text="A",
                 full_response_text="FINAL ANSWER: A",
             )
-            (group_dir / "demo-record.json").write_text(json.dumps(benchmark_test.asdict(payload)), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
+            (group_dir / "demo-record.json").write_text(json.dumps(asdict(payload)), encoding="utf-8")
+            loaded = run_state.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
             self.assertEqual(1, len(loaded))
             self.assertEqual("demo-record", loaded[0].record_id)
             self.assertEqual("A", loaded[0].short_answer_text)
@@ -680,7 +693,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: A",
             }
             (group_dir / "legacy-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
+            loaded = run_state.load_results_from_output_root(root, group_ids=["single_llm_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("legacy-record", entry.record_id)
@@ -735,7 +748,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: fallback-answer",
             }
             (group_dir / "legacy-recovery-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
+            loaded = run_state.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("completed", entry.run_lifecycle_status)
@@ -791,7 +804,7 @@ Points: 0.5, Item: Second criterion
                 "full_response_text": "FINAL ANSWER: fallback-answer",
             }
             (group_dir / "legacy-preview-record.json").write_text(json.dumps(legacy_payload), encoding="utf-8")
-            loaded = benchmark_test.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
+            loaded = run_state.load_results_from_output_root(root, group_ids=["chemqa_skills_on"])
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("failed", entry.run_lifecycle_status)
@@ -810,9 +823,9 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"]
+        group = experiments.EXPERIMENT_GROUPS["single_llm_skills_on"]
         with patched_benchmark_runtime_paths():
-            payload = benchmark_test.build_run_scoped_config_payload(
+            payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
                 single_agent_model="qwen3.5-plus",
@@ -821,16 +834,16 @@ Points: 0.5, Item: Second criterion
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
-        self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents["benchmark-single-skills-on"]["skills"])
+        self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents["benchmark-single-skills-on"]["skills"])
         self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertNotIn("thinking", agents["benchmark-single-skills-on"])
         self.assertNotIn("thinking", agents["benchmark-judge"])
         self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
         self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
-        self.assertIn(str(benchmark_test.runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
+        self.assertIn(str(runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
 
     def test_default_judge_model_uses_openai_gpt_55(self) -> None:
-        self.assertEqual("openai/gpt-5.5", benchmark_test.DEFAULT_JUDGE_MODEL)
+        self.assertEqual("openai/gpt-5.5", experiments.DEFAULT_JUDGE_MODEL)
 
     def test_build_run_scoped_config_payload_disables_single_llm_skills_off(self) -> None:
         base = {
@@ -838,9 +851,9 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"]
+        group = experiments.EXPERIMENT_GROUPS["single_llm_skills_off"]
         with patched_benchmark_runtime_paths():
-            payload = benchmark_test.build_run_scoped_config_payload(
+            payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
                 single_agent_model="qwen3.5-plus",
@@ -857,14 +870,14 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.ExperimentGroup(
+        group = experiments.ExperimentGroup(
             id="benchmark-judge-runtime",
             label="benchmark judge runtime",
             runner="single_llm",
             websearch=False,
         )
         with patched_benchmark_runtime_paths():
-            payload = benchmark_test.build_run_scoped_config_payload(
+            payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
                 single_agent_model="qwen3.5-plus",
@@ -880,9 +893,9 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"]
+        group = experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
-            payload = benchmark_test.build_run_scoped_config_payload(
+            payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
                 single_agent_model="qwen3.5-plus",
@@ -891,12 +904,12 @@ Points: 0.5, Item: Second criterion
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
         self.assertEqual("qwen3.5-plus", agents["debateA-coordinator"]["model"])
-        self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents["debateA-coordinator"]["skills"])
+        self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents["debateA-coordinator"]["skills"])
         self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertNotIn("thinking", agents["debateA-coordinator"])
         for slot in ["debateA-1", "debateA-2", "debateA-3", "debateA-4", "debateA-5"]:
             self.assertEqual("qwen3.5-plus", agents[slot]["model"])
-            self.assertEqual(benchmark_test.BENCHMARK_SKILLS_ALLOWLIST, agents[slot]["skills"])
+            self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents[slot]["skills"])
             self.assertNotIn("thinking", agents[slot])
         self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
         self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
@@ -907,9 +920,9 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"]
+        group = experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
-            payload = benchmark_test.build_run_scoped_config_payload(
+            payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
                 single_agent_model="qwen3.5-plus",
@@ -922,7 +935,7 @@ Points: 0.5, Item: Second criterion
         self.assertIn("active", coordinator_workspace.parts)
         self.assertNotEqual(coordinator_workspace, proposer_workspace)
         self.assertNotIn(
-            str(benchmark_test.runtime_paths.benchmark_runtime_root / "chemqa_skills_on"),
+            str(runtime_paths.benchmark_runtime_root / "chemqa_skills_on"),
             str(coordinator_workspace),
         )
 
@@ -932,11 +945,11 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"]
+        group = experiments.EXPERIMENT_GROUPS["single_llm_skills_on"]
 
         with patched_benchmark_runtime_paths():
-            with self.assertRaises(benchmark_test.BenchmarkError):
-                benchmark_test.build_run_scoped_config_payload(
+            with self.assertRaises(BenchmarkError):
+                runtime_config.build_run_scoped_config_payload(
                     base,
                     group=group,
                     single_agent_model="qwen3.5-plus",
@@ -944,7 +957,7 @@ Points: 0.5, Item: Second criterion
                 )
 
     def test_normalize_chemqa_run_status_maps_completed_with_artifact_errors(self) -> None:
-        payload = benchmark_test.normalize_chemqa_run_status({"status": "completed_with_artifact_errors"})
+        payload = normalize_chemqa_run_status({"status": "completed_with_artifact_errors"})
         self.assertEqual("done", payload["status"])
         self.assertEqual("completed", payload["terminal_state"])
         self.assertEqual("artifact_collection_error", payload["terminal_reason_code"])
@@ -952,14 +965,14 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("completed_with_artifact_errors", payload["legacy_status"])
 
     def test_normalize_chemqa_run_status_maps_stalled(self) -> None:
-        payload = benchmark_test.normalize_chemqa_run_status({"status": "stalled", "phase": "review"})
+        payload = normalize_chemqa_run_status({"status": "stalled", "phase": "review"})
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
         self.assertEqual("stalled", payload["terminal_reason_code"])
         self.assertEqual("stalled", payload["legacy_status"])
 
     def test_normalize_chemqa_run_status_maps_terminal_failure(self) -> None:
-        payload = benchmark_test.normalize_chemqa_run_status({"status": "terminal_failure", "reason": "boom"})
+        payload = normalize_chemqa_run_status({"status": "terminal_failure", "reason": "boom"})
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
         self.assertEqual("terminal_failure", payload["terminal_reason_code"])
@@ -967,7 +980,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("terminal_failure", payload["legacy_status"])
 
     def test_normalize_chemqa_run_status_keeps_artifact_finalizing_non_terminal(self) -> None:
-        payload = benchmark_test.normalize_chemqa_run_status(
+        payload = normalize_chemqa_run_status(
             {
                 "status": "done",
                 "protocol_terminal_state": "completed",
@@ -980,49 +993,49 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("completed", payload["protocol_terminal_state"])
         self.assertEqual("finalizing", payload["artifact_flow_state"])
         self.assertEqual("running", payload["benchmark_terminal_state"])
-        self.assertFalse(benchmark_test.is_chemqa_terminal_status(payload))
+        self.assertFalse(is_chemqa_terminal_status(payload))
 
     def test_normalize_chemqa_run_status_maps_abandoned(self) -> None:
-        payload = benchmark_test.normalize_chemqa_run_status({"status": "abandoned"})
+        payload = normalize_chemqa_run_status({"status": "abandoned"})
         self.assertEqual("done", payload["status"])
         self.assertEqual("cancelled", payload["terminal_state"])
         self.assertEqual("abandoned", payload["terminal_reason_code"])
         self.assertEqual("abandoned", payload["legacy_status"])
 
     def test_chemqa_wait_for_terminal_status_accepts_new_done_state(self) -> None:
-        runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
+        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
         runner._read_run_status = lambda _run_id: {"status": "done", "terminal_state": "failed", "terminal_reason_code": "stalled"}
-        payload = benchmark_test.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+        payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
 
     def test_chemqa_wait_for_terminal_status_accepts_legacy_terminal_failure(self) -> None:
-        runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
-        runner._read_run_status = lambda _run_id: benchmark_test.normalize_chemqa_run_status({"status": "terminal_failure", "phase": "review"})
-        payload = benchmark_test.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner._read_run_status = lambda _run_id: normalize_chemqa_run_status({"status": "terminal_failure", "phase": "review"})
+        payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
         self.assertEqual("terminal_failure", payload["legacy_status"])
 
     def test_chemqa_wait_for_terminal_status_timeout_on_half_initialized_runner_raises_benchmark_error(self) -> None:
-        runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
+        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
         with tempfile.TemporaryDirectory() as tmpdir:
             runner.chemqa_root = Path(tmpdir)
-            original_time = benchmark_test.time.time
-            original_sleep = benchmark_test.time.sleep
+            original_time = time.time
+            original_sleep = time.sleep
             times = iter([100.0, 99.0, 99.5, 101.5])
             try:
-                benchmark_test.time.time = lambda: next(times)
-                benchmark_test.time.sleep = lambda _seconds: None
-                with self.assertRaises(benchmark_test.BenchmarkError):
-                    benchmark_test.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+                time.time = lambda: next(times)
+                time.sleep = lambda _seconds: None
+                with self.assertRaises(BenchmarkError):
+                    runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
             finally:
-                benchmark_test.time.time = original_time
-                benchmark_test.time.sleep = original_sleep
+                time.time = original_time
+                time.sleep = original_sleep
 
     def test_chemqa_wait_for_terminal_status_attempts_recovery_on_stagnant_status(self) -> None:
-        runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
-        runner.convergence_policy = benchmark_test.ConvergencePolicy(
+        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner.convergence_policy = ConvergencePolicy(
             timeout_seconds=10,
             max_unchanged_status_polls=1,
             max_recovery_attempts=2,
@@ -1037,16 +1050,16 @@ Points: 0.5, Item: Second criterion
         recovery_calls: list[tuple[str, dict[str, object]]] = []
         runner._read_run_status = lambda _run_id: next(statuses)
         runner._recover_stalled_run = lambda run_id, last_status: recovery_calls.append((run_id, dict(last_status))) or {"status": "running"}
-        original_time = benchmark_test.time.time
-        original_sleep = benchmark_test.time.sleep
+        original_time = time.time
+        original_sleep = time.sleep
         times = iter([100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0])
         try:
-            benchmark_test.time.time = lambda: next(times)
-            benchmark_test.time.sleep = lambda _seconds: None
-            payload = benchmark_test.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=10)
+            time.time = lambda: next(times)
+            time.sleep = lambda _seconds: None
+            payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=10)
         finally:
-            benchmark_test.time.time = original_time
-            benchmark_test.time.sleep = original_sleep
+            time.time = original_time
+            time.sleep = original_sleep
 
         self.assertEqual("done", payload["status"])
         self.assertEqual(
@@ -1055,7 +1068,7 @@ Points: 0.5, Item: Second criterion
         )
 
     def test_build_chemqa_response_from_submission_uses_direct_answer(self) -> None:
-        short_text, full_text = benchmark_test.build_chemqa_response_from_submission(
+        short_text, full_text = build_chemqa_response_from_submission(
             final_submission={
                 "direct_answer": "3-(trifluoromethyl)benzamide",
                 "summary": "Candidate summary.",
@@ -1083,9 +1096,9 @@ Points: 0.5, Item: Second criterion
                 ),
                 encoding="utf-8",
             )
-            runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
+            runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
             runner._candidate_protocol_dirs = lambda _run_id, _run_status: [team_dir]
-            short_text, full_text, meta = benchmark_test.ChemQARunner._build_candidate_submission_fallback(
+            short_text, full_text, meta = runner_adapters.ChemQARunner._build_candidate_submission_fallback(
                 runner,
                 "demo-run",
                 {"status": "stalled", "phase": "review"},
@@ -1096,19 +1109,19 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(str(proposal_path.resolve()), str(Path(meta["proposal_path"]).resolve()))
 
     def test_candidate_protocol_dirs_include_only_active_managed_coordinator_workspace(self) -> None:
-        runner = benchmark_test.ChemQARunner.__new__(benchmark_test.ChemQARunner)
+        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
         runner.chemqa_root = Path("/tmp/chemqa-root")
         runner.slot_set = "A"
         runner._active_slot_workspaces = {
             "debateA-coordinator": Path("/tmp/managed/run/invocation/active/chemqa/debateA-coordinator")
         }
         legacy_protocol = (
-            benchmark_test.runtime_paths.benchmark_runtime_root
+            runtime_paths.benchmark_runtime_root
             / "chemqa_skills_on"
             / "debateA-coordinator"
             / "chemqa_review_protocol.yaml"
         )
-        candidates = benchmark_test.ChemQARunner._candidate_protocol_dirs(
+        candidates = runner_adapters.ChemQARunner._candidate_protocol_dirs(
             runner,
             "demo-run",
             {"workspace_protocol_path": str(legacy_protocol)},
@@ -1119,13 +1132,13 @@ Points: 0.5, Item: Second criterion
         )
         self.assertNotIn(legacy_protocol.parent, candidates)
         self.assertNotIn(
-            benchmark_test.runtime_paths.benchmark_runtime_root / "chemqa_skills_on" / "debateA-coordinator",
+            runtime_paths.benchmark_runtime_root / "chemqa_skills_on" / "debateA-coordinator",
             candidates,
         )
 
     def test_evaluate_chembench_open_ended_numeric_match_uses_judge(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="demo",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -1134,7 +1147,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="4",
             payload={"target": "4", "preferred_score": "mae"},
         )
-        result = benchmark_test.evaluate_chembench_open_ended(
+        result = evaluators.evaluate_chembench_open_ended(
             record,
             short_answer_text="wrong-short-answer",
             full_response_text="Reasoning\nFINAL ANSWER: 4",
@@ -1167,14 +1180,14 @@ Points: 0.5, Item: Second criterion
                 + "\n",
                 encoding="utf-8",
             )
-            records = benchmark_test.load_records([path])
+            records = load_records([path])
             self.assertEqual(1, len(records))
             self.assertEqual("Solve me", records[0].prompt)
             self.assertEqual("42", records[0].reference_answer)
 
     def test_evaluate_frontierscience_olympiad_always_uses_judge(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="fs-demo",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
@@ -1183,7 +1196,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="42",
             payload={"track": "olympiad"},
         )
-        result = benchmark_test.evaluate_frontierscience_olympiad(
+        result = evaluators.evaluate_frontierscience_olympiad(
             record,
             short_answer_text="42",
             full_response_text="FINAL ANSWER: 42",
@@ -1195,7 +1208,7 @@ Points: 0.5, Item: Second criterion
 
     def test_evaluate_answer_uses_generic_semantic_fallback(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer matches"})
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="generic-demo",
             dataset="customset",
             source_file="/tmp/custom.jsonl",
@@ -1204,7 +1217,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="benzene",
             payload={},
         )
-        result = benchmark_test.evaluate_answer(
+        result = scoring_evaluation.evaluate_record(
             record,
             short_answer_text="wrong-short-answer",
             full_response_text="Full answer contains benzene.",
@@ -1225,15 +1238,15 @@ Points: 0.5, Item: Second criterion
             path.write_text('{"id":"broken","prompt":"Q"\n', encoding="utf-8")
 
             with self.assertRaises(json.JSONDecodeError):
-                benchmark_test.load_records([path])
+                load_records([path])
 
     def test_superchem_valid_options_uses_grading_config_before_payload(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="superchem-demo",
             dataset="superchem",
             source_file="/tmp/superchem.jsonl",
             prompt="Q",
-            grading=benchmark_test.GradingSpec(
+            grading=GradingSpec(
                 kind="superchem_multiple_choice_rpf",
                 reference_answer="A",
                 subset="superchem_multimodal",
@@ -1241,10 +1254,10 @@ Points: 0.5, Item: Second criterion
             ),
             raw_payload={},
         )
-        self.assertEqual(("A", "C"), benchmark_test.superchem_valid_options(record))
+        self.assertEqual(("A", "C"), evaluators.superchem_valid_options(record))
 
     def test_classify_subset(self) -> None:
-        chembench_record = benchmark_test.BenchmarkRecord(
+        chembench_record = BenchmarkRecord(
             record_id="c1",
             dataset="chembench",
             source_file="/tmp/chembench.jsonl",
@@ -1253,7 +1266,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={},
         )
-        olympiad_record = benchmark_test.BenchmarkRecord(
+        olympiad_record = BenchmarkRecord(
             record_id="f1",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
@@ -1262,7 +1275,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={"track": "olympiad"},
         )
-        research_record = benchmark_test.BenchmarkRecord(
+        research_record = BenchmarkRecord(
             record_id="f2",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
@@ -1271,12 +1284,12 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={"track": "research"},
         )
-        self.assertEqual("chembench", benchmark_test.classify_subset(chembench_record))
-        self.assertEqual("frontierscience_Olympiad", benchmark_test.classify_subset(olympiad_record))
-        self.assertEqual("frontierscience_Research", benchmark_test.classify_subset(research_record))
+        self.assertEqual("chembench", classify_subset(chembench_record))
+        self.assertEqual("frontierscience_Olympiad", classify_subset(olympiad_record))
+        self.assertEqual("frontierscience_Research", classify_subset(research_record))
 
     def test_classify_subset_superchem(self) -> None:
-        legacy_text_record = benchmark_test.BenchmarkRecord(
+        legacy_text_record = BenchmarkRecord(
             record_id="s1",
             dataset="superchem",
             source_file="/tmp/superchem.jsonl",
@@ -1285,7 +1298,7 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={"modality": "text_only"},
         )
-        multimodal_record = benchmark_test.BenchmarkRecord(
+        multimodal_record = BenchmarkRecord(
             record_id="s2",
             dataset="superchem",
             source_file="/tmp/superchem.jsonl",
@@ -1294,11 +1307,11 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={"modality": "multimodal"},
         )
-        self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(legacy_text_record))
-        self.assertEqual("superchem_multimodal", benchmark_test.classify_subset(multimodal_record))
+        self.assertEqual("superchem_multimodal", classify_subset(legacy_text_record))
+        self.assertEqual("superchem_multimodal", classify_subset(multimodal_record))
 
     def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
@@ -1308,13 +1321,13 @@ Points: 0.5, Item: Second criterion
             payload={"track": "olympiad"},
         )
 
-        skills_on = benchmark_test.build_single_llm_prompt(
+        skills_on = build_single_llm_prompt(
             record,
             websearch_enabled=True,
             skills_enabled=True,
             input_bundle=None,
         )
-        skills_off = benchmark_test.build_single_llm_prompt(
+        skills_off = build_single_llm_prompt(
             record,
             websearch_enabled=True,
             skills_enabled=False,
@@ -1336,7 +1349,7 @@ Points: 0.5, Item: Second criterion
             self.assertNotIn("Do not use OpenClaw skills", prompt)
 
     def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="fs-1",
             dataset="frontierscience",
             source_file="/tmp/frontierscience.jsonl",
@@ -1346,7 +1359,7 @@ Points: 0.5, Item: Second criterion
             payload={"track": "olympiad"},
         )
 
-        prompt = benchmark_test.build_single_llm_prompt(
+        prompt = build_single_llm_prompt(
             record,
             websearch_enabled=True,
             skills_enabled=True,
@@ -1366,7 +1379,7 @@ Points: 0.5, Item: Second criterion
         records = []
         for idx in range(3):
             records.append(
-                benchmark_test.BenchmarkRecord(
+                BenchmarkRecord(
                     record_id=f"chem-{idx}",
                     dataset="chembench",
                     source_file="/tmp/chembench.jsonl",
@@ -1377,7 +1390,7 @@ Points: 0.5, Item: Second criterion
                 )
             )
             records.append(
-                benchmark_test.BenchmarkRecord(
+                BenchmarkRecord(
                     record_id=f"oly-{idx}",
                     dataset="frontierscience",
                     source_file="/tmp/frontierscience.jsonl",
@@ -1388,7 +1401,7 @@ Points: 0.5, Item: Second criterion
                 )
             )
             records.append(
-                benchmark_test.BenchmarkRecord(
+                BenchmarkRecord(
                     record_id=f"res-{idx}",
                     dataset="frontierscience",
                     source_file="/tmp/frontierscience.jsonl",
@@ -1398,18 +1411,18 @@ Points: 0.5, Item: Second criterion
                     payload={"track": "research"},
                 )
             )
-        sampled = benchmark_test.sample_records_per_subset(records, per_subset_count=2, seed=7)
+        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=2, seed=7)
         self.assertEqual(6, len(sampled))
-        counts = {subset: 0 for subset in benchmark_test.SUBSET_ORDER}
+        counts = {subset: 0 for subset in dataset_selection.SUBSET_ORDER}
         for record in sampled:
-            counts[benchmark_test.classify_subset(record)] += 1
+            counts[classify_subset(record)] += 1
         self.assertEqual(2, counts["chembench"])
         self.assertEqual(2, counts["frontierscience_Olympiad"])
         self.assertEqual(2, counts["frontierscience_Research"])
 
     def test_sample_records_per_subset_samples_superchem_multimodal_only(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="s1-mm",
                 dataset="superchem",
                 source_file="/tmp/superchem.jsonl",
@@ -1418,7 +1431,7 @@ Points: 0.5, Item: Second criterion
                 reference_answer="A",
                 payload={"modality": "multimodal", "source_uuid": "uuid-1"},
             ),
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="s2-mm",
                 dataset="superchem",
                 source_file="/tmp/superchem.jsonl",
@@ -1428,17 +1441,17 @@ Points: 0.5, Item: Second criterion
                 payload={"modality": "multimodal", "source_uuid": "uuid-2"},
             ),
         ]
-        sampled = benchmark_test.sample_records_per_subset(records, per_subset_count=1, seed=3)
+        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=1, seed=3)
         self.assertEqual(1, len(sampled))
         self.assertEqual(
             {"superchem_multimodal"},
-            {benchmark_test.classify_subset(record) for record in sampled},
+            {classify_subset(record) for record in sampled},
         )
         self.assertEqual(1, len({record.payload["source_uuid"] for record in sampled}))
 
     def test_print_selected_records_outputs_json(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="chem-1",
                 dataset="chembench",
                 source_file="/tmp/chembench.jsonl",
@@ -1450,7 +1463,7 @@ Points: 0.5, Item: Second criterion
         ]
         stream = io.StringIO()
         with redirect_stdout(stream):
-            benchmark_test.print_selected_records(records)
+            dataset_selection.print_selected_records(records)
         payload = json.loads(stream.getvalue())
         self.assertEqual("chem-1", payload[0]["record_id"])
         self.assertEqual("chembench", payload[0]["subset"])
@@ -1458,7 +1471,7 @@ Points: 0.5, Item: Second criterion
 
     def test_apply_offset_limit_preserves_existing_behavior(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id=f"r{idx}",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -1469,16 +1482,16 @@ Points: 0.5, Item: Second criterion
             )
             for idx in range(10)
         ]
-        sliced = benchmark_test.apply_offset_limit(records, offset=3, limit=4)
+        sliced = dataset_selection.apply_offset_limit(records, offset=3, limit=4)
         self.assertEqual(["r3", "r4", "r5", "r6"], [record.record_id for record in sliced])
 
     def test_parse_superchem_option_answer_handles_common_formats(self) -> None:
         valid_options = ("A", "B", "C", "D")
-        self.assertEqual("B", benchmark_test.parse_superchem_option_answer("FINAL ANSWER: B", valid_options=valid_options))
-        self.assertEqual("A|D", benchmark_test.parse_superchem_option_answer("Option A and D are correct.", valid_options=valid_options))
+        self.assertEqual("B", evaluators.parse_superchem_option_answer("FINAL ANSWER: B", valid_options=valid_options))
+        self.assertEqual("A|D", evaluators.parse_superchem_option_answer("Option A and D are correct.", valid_options=valid_options))
         self.assertEqual(
             "B|C",
-            benchmark_test.parse_superchem_option_answer('{"answer": ["C", "B"]}', valid_options=valid_options),
+            evaluators.parse_superchem_option_answer('{"answer": ["C", "B"]}', valid_options=valid_options),
         )
 
     def test_ensure_runtime_bundle_copies_superchem_images(self) -> None:
@@ -1488,7 +1501,7 @@ Points: 0.5, Item: Second criterion
             source_image = temp_dir / "assets" / "source.png"
             source_image.parent.mkdir(parents=True)
             source_image.write_bytes(b"image-bytes")
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo-mm",
                 dataset="superchem",
                 source_file=str(data_dir / "superchem.jsonl"),
@@ -1504,7 +1517,7 @@ Points: 0.5, Item: Second criterion
                     "option_image_paths": {},
                 },
             )
-            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
             assert bundle is not None
             self.assertTrue(bundle.question_markdown.is_file())
             self.assertIn("Local images to inspect", bundle.question_markdown.read_text(encoding="utf-8"))
@@ -1518,7 +1531,7 @@ Points: 0.5, Item: Second criterion
             data_dir = temp_dir / "data"
             assets_dir = temp_dir / "assets"
             locator = "/media/uploads/question-visible.png"
-            visible_image = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator)
+            visible_image = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator)
             visible_image.parent.mkdir(parents=True)
             visible_image.write_bytes(b"visible")
             noisy_paths: list[str] = []
@@ -1528,7 +1541,7 @@ Points: 0.5, Item: Second criterion
                 noisy.write_bytes(b"noise")
                 noisy_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
             visible_relpath = os.path.relpath(visible_image, start=data_dir).replace(os.sep, "/")
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-visible-question-mm",
                 dataset="superchem",
                 source_file=str(data_dir / "superchem.jsonl"),
@@ -1545,7 +1558,7 @@ Points: 0.5, Item: Second criterion
                 },
             )
 
-            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
             assert bundle is not None
             markdown = bundle.question_markdown.read_text(encoding="utf-8")
@@ -1562,8 +1575,8 @@ Points: 0.5, Item: Second criterion
             assets_dir = temp_dir / "assets"
             locator_b = "/media/uploads/option-b.png"
             locator_c = "https://superchem.pku.edu.cn/media/uploads/option-c.jpg"
-            option_b = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator_b)
-            option_c = assets_dir / benchmark_test._superchem_asset_cache_relative_path(locator_c)
+            option_b = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator_b)
+            option_c = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator_c)
             option_b.parent.mkdir(parents=True)
             option_c.parent.mkdir(parents=True)
             option_b.write_bytes(b"option-b")
@@ -1574,7 +1587,7 @@ Points: 0.5, Item: Second criterion
                 noisy.parent.mkdir(parents=True, exist_ok=True)
                 noisy.write_bytes(b"noise")
                 shared_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-visible-options-mm",
                 dataset="superchem",
                 source_file=str(data_dir / "superchem.jsonl"),
@@ -1599,7 +1612,7 @@ Points: 0.5, Item: Second criterion
                 },
             )
 
-            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
             assert bundle is not None
             markdown = bundle.question_markdown.read_text(encoding="utf-8")
@@ -1616,7 +1629,7 @@ Points: 0.5, Item: Second criterion
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             locator = "/media/uploads/missing-visible.png"
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-missing-visible-mm",
                 dataset="superchem",
                 source_file=str(temp_dir / "data" / "superchem.jsonl"),
@@ -1633,8 +1646,8 @@ Points: 0.5, Item: Second criterion
                 },
             )
 
-            with self.assertRaisesRegex(benchmark_test.BenchmarkError, "missing-visible"):
-                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            with self.assertRaisesRegex(runtime_bundles.RuntimeBundleError, "missing-visible"):
+                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
     def test_ensure_runtime_bundle_rejects_superchem_absolute_asset_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
@@ -1642,7 +1655,7 @@ Points: 0.5, Item: Second criterion
             source_image = temp_dir / "assets" / "source.png"
             source_image.parent.mkdir(parents=True)
             source_image.write_bytes(b"image-bytes")
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-absolute-mm",
                 dataset="superchem",
                 source_file=str(temp_dir / "data" / "superchem.jsonl"),
@@ -1658,13 +1671,13 @@ Points: 0.5, Item: Second criterion
                     "option_image_paths": {},
                 },
             )
-            with self.assertRaises(benchmark_test.BenchmarkError):
-                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            with self.assertRaises(runtime_bundles.RuntimeBundleError):
+                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
     def test_ensure_runtime_bundle_fails_when_superchem_multimodal_images_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-missing-mm",
                 dataset="superchem",
                 source_file="/tmp/superchem.jsonl",
@@ -1680,14 +1693,14 @@ Points: 0.5, Item: Second criterion
                     "option_image_paths": {},
                 },
             )
-            with self.assertRaises(benchmark_test.BenchmarkError):
-                benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            with self.assertRaises(runtime_bundles.RuntimeBundleError):
+                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
 
     def test_ensure_runtime_bundle_materializes_hle_base64_image(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             data_uri = "data:image/png;base64," + base64.b64encode(b"png-bytes").decode("ascii")
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="hle-chemistry-demo",
                 dataset="hle",
                 source_file="/tmp/hle.jsonl",
@@ -1700,14 +1713,14 @@ Points: 0.5, Item: Second criterion
                     "image": data_uri,
                 },
             )
-            bundle = benchmark_test.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
+            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
             assert bundle is not None
             self.assertEqual(1, len(bundle.image_files))
             self.assertEqual(b"png-bytes", bundle.image_files[0].read_bytes())
             question_text = bundle.question_markdown.read_text(encoding="utf-8")
             self.assertIn("# HLE Benchmark Record", question_text)
             self.assertIn("images/hle-image-01.png", question_text)
-            prompt = benchmark_test.build_single_llm_prompt(
+            prompt = build_single_llm_prompt(
                 record,
                 websearch_enabled=True,
                 skills_enabled=False,
@@ -1736,7 +1749,7 @@ Points: 0.5, Item: Second criterion
                     "final_submission": str(final_submission_path),
                 },
             }
-            short_text, full_text = benchmark_test.build_chemqa_full_response(qa_result=qa_result)
+            short_text, full_text = build_chemqa_full_response(qa_result=qa_result)
             self.assertEqual("F", short_text)
             self.assertIn("Summary:", full_text)
             self.assertIn("Probe A needs esterase cleavage", full_text)
@@ -1764,7 +1777,7 @@ Points: 0.5, Item: Second criterion
                 "artifact_paths": {"final_answer_artifact": str(final_artifact_path)},
             }
 
-            short_text, full_text = benchmark_test.build_chemqa_full_response(qa_result=qa_result)
+            short_text, full_text = build_chemqa_full_response(qa_result=qa_result)
 
             self.assertEqual("Catalysis proceeds through the two-step pathway.", short_text)
             self.assertEqual("Detailed pathway rationale.", full_text)
@@ -1783,7 +1796,7 @@ Points: 0.5, Item: Second criterion
                 ),
                 encoding="utf-8",
             )
-            short, full = benchmark_test.build_chemqa_full_response(
+            short, full = build_chemqa_full_response(
                 qa_result={"artifact_paths": {"final_answer_artifact": str(path)}}
             )
 
@@ -1810,14 +1823,14 @@ Points: 0.5, Item: Second criterion
                 },
             }
 
-            short_text, full_text = benchmark_test.build_chemqa_full_response(qa_result=qa_result)
+            short_text, full_text = build_chemqa_full_response(qa_result=qa_result)
 
             self.assertEqual("", short_text)
             self.assertIn("No candidate submission achieved acceptance.", full_text)
             self.assertNotIn("FINAL ANSWER:", full_text)
 
     def test_evaluate_superchem_multiple_choice_rpf(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="superchem-1",
             dataset="superchem",
             source_file="/tmp/superchem.jsonl",
@@ -1842,7 +1855,7 @@ Points: 0.5, Item: Second criterion
                 "summary": "partial",
             }
         )
-        result = benchmark_test.evaluate_superchem_multiple_choice_rpf(
+        result = evaluators.evaluate_superchem_multiple_choice_rpf(
             record,
             short_answer_text="A",
             full_response_text="Reasoning\nFINAL ANSWER: B",
@@ -1861,7 +1874,7 @@ Points: 0.5, Item: Second criterion
 
     def test_aggregate_results_groups_by_experiment(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -1927,7 +1940,7 @@ Points: 0.5, Item: Second criterion
                 skills_enabled=True,
                 execution_error_kind=None,
             ),
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -1995,7 +2008,7 @@ Points: 0.5, Item: Second criterion
                 execution_error_kind=None,
             ),
         ]
-        summary = benchmark_test.aggregate_results(sample)
+        summary = aggregate_results(sample)
         self.assertEqual(2, summary["groups"]["g1"]["count"])
         self.assertEqual(1, summary["groups"]["g1"]["pass_count"])
         self.assertEqual(3.0, summary["groups"]["g1"]["avg_elapsed_seconds"])
@@ -2022,13 +2035,13 @@ Points: 0.5, Item: Second criterion
         self.assertEqual(1, summary["groups"]["g1"]["workspace_archive_failed_count"])
 
         sample[0].runner_meta["workspace_isolation"]["audit_status"] = "unavailable"
-        unavailable_summary = benchmark_test.aggregate_results(sample)
+        unavailable_summary = aggregate_results(sample)
         self.assertEqual(0, unavailable_summary["groups"]["g1"]["workspace_isolation_ok_count"])
         self.assertEqual(2, unavailable_summary["groups"]["g1"]["workspace_isolation_failed_count"])
 
     def test_aggregate_results_tracks_evaluable_and_degraded_counts(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2066,7 +2079,7 @@ Points: 0.5, Item: Second criterion
                 degraded_execution=True,
                 execution_error_kind=None,
             ),
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2106,7 +2119,7 @@ Points: 0.5, Item: Second criterion
                 error="missing answer",
             ),
         ]
-        summary = benchmark_test.aggregate_results(sample)
+        summary = aggregate_results(sample)
         bucket = summary["groups"]["g1"]
         self.assertEqual(1, bucket["run_completed_count"])
         self.assertEqual(1, bucket["run_failed_count"])
@@ -2121,7 +2134,7 @@ Points: 0.5, Item: Second criterion
 
     def test_aggregate_results_includes_superchem_metrics(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2160,13 +2173,13 @@ Points: 0.5, Item: Second criterion
                 execution_error_kind=None,
             )
         ]
-        summary = benchmark_test.aggregate_results(sample)
+        summary = aggregate_results(sample)
         self.assertEqual(1.0, summary["groups"]["g1"]["avg_answer_accuracy"])
         self.assertEqual(0.75, summary["groups"]["g1"]["avg_rpf"])
 
     def test_aggregate_results_includes_hle_calibration_error(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2204,7 +2217,7 @@ Points: 0.5, Item: Second criterion
                 degraded_execution=False,
                 execution_error_kind=None,
             ),
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2242,7 +2255,7 @@ Points: 0.5, Item: Second criterion
                 degraded_execution=False,
                 execution_error_kind=None,
             ),
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2282,7 +2295,7 @@ Points: 0.5, Item: Second criterion
             ),
         ]
 
-        summary = benchmark_test.aggregate_results(sample)
+        summary = aggregate_results(sample)
 
         self.assertAlmostEqual(
             ((0.8 - 1.0) ** 2 + (0.6 - 0.0) ** 2) ** 0.5 / (2 ** 0.5),
@@ -2301,7 +2314,7 @@ Points: 0.5, Item: Second criterion
 
     def test_results_json_keeps_legacy_top_level_shape(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2339,7 +2352,7 @@ Points: 0.5, Item: Second criterion
                 degraded_execution=False,
                 execution_error_kind=None,
             ),
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2378,9 +2391,9 @@ Points: 0.5, Item: Second criterion
                 execution_error_kind=None,
             ),
         ]
-        summary = benchmark_test.aggregate_results(sample)
-        self.assertEqual("benchmarking.core.reporting", benchmark_test.GroupRecordResult.__module__)
-        self.assertEqual("benchmarking.core.reporting", benchmark_test.aggregate_results.__module__)
+        summary = aggregate_results(sample)
+        self.assertEqual("benchmarking.core.reporting", GroupRecordResult.__module__)
+        self.assertEqual("benchmarking.core.reporting", aggregate_results.__module__)
         self.assertEqual(["group_order", "groups", "group_subset"], list(summary.keys()))
         self.assertEqual(["g1"], summary["group_order"])
         self.assertIn("g1", summary["groups"])
@@ -2388,7 +2401,7 @@ Points: 0.5, Item: Second criterion
 
     def test_results_json_payload_adds_schema_version_without_dropping_legacy_keys(self) -> None:
         sample = [
-            benchmark_test.GroupRecordResult(
+            GroupRecordResult(
                 schema_version=2,
                 group_id="g1",
                 group_label="Group 1",
@@ -2427,13 +2440,13 @@ Points: 0.5, Item: Second criterion
                 execution_error_kind=None,
             )
         ]
-        summary = benchmark_test.aggregate_results(sample)
+        summary = aggregate_results(sample)
         payload = {
             "schema_version": 2,
             "status_axes_description": {
                 "evaluable": "whether a record has a trustworthy scoreable answer",
             },
-            "results": [benchmark_test.asdict(item) for item in sample],
+            "results": [asdict(item) for item in sample],
             "summary": summary,
             "errors": [],
         }
@@ -2443,7 +2456,7 @@ Points: 0.5, Item: Second criterion
         self.assertIn("errors", payload)
 
     def test_group_record_result_includes_evaluability_axes(self) -> None:
-        result = benchmark_test.GroupRecordResult(
+        result = GroupRecordResult(
             schema_version=2,
             group_id="g1",
             group_label="Group 1",
@@ -2488,7 +2501,7 @@ Points: 0.5, Item: Second criterion
 
     def test_judge_client_invokes_openclaw_with_configured_thinking(self) -> None:
         captured: dict[str, object] = {}
-        original_run_subprocess = benchmark_test.run_subprocess
+        original_run_subprocess = subprocess_utils.run_subprocess
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             agent_dir = root / "agents" / "benchmark-judge" / "agent"
@@ -2531,7 +2544,7 @@ Points: 0.5, Item: Second criterion
                     ),
                     encoding="utf-8",
                 )
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps({"result": {"payloads": [{"text": '{"items": [], "summary": "ok"}'}], "meta": {}}}),
@@ -2539,8 +2552,8 @@ Points: 0.5, Item: Second criterion
                 )
 
             try:
-                benchmark_test.run_subprocess = fake_run_subprocess
-                client = benchmark_test.JudgeClient(
+                subprocess_utils.run_subprocess = fake_run_subprocess
+                client = judge_runtime.JudgeClient(
                     judge_agent="benchmark-judge",
                     timeout_seconds=30,
                     config_path=config_path,
@@ -2561,14 +2574,14 @@ Points: 0.5, Item: Second criterion
                 self.assertIn("BENCHMARK_WORKSPACE_DIR", env)
                 self.assertIn("BENCHMARK_SKILL_SCRATCH_DIR", env)
             finally:
-                benchmark_test.run_subprocess = original_run_subprocess
+                subprocess_utils.run_subprocess = original_run_subprocess
 
     def test_judge_client_rejects_contaminated_verdict_after_collection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = root / "openclaw.json"
             config_path.write_text('{"agents":{"list":[]}}\n', encoding="utf-8")
-            completed = benchmark_test.subprocess.CompletedProcess(
+            completed = subprocess.CompletedProcess(
                 ["openclaw"],
                 0,
                 stdout=json.dumps(
@@ -2576,11 +2589,11 @@ Points: 0.5, Item: Second criterion
                 ),
                 stderr="",
             )
-            client = benchmark_test.JudgeClient(
+            client = judge_runtime.JudgeClient(
                 judge_agent="benchmark-judge",
                 timeout_seconds=30,
                 config_path=config_path,
-                contamination_auditor=lambda **_kwargs: benchmark_test.ContaminationAudit(
+                contamination_auditor=lambda **_kwargs: ContaminationAudit(
                     status="contaminated",
                     findings=(
                         {
@@ -2601,10 +2614,10 @@ Points: 0.5, Item: Second criterion
                 "postflight_entry_session_file": "",
                 "session_isolation_ok": True,
             }
-            with mock.patch.object(benchmark_test, "reset_agent_main_session_if_stale", return_value=session_audit):
-                with mock.patch.object(benchmark_test, "inspect_postflight_session", return_value=session_audit):
-                    with mock.patch.object(benchmark_test, "run_subprocess", return_value=completed):
-                        with self.assertRaisesRegex(benchmark_test.BenchmarkError, "contamination"):
+            with mock.patch.object(judge_runtime, "reset_agent_main_session_if_stale", return_value=session_audit):
+                with mock.patch.object(judge_runtime, "inspect_postflight_session", return_value=session_audit):
+                    with mock.patch.object(subprocess_utils, "run_subprocess", return_value=completed):
+                        with self.assertRaisesRegex(judge_runtime.JudgeError, "contamination"):
                             client.evaluate_json("score this")
 
             self.assertTrue(client.last_workspace_isolation["archive_ok"])
@@ -2613,7 +2626,7 @@ Points: 0.5, Item: Second criterion
 
     def test_judge_client_clears_stale_main_session_before_openclaw_call(self) -> None:
         captured: dict[str, object] = {}
-        original_run_subprocess = benchmark_test.run_subprocess
+        original_run_subprocess = subprocess_utils.run_subprocess
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             agent_dir = root / "agents" / "benchmark-judge" / "agent"
@@ -2667,7 +2680,7 @@ Points: 0.5, Item: Second criterion
                     ),
                     encoding="utf-8",
                 )
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps({"result": {"payloads": [{"text": '{"items": [], "summary": "ok"}'}], "meta": {}}}),
@@ -2675,8 +2688,8 @@ Points: 0.5, Item: Second criterion
                 )
 
             try:
-                benchmark_test.run_subprocess = fake_run_subprocess
-                client = benchmark_test.JudgeClient(
+                subprocess_utils.run_subprocess = fake_run_subprocess
+                client = judge_runtime.JudgeClient(
                     judge_agent="benchmark-judge",
                     timeout_seconds=30,
                     config_path=config_path,
@@ -2687,10 +2700,10 @@ Points: 0.5, Item: Second criterion
                 assert isinstance(store_seen, dict)
                 self.assertNotIn("agent:benchmark-judge:main", store_seen)
             finally:
-                benchmark_test.run_subprocess = original_run_subprocess
+                subprocess_utils.run_subprocess = original_run_subprocess
 
     def test_judge_client_rejects_postflight_session_mismatch_before_parsing_reply(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
+        original_run_subprocess = subprocess_utils.run_subprocess
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             agent_dir = root / "agents" / "benchmark-judge" / "agent"
@@ -2730,7 +2743,7 @@ Points: 0.5, Item: Second criterion
                     ),
                     encoding="utf-8",
                 )
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps({"result": {"payloads": [{"text": '{"untrusted": true}'}], "meta": {}}}),
@@ -2738,22 +2751,22 @@ Points: 0.5, Item: Second criterion
                 )
 
             try:
-                benchmark_test.run_subprocess = fake_run_subprocess
-                client = benchmark_test.JudgeClient(
+                subprocess_utils.run_subprocess = fake_run_subprocess
+                client = judge_runtime.JudgeClient(
                     judge_agent="benchmark-judge",
                     timeout_seconds=30,
                     config_path=config_path,
                 )
-                with self.assertRaises(benchmark_test.BenchmarkError) as ctx:
+                with self.assertRaises(judge_runtime.JudgeError) as ctx:
                     client.evaluate_json("score this")
                 message = str(ctx.exception)
                 self.assertIn("benchmark-judge-", message)
                 self.assertIn("old-judge-session", message)
             finally:
-                benchmark_test.run_subprocess = original_run_subprocess
+                subprocess_utils.run_subprocess = original_run_subprocess
 
     def test_judge_client_checks_postflight_before_parsing_bad_judge_stdout(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
+        original_run_subprocess = subprocess_utils.run_subprocess
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             agent_dir = root / "agents" / "benchmark-judge" / "agent"
@@ -2793,33 +2806,33 @@ Points: 0.5, Item: Second criterion
                     ),
                     encoding="utf-8",
                 )
-                return benchmark_test.subprocess.CompletedProcess(command, 0, stdout="not-json", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="not-json", stderr="")
 
             try:
-                benchmark_test.run_subprocess = fake_run_subprocess
-                client = benchmark_test.JudgeClient(
+                subprocess_utils.run_subprocess = fake_run_subprocess
+                client = judge_runtime.JudgeClient(
                     judge_agent="benchmark-judge",
                     timeout_seconds=30,
                     config_path=config_path,
                 )
-                with self.assertRaises(benchmark_test.BenchmarkError) as ctx:
+                with self.assertRaises(judge_runtime.JudgeError) as ctx:
                     client.evaluate_json("score this")
                 message = str(ctx.exception)
                 self.assertIn("session isolation failed", message)
                 self.assertIn("old-judge-session", message)
                 self.assertNotIn("JSON decode failed", message)
             finally:
-                benchmark_test.run_subprocess = original_run_subprocess
+                subprocess_utils.run_subprocess = original_run_subprocess
 
     def test_single_llm_runner_invokes_wrapper_with_configured_thinking(self) -> None:
         captured: dict[str, object] = {}
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 captured["command"] = list(command)
                 captured["env"] = dict(env or {})
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -2846,9 +2859,9 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
@@ -2856,7 +2869,7 @@ Points: 0.5, Item: Second criterion
                 configured_skills=("chem-calculator", "paper-retrieval"),
                 benchmark_agent_thinking="medium",
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="demo",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -2865,7 +2878,7 @@ Points: 0.5, Item: Second criterion
                 reference_answer="5",
                 payload={},
             )
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
             self.assertEqual("5", out.short_answer_text)
             command = captured["command"]
             assert isinstance(command, list)
@@ -2884,15 +2897,15 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(1, audit["tool_call_count"])
             self.assertTrue(out.runner_meta["session_isolation"]["session_isolation_ok"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_marks_session_isolation_failure_unscored(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -2917,16 +2930,16 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
                 configured_skills=("chem-calculator",),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="demo",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -2936,26 +2949,26 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             self.assertFalse(out.should_score())
             self.assertIsNotNone(out.failure)
             assert out.failure is not None
             self.assertEqual("session_isolation_failed", out.failure.code)
             self.assertIn("old-session", out.failure.message)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_rejects_invalid_stdout_payloads_without_scoring_empty_answer(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -2976,14 +2989,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="demo",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -2993,30 +3006,30 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_result_contract_invalid", out.failure.code)
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_marks_openclaw_timeout_payload_unscored(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             timeout_text = (
                 "Request timed out before a response was generated. "
                 "Please try again, or increase `agents.defaults.timeoutSeconds` in your config."
             )
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3040,15 +3053,15 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
                 timeout_retries=0,
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="demo",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -3058,26 +3071,26 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_response_timeout", out.failure.code)
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertTrue(out.runner_meta["agent_timeout_detected"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_rejects_short_llm_request_timeout_sentinel(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3094,15 +3107,15 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
                 timeout_retries=0,
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -3112,23 +3125,23 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_response_timeout", out.failure.code)
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertEqual("LLM request timed out.", out.runner_meta["candidate_answer_contract"]["raw_text"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_timeout_sentinel_then_succeeds_with_backoff(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
             sleeps: list[float] = []
 
@@ -3142,8 +3155,8 @@ Points: 0.5, Item: Second criterion
                     )
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3152,9 +3165,9 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=sleeps.append,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual("B", out.short_answer_text)
             self.assertEqual(2, len(calls))
             self.assertEqual([5], sleeps)
@@ -3168,14 +3181,14 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(2, retry_meta["attempts"])
             self.assertEqual("agent_response_timeout", retry_meta["attempt_history"][0]["failure_code"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_replay_invalid_only_with_timeout_prompt_error(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
@@ -3197,8 +3210,8 @@ Points: 0.5, Item: Second criterion
                     )
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3206,20 +3219,20 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual(2, len(calls))
             self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_does_not_retry_plain_replay_invalid_without_timeout_evidence(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
@@ -3231,8 +3244,8 @@ Points: 0.5, Item: Second criterion
                     is_error=True,
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3240,9 +3253,9 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_response_unavailable", out.failure.code)
             self.assertEqual(1, len(calls))
@@ -3253,14 +3266,14 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
             self.assertEqual(diagnostics, out.runner_meta["agent_error"]["replay_invalid_diagnostics"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_keeps_complete_replay_invalid_answer_native(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 return self._single_llm_completed_process(
@@ -3278,8 +3291,8 @@ Points: 0.5, Item: Second criterion
                     },
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3288,10 +3301,10 @@ Points: 0.5, Item: Second criterion
 
             out = runner.run(
                 self._single_llm_record(eval_kind="verifier_grounded"),
-                benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"],
+                experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
             )
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertIsNone(out.recovery)
             self.assertTrue(out.should_score())
             self.assertEqual("CCO", out.short_answer_text)
@@ -3299,14 +3312,14 @@ Points: 0.5, Item: Second criterion
             self.assertNotIn("agent_error", out.runner_meta)
             self.assertEqual("replay_invalid", out.runner_meta["convergence"]["replay_invalid_diagnostics"]["reason"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_structured_meta_timeout(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
@@ -3319,8 +3332,8 @@ Points: 0.5, Item: Second criterion
                     )
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3328,30 +3341,30 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual(2, len(calls))
             self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_subprocess_timeout_expired(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 calls.append(command)
                 if len(calls) == 1:
-                    raise benchmark_test.subprocess.TimeoutExpired(command, timeout=930)
+                    raise subprocess.TimeoutExpired(command, timeout=930)
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3359,21 +3372,21 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual(2, len(calls))
             self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
             self.assertEqual("TimeoutExpired", out.runner_meta["timeout_retry"]["attempt_history"][0]["exception_type"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_classifies_openclaw_config_error_without_timeout_retry(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
             stderr = (
                 "Error: agent: failed to apply resolved secret assignment at "
@@ -3383,10 +3396,10 @@ Points: 0.5, Item: Second criterion
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 calls.append(command)
                 self.assertIn("--timeout", command)
-                return benchmark_test.subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3394,9 +3407,9 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("openclaw_config_secret_assignment_error", out.failure.code)
             self.assertEqual("openclaw_config", out.failure.details["layer"])
@@ -3406,20 +3419,20 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("openclaw_config_secret_assignment_error", out.runner_meta["execution_error"]["code"])
             self.assertEqual("openclaw_config", out.runner_meta["execution_error"]["layer"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_openclaw_subprocess_provider_timeout(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 calls.append(command)
                 if len(calls) == 1:
-                    return benchmark_test.subprocess.CompletedProcess(
+                    return subprocess.CompletedProcess(
                         command,
                         1,
                         stdout="",
@@ -3427,8 +3440,8 @@ Points: 0.5, Item: Second criterion
                     )
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3436,9 +3449,9 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=lambda seconds: None,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual(2, len(calls))
             self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
             self.assertEqual(
@@ -3446,8 +3459,8 @@ Points: 0.5, Item: Second criterion
                 out.runner_meta["timeout_retry"]["attempt_history"][0]["failure_code"],
             )
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_retries_http_and_transport_timeout_family(self) -> None:
         retryable_errors = [
@@ -3459,10 +3472,10 @@ Points: 0.5, Item: Second criterion
         ]
         for error_text in retryable_errors:
             with self.subTest(error_text=error_text):
-                original_run_subprocess = benchmark_test.run_subprocess
-                original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+                original_run_subprocess = subprocess_utils.run_subprocess
+                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
                 try:
-                    benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
                     calls: list[list[str]] = []
 
                     def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
@@ -3471,8 +3484,8 @@ Points: 0.5, Item: Second criterion
                             return self._single_llm_completed_process(command, text=error_text)
                         return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-                    benchmark_test.run_subprocess = fake_run_subprocess
-                    runner = benchmark_test.SingleLLMRunner(
+                    subprocess_utils.run_subprocess = fake_run_subprocess
+                    runner = runner_adapters.SingleLLMRunner(
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
                         config_path=Path("/tmp/single.json"),
@@ -3482,15 +3495,15 @@ Points: 0.5, Item: Second criterion
 
                     out = runner.run(
                         self._single_llm_record(),
-                        benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"],
+                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
                     )
 
-                    self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+                    self.assertEqual(RunStatus.COMPLETED, out.status)
                     self.assertEqual(2, len(calls))
                     self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
                 finally:
-                    benchmark_test.run_subprocess = original_run_subprocess
-                    benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+                    subprocess_utils.run_subprocess = original_run_subprocess
+                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_does_not_retry_non_model_timeout_family(self) -> None:
         non_retryable_errors = [
@@ -3506,18 +3519,18 @@ Points: 0.5, Item: Second criterion
         ]
         for error_text in non_retryable_errors:
             with self.subTest(error_text=error_text):
-                original_run_subprocess = benchmark_test.run_subprocess
-                original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+                original_run_subprocess = subprocess_utils.run_subprocess
+                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
                 try:
-                    benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
                     calls: list[list[str]] = []
 
                     def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                         calls.append(command)
                         return self._single_llm_completed_process(command, text=error_text)
 
-                    benchmark_test.run_subprocess = fake_run_subprocess
-                    runner = benchmark_test.SingleLLMRunner(
+                    subprocess_utils.run_subprocess = fake_run_subprocess
+                    runner = runner_adapters.SingleLLMRunner(
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
                         config_path=Path("/tmp/single.json"),
@@ -3527,21 +3540,21 @@ Points: 0.5, Item: Second criterion
 
                     out = runner.run(
                         self._single_llm_record(),
-                        benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"],
+                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
                     )
 
-                    self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+                    self.assertEqual(RunStatus.FAILED, out.status)
                     self.assertEqual(1, len(calls))
                     self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
                 finally:
-                    benchmark_test.run_subprocess = original_run_subprocess
-                    benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+                    subprocess_utils.run_subprocess = original_run_subprocess
+                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_exhausts_timeout_retries_with_metadata(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             calls: list[list[str]] = []
             sleeps: list[float] = []
 
@@ -3553,8 +3566,8 @@ Points: 0.5, Item: Second criterion
                     meta={"aborted": True, "livenessState": "blocked"},
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3564,9 +3577,9 @@ Points: 0.5, Item: Second criterion
                 sleep_fn=sleeps.append,
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_response_timeout", out.failure.code)
             self.assertEqual(4, len(calls))
@@ -3579,47 +3592,47 @@ Points: 0.5, Item: Second criterion
             self.assertEqual([5, 15, 45], retry_meta["backoff_seconds"])
             self.assertEqual(4, len(retry_meta["attempt_history"]))
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_subprocess_timeout_covers_finalization_rescue(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             timeouts: list[float | None] = []
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 timeouts.append(timeout)
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
-                convergence_policy=benchmark_test.ConvergencePolicy(
+                convergence_policy=ConvergencePolicy(
                     timeout_seconds=900,
                 ),
             )
 
-            out = runner.run(self._single_llm_record(), benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertEqual([1020], timeouts)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_classifies_stream_read_error_before_answer_contract(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3639,14 +3652,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -3656,9 +3669,9 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_stream_read_error", out.failure.code)
             self.assertEqual("", out.answer.full_response_text)
@@ -3666,21 +3679,21 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("agent_stream_read_error", out.runner_meta["agent_error"]["kind"])
             self.assertNotIn("candidate_answer_contract", out.runner_meta)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_classifies_openclaw_no_response_fallback(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             fallback_text = (
                 "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — "
                 "please verify before retrying."
             )
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3699,14 +3712,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -3716,26 +3729,26 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("agent_response_unavailable", out.failure.code)
             self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
             self.assertIn("replay_invalid_diagnostics", out.runner_meta["agent_error"])
             self.assertFalse(out.should_score())
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_marks_finalization_rescue_as_recovered(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3761,14 +3774,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -3778,26 +3791,26 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertEqual(RunStatus.RECOVERED, out.status)
             self.assertTrue(out.should_score())
             self.assertEqual("Visible reason.\nFINAL ANSWER: B", out.answer.full_response_text)
             assert out.recovery is not None
             self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
             self.assertEqual("single-llm-finalization-rescue", out.runner_meta["recovery_mode"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_marks_research_wide_rescue_as_recovered(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3830,14 +3843,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="research-demo",
                 dataset="frontierscience",
                 source_file="/tmp/demo.jsonl",
@@ -3847,22 +3860,22 @@ Points: 0.5, Item: Second criterion
                 payload={"track": "research"},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertEqual(RunStatus.RECOVERED, out.status)
             self.assertTrue(out.should_score())
             self.assertIn("## FINAL ANSWER", out.answer.full_response_text)
             assert out.recovery is not None
             self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_accepts_native_research_conclusion_with_blocked_meta(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             research_answer = (
                 "## Evidence ledger\n"
                 "The requested source-specific claims are checked above.\n\n"
@@ -3871,7 +3884,7 @@ Points: 0.5, Item: Second criterion
             )
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3889,14 +3902,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="research-demo",
                 dataset="frontierscience",
                 source_file="/tmp/demo.jsonl",
@@ -3906,22 +3919,22 @@ Points: 0.5, Item: Second criterion
                 payload={"track": "research"},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertTrue(out.should_score())
             self.assertEqual(research_answer, out.answer.full_response_text)
             self.assertNotIn("agent_error", out.runner_meta)
             self.assertFalse(out.runner_meta["candidate_answer_contract"]["has_research_final_marker"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_reports_research_final_marker_metadata(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             research_answer = (
                 "## Evidence ledger\n"
                 "The requested source-specific claims are checked above.\n\n"
@@ -3930,7 +3943,7 @@ Points: 0.5, Item: Second criterion
             )
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3947,14 +3960,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="research-demo",
                 dataset="frontierscience",
                 source_file="/tmp/demo.jsonl",
@@ -3964,23 +3977,23 @@ Points: 0.5, Item: Second criterion
                 payload={"track": "research"},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertTrue(out.should_score())
             self.assertTrue(out.runner_meta["candidate_answer_contract"]["has_research_final_marker"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_rejects_superchem_response_without_final_answer_marker(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -3997,14 +4010,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -4014,26 +4027,26 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
             self.assertEqual("", out.answer.full_response_text)
             self.assertFalse(out.should_score())
             self.assertIn("short_answer_text", out.failure.details["missing_fields"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_accepts_markdown_final_answer_marker(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -4050,14 +4063,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="superchem-demo",
                 dataset="superchem",
                 source_file="/tmp/demo.jsonl",
@@ -4067,25 +4080,25 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+            self.assertEqual(RunStatus.COMPLETED, out.status)
             self.assertTrue(out.should_score())
             self.assertEqual("B", out.short_answer_text)
             self.assertEqual("Visible reasoning.\n**FINAL ANSWER:** B", out.full_response_text)
             self.assertTrue(out.runner_meta["candidate_answer_contract"]["has_final_answer_marker"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_rejects_hle_response_without_answer_field(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -4102,14 +4115,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="hle-demo",
                 dataset="hle",
                 source_file="/tmp/hle.jsonl",
@@ -4119,25 +4132,25 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             assert out.failure is not None
             self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
             self.assertFalse(out.should_score())
             self.assertIn("Answer:", out.failure.message)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_returns_recovered_for_transcript_answer(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -4161,14 +4174,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="hle-demo",
                 dataset="hle",
                 source_file="/tmp/demo.jsonl",
@@ -4178,9 +4191,9 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+            self.assertEqual(RunStatus.RECOVERED, out.status)
             self.assertTrue(out.should_score())
             self.assertIsNotNone(out.recovery)
             assert out.recovery is not None
@@ -4189,17 +4202,17 @@ Points: 0.5, Item: Second criterion
             self.assertIn("convergence_policy", out.runner_meta)
             self.assertEqual(8, out.runner_meta["convergence"]["tool_call_count"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_single_llm_runner_does_not_score_recovered_answer_when_session_isolation_fails(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
         try:
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
 
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps(
@@ -4222,14 +4235,14 @@ Points: 0.5, Item: Second criterion
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            runner = benchmark_test.SingleLLMRunner(
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = runner_adapters.SingleLLMRunner(
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
                 runtime_bundle_root=Path("/tmp"),
             )
-            record = benchmark_test.BenchmarkRecord(
+            record = BenchmarkRecord(
                 record_id="hle-demo",
                 dataset="hle",
                 source_file="/tmp/demo.jsonl",
@@ -4239,38 +4252,38 @@ Points: 0.5, Item: Second criterion
                 payload={},
             )
 
-            out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
 
-            self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+            self.assertEqual(RunStatus.FAILED, out.status)
             self.assertFalse(out.should_score())
             assert out.failure is not None
             self.assertEqual("session_isolation_failed", out.failure.code)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_chemqa_runner_uses_run_scoped_writable_template_and_command_map_dirs(self) -> None:
         captured: dict[str, object] = {}
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = benchmark_test.ChemQARunner._ensure_artifacts
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
                 captured["command"] = list(command)
                 captured["env"] = dict(env or {})
-                return benchmark_test.subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     command,
                     0,
                     stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                     stderr="",
                 )
 
-            benchmark_test.run_subprocess = fake_run_subprocess
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -4292,10 +4305,10 @@ Points: 0.5, Item: Second criterion
                 )
                 return qa_result_path
 
-            benchmark_test.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 launch_root = Path(tmpdir) / "chemqa-launch"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4306,7 +4319,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4315,7 +4328,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
                 self.assertEqual("c1ccccc1", out.short_answer_text)
                 command = captured["command"]
                 assert isinstance(command, list)
@@ -4332,30 +4345,30 @@ Points: 0.5, Item: Second criterion
                 env = captured["env"]
                 assert isinstance(env, dict)
                 self.assertEqual(str(launch_root / "chemqa_skills_on" / "chembench-0001" / "home"), env["HOME"])
-                self.assertEqual(str(benchmark_test.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
+                self.assertEqual(str(runner_adapters.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_archives_completed_artifacts_under_output_root(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = benchmark_test.ChemQARunner._ensure_artifacts
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -4389,11 +4402,11 @@ Points: 0.5, Item: Second criterion
                 (scratch_dir / "final_answer.md").write_text("c1ccccc1\n", encoding="utf-8")
                 return qa_result_path
 
-            benchmark_test.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4404,7 +4417,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4414,9 +4427,9 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+                self.assertEqual(RunStatus.COMPLETED, out.status)
                 archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / out.runner_meta["run_id"]
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "qa_result.json"), out.runner_meta["qa_result_path"])
@@ -4426,27 +4439,27 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((archive_dir / "chemqa_review_protocol.yaml").is_file())
                 self.assertTrue((archive_dir / "final_answer.md").is_file())
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_uses_canonical_qa_result_path_from_terminal_status(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = benchmark_test.ChemQARunner._ensure_artifacts
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 canonical_dir = Path(tmpdir) / "chemqa-root" / "generated" / "artifacts" / "status-run"
@@ -4484,7 +4497,7 @@ Points: 0.5, Item: Second criterion
                     encoding="utf-8",
                 )
 
-                benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+                runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                     "run_id": run_id,
                     "status": "done",
                     "terminal_state": "completed",
@@ -4498,9 +4511,9 @@ Points: 0.5, Item: Second criterion
                 def fail_if_called(self, run_id, *, env, run_status, wait_seconds=120, poll_seconds=5):
                     raise AssertionError("_ensure_artifacts should not rebuild when canonical qa_result_path is readable")
 
-                benchmark_test.ChemQARunner._ensure_artifacts = fail_if_called
+                runner_adapters.ChemQARunner._ensure_artifacts = fail_if_called
                 output_root = Path(tmpdir) / "benchmark-output"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4511,7 +4524,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=output_root / "chemqa-launch",
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4521,43 +4534,43 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+                self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("7.59", out.short_answer_text)
                 self.assertEqual(str(output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / out.runner_meta["run_id"] / "qa_result.json"), out.runner_meta["qa_result_path"])
                 self.assertIn("final_answer_artifact", out.runner_meta["archived_artifact_paths"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_archives_protocol_and_rebuilds_qa_result_for_failed_terminal_run(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_build_candidate_submission_fallback = benchmark_test.ChemQARunner._build_candidate_submission_fallback
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_build_candidate_submission_fallback = runner_adapters.ChemQARunner._build_candidate_submission_fallback
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "lane_stalled",
                 "artifact_collection": {"status": "error"},
                 "protocol_path": str(self.chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id / "chemqa_review_protocol.yaml"),
             }
-            benchmark_test.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
+            runner_adapters.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
 
             def fake_collect_artifacts(self, *, source_dir, output_dir, env):
                 output_dir.mkdir(parents=True, exist_ok=True)
@@ -4575,12 +4588,12 @@ Points: 0.5, Item: Second criterion
                 )
                 (output_dir / "final_answer.md").write_text("No accepted answer.\n", encoding="utf-8")
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4591,7 +4604,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4609,9 +4622,9 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+                self.assertEqual(RunStatus.FAILED, out.status)
                 archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / run_id
                 self.assertEqual(str(archive_dir), out.runner_meta["archive_dir"])
                 self.assertEqual(str(archive_dir / "chemqa_review_protocol.yaml"), out.runner_meta["archived_protocol_path"])
@@ -4619,29 +4632,29 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((archive_dir / "chemqa_review_protocol.yaml").is_file())
                 self.assertTrue((archive_dir / "qa_result.json").is_file())
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_with_candidate_fallback_returns_scored_recovered_result(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -4653,13 +4666,13 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4670,7 +4683,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4716,9 +4729,9 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+                self.assertEqual(RunStatus.RECOVERED, out.status)
                 self.assertEqual("CCO", out.short_answer_text)
                 self.assertIn("FINAL ANSWER: CCO", out.full_response_text)
                 self.assertTrue(out.should_score())
@@ -4729,30 +4742,30 @@ Points: 0.5, Item: Second criterion
                 self.assertIn("proposal_path", out.raw["fallback"])
                 self.assertEqual(str(proposal_path.resolve()), str(Path(out.raw["fallback"]["proposal_path"]).resolve()))
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_uses_failure_artifact_answer_projection(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_build_candidate_submission_fallback = benchmark_test.ChemQARunner._build_candidate_submission_fallback
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_build_candidate_submission_fallback = runner_adapters.ChemQARunner._build_candidate_submission_fallback
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "protocol_stalled",
@@ -4766,12 +4779,12 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4782,7 +4795,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=output_root / "chemqa-launch",
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="superchem-0001",
                     dataset="superchem",
                     source_file="/tmp/demo.jsonl",
@@ -4848,38 +4861,38 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.RECOVERED, out.status)
+                self.assertEqual(RunStatus.RECOVERED, out.status)
                 self.assertEqual("B", out.short_answer_text)
                 self.assertEqual("failure_artifact", out.recovery.source)
                 self.assertEqual("failure_artifact_answer_projection", out.recovery.recovery_mode)
                 self.assertTrue(out.runner_meta["fallback_used"])
                 self.assertEqual("failure_artifact_answer_projection", out.runner_meta["recovery_mode"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_with_final_answer_preview_stays_failed_and_unscored(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -4892,13 +4905,13 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4909,7 +4922,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -4935,9 +4948,9 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.FAILED, out.status)
+                self.assertEqual(RunStatus.FAILED, out.status)
                 self.assertFalse(out.should_score())
                 self.assertTrue(out.runner_meta["fallback_used"])
                 self.assertEqual("run-status-final-answer-preview", out.runner_meta["fallback_source"])
@@ -4946,28 +4959,28 @@ Points: 0.5, Item: Second criterion
                 self.assertEqual("low_confidence_recovered", out.runner_meta["answer_reliability"])
                 self.assertEqual("preview_requires_strict_validation", out.runner_meta["recovery_reason"])
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_reconciles_failed_run_status_with_completed_archived_rejection(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -4994,12 +5007,12 @@ Points: 0.5, Item: Second criterion
                 )
                 (output_dir / "final_answer.md").write_text("No accepted answer.\n", encoding="utf-8")
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5010,7 +5023,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -5028,9 +5041,9 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+                self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
                 self.assertIn("No accepted answer", out.full_response_text)
                 self.assertEqual("rejected", out.runner_meta["acceptance_status"])
@@ -5040,28 +5053,28 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((archive_dir / "chemqa_review_protocol.yaml").is_file())
                 self.assertTrue((archive_dir / "qa_result.json").is_file())
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_reconciled_rejected_run_does_not_expose_blob_as_short_answer(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = benchmark_test.ChemQARunner._collect_artifacts_from_source
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -5097,12 +5110,12 @@ Points: 0.5, Item: Second criterion
                     encoding="utf-8",
                 )
 
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5113,7 +5126,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -5131,34 +5144,34 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
-                self.assertEqual(benchmark_test.RunStatus.COMPLETED, out.status)
+                self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
                 self.assertIn("No candidate submission achieved acceptance.", out.full_response_text)
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_archives_repeated_runs_into_distinct_run_id_directories(self) -> None:
-        original_run_subprocess = benchmark_test.run_subprocess
-        original_ensure_runtime_bundle = benchmark_test.ensure_runtime_bundle
-        original_wait_for_terminal_status = benchmark_test.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = benchmark_test.ChemQARunner._ensure_artifacts
-        original_invoke_cleanroom_cleanup = benchmark_test.invoke_cleanroom_cleanup
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
-            benchmark_test.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: benchmark_test.subprocess.CompletedProcess(
+            subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
                 command,
                 0,
                 stdout=json.dumps({"run_id": "demo", "launch_mode": "run", "launched": {"returncode": 0}}),
                 stderr="",
             )
-            benchmark_test.ensure_runtime_bundle = lambda record, bundle_root: None
-            benchmark_test.invoke_cleanroom_cleanup = lambda manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            benchmark_test.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
+            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -5188,11 +5201,11 @@ Points: 0.5, Item: Second criterion
                 )
                 return qa_result_path
 
-            benchmark_test.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
-                runner = benchmark_test.ChemQARunner(
+                runner = runner_adapters.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5203,7 +5216,7 @@ Points: 0.5, Item: Second criterion
                     runtime_bundle_root=Path(tmpdir) / "bundles",
                     launch_workspace_root=launch_root,
                 )
-                record = benchmark_test.BenchmarkRecord(
+                record = BenchmarkRecord(
                     record_id="chembench-0001",
                     dataset="chembench",
                     source_file="/tmp/demo.jsonl",
@@ -5215,8 +5228,8 @@ Points: 0.5, Item: Second criterion
                 stamps = iter(["20260424-000001", "20260424-000002"])
                 runner._now_stamp = lambda: next(stamps)
 
-                out1 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
-                out2 = runner.run(record, benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out1 = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out2 = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertNotEqual(out1.runner_meta["run_id"], out2.runner_meta["run_id"])
                 archive1 = Path(out1.runner_meta["archive_dir"])
@@ -5225,15 +5238,15 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((archive1 / "qa_result.json").is_file())
                 self.assertTrue((archive2 / "qa_result.json").is_file())
         finally:
-            benchmark_test.run_subprocess = original_run_subprocess
-            benchmark_test.ensure_runtime_bundle = original_ensure_runtime_bundle
-            benchmark_test.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            benchmark_test.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            benchmark_test.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+            CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
+            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_run_group_continues_after_record_failure(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="r1",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -5242,7 +5255,7 @@ Points: 0.5, Item: Second criterion
                 reference_answer="4",
                 payload={"target": "4"},
             ),
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="r2",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -5261,19 +5274,22 @@ Points: 0.5, Item: Second criterion
                 _ = group
                 if getattr(record, "record_id") == "r1":
                     raise RuntimeError("boom")
-                return benchmark_test.RunOutput(
-                    short_answer_text="5",
-                    full_response_text="Reasoning\nFINAL ANSWER: 5",
+                return RunnerResult(
+                    status=RunStatus.COMPLETED,
+                    answer=AnswerPayload(
+                        short_answer_text="5",
+                        full_response_text="Reasoning\nFINAL ANSWER: 5",
+                    ),
                     raw={},
                     runner_meta={},
                 )
 
-        original_runner = benchmark_test.SingleLLMRunner
-        benchmark_test.SingleLLMRunner = StubSingleRunner
+        original_runner = runner_adapters.SingleLLMRunner
+        runner_adapters.SingleLLMRunner = StubSingleRunner
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["single_llm_skills_off"],
                     records=records,
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5293,10 +5309,10 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r1.json").exists())
                 self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r2.json").exists())
         finally:
-            benchmark_test.SingleLLMRunner = original_runner
+            runner_adapters.SingleLLMRunner = original_runner
 
     def test_run_group_passes_single_timeout_retry_options_to_runner(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="r1",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5313,9 +5329,9 @@ Points: 0.5, Item: Second criterion
 
             def run(self, record: object, group: object) -> object:
                 _ = record, group
-                return benchmark_test.RunnerResult(
-                    status=benchmark_test.RunStatus.COMPLETED,
-                    answer=benchmark_test.AnswerPayload(
+                return RunnerResult(
+                    status=RunStatus.COMPLETED,
+                    answer=AnswerPayload(
                         short_answer_text="4",
                         full_response_text="Reasoning\nFINAL ANSWER: 4",
                     ),
@@ -5323,12 +5339,12 @@ Points: 0.5, Item: Second criterion
                     runner_meta={},
                 )
 
-        original_runner = benchmark_test.SingleLLMRunner
-        benchmark_test.SingleLLMRunner = StubSingleRunner
+        original_runner = runner_adapters.SingleLLMRunner
+        runner_adapters.SingleLLMRunner = StubSingleRunner
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["single_llm_skills_off"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5350,10 +5366,10 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(2, captured["timeout_retries"])
             self.assertEqual((1, 3), captured["timeout_retry_backoff_seconds"])
         finally:
-            benchmark_test.SingleLLMRunner = original_runner
+            runner_adapters.SingleLLMRunner = original_runner
 
     def test_run_group_marks_unscored_recovery_as_execution_error(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="recovered-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5388,18 +5404,18 @@ Points: 0.5, Item: Second criterion
                 return recovered_result
 
         stub_runner = StubRunner()
-        original_build_runner = getattr(benchmark_test, "build_runner", None)
-        original_evaluate_answer = benchmark_test.evaluate_answer
+        original_build_runner = runner_adapters.build_runner
+        original_evaluate_answer = scoring_evaluation.evaluate_record
         try:
-            benchmark_test.build_runner = lambda **kwargs: stub_runner
+            runner_adapters.build_runner = lambda **kwargs: stub_runner
 
             def fail_evaluate_answer(*args, **kwargs):
                 raise AssertionError("evaluate_answer should not be called for unscored recovery")
 
-            benchmark_test.evaluate_answer = fail_evaluate_answer
+            scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5424,14 +5440,11 @@ Points: 0.5, Item: Second criterion
             self.assertEqual({"status": "done", "terminal_state": "failed"}, entry.raw["run_status"])
             self.assertEqual("ChemQA run `demo-run` terminated as failed (reason=stalled)", entry.error)
         finally:
-            if original_build_runner is None:
-                delattr(benchmark_test, "build_runner")
-            else:
-                benchmark_test.build_runner = original_build_runner
-            benchmark_test.evaluate_answer = original_evaluate_answer
+            runner_adapters.build_runner = original_build_runner
+            scoring_evaluation.evaluate_record = original_evaluate_answer
 
     def test_run_group_failed_result_axes_for_non_recovery(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="failed-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5440,30 +5453,30 @@ Points: 0.5, Item: Second criterion
             reference_answer="A",
             payload={},
         )
-        failed_result = benchmark_test.RunnerResult(
-            status=benchmark_test.RunStatus.FAILED,
-            answer=benchmark_test.AnswerPayload(short_answer_text="", full_response_text=""),
+        failed_result = RunnerResult(
+            status=RunStatus.FAILED,
+            answer=AnswerPayload(short_answer_text="", full_response_text=""),
             raw={"run_status": {"status": "done", "terminal_state": "failed"}},
             runner_meta={"run_id": "demo-run"},
-            failure=benchmark_test.FailureInfo(code="failed", message="runner failed"),
+            failure=FailureInfo(code="failed", message="runner failed"),
         )
 
         class StubRunner:
-            def run(self, record: object, group: object) -> benchmark_test.RunnerResult:
+            def run(self, record: object, group: object) -> RunnerResult:
                 return failed_result
 
-        original_build_runner = getattr(benchmark_test, "build_runner", None)
-        original_evaluate_answer = benchmark_test.evaluate_answer
+        original_build_runner = runner_adapters.build_runner
+        original_evaluate_answer = scoring_evaluation.evaluate_record
         try:
-            benchmark_test.build_runner = lambda **kwargs: StubRunner()
+            runner_adapters.build_runner = lambda **kwargs: StubRunner()
 
             def fail_evaluate_answer(*args, **kwargs):
                 raise AssertionError("evaluate_answer should not be called for failed non-recovery results")
 
-            benchmark_test.evaluate_answer = fail_evaluate_answer
+            scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5489,14 +5502,11 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("execution_error", entry.execution_error_kind)
             self.assertEqual("runner failed", entry.error)
         finally:
-            if original_build_runner is None:
-                delattr(benchmark_test, "build_runner")
-            else:
-                benchmark_test.build_runner = original_build_runner
-            benchmark_test.evaluate_answer = original_evaluate_answer
+            runner_adapters.build_runner = original_build_runner
+            scoring_evaluation.evaluate_record = original_evaluate_answer
 
     def test_run_group_scores_evaluable_recovery(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="recovered-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5505,9 +5515,9 @@ Points: 0.5, Item: Second criterion
             reference_answer="fallback-answer",
             payload={},
         )
-        recovered_result = benchmark_test.RunnerResult(
-            status=benchmark_test.RunStatus.RECOVERED,
-            answer=benchmark_test.AnswerPayload(
+        recovered_result = RunnerResult(
+            status=RunStatus.RECOVERED,
+            answer=AnswerPayload(
                 short_answer_text="fallback-answer",
                 full_response_text="FINAL ANSWER: fallback-answer",
             ),
@@ -5518,7 +5528,7 @@ Points: 0.5, Item: Second criterion
                 "fallback_source": "proposer-1-proposal",
                 "error": "ChemQA run `demo-run` terminated as failed (reason=stalled)",
             },
-            recovery=benchmark_test.RecoveryInfo(
+            recovery=RecoveryInfo(
                 source="candidate_submission",
                 scored=True,
                 evaluable=True,
@@ -5533,14 +5543,14 @@ Points: 0.5, Item: Second criterion
         )
 
         class StubRunner:
-            def run(self, record: object, group: object) -> benchmark_test.RunnerResult:
+            def run(self, record: object, group: object) -> RunnerResult:
                 return recovered_result
 
-        original_build_runner = getattr(benchmark_test, "build_runner", None)
-        original_evaluate_answer = benchmark_test.evaluate_answer
+        original_build_runner = runner_adapters.build_runner
+        original_evaluate_answer = scoring_evaluation.evaluate_record
         judge = object()
         try:
-            benchmark_test.build_runner = lambda **kwargs: StubRunner()
+            runner_adapters.build_runner = lambda **kwargs: StubRunner()
 
             def fake_evaluate_answer(
                 actual_record: object,
@@ -5549,13 +5559,13 @@ Points: 0.5, Item: Second criterion
                 full_response_text: str,
                 answer_text: str,
                 judge: object,
-            ) -> benchmark_test.EvaluationResult:
+            ) -> EvaluationResult:
                 self.assertIs(record, actual_record)
                 self.assertEqual("fallback-answer", short_answer_text)
                 self.assertEqual("FINAL ANSWER: fallback-answer", full_response_text)
                 self.assertEqual("FINAL ANSWER: fallback-answer", answer_text)
                 self.assertIs(judge, judge_obj)
-                return benchmark_test.EvaluationResult(
+                return EvaluationResult(
                     eval_kind="chembench_open_ended",
                     score=1.0,
                     max_score=1.0,
@@ -5567,10 +5577,10 @@ Points: 0.5, Item: Second criterion
                 )
 
             judge_obj = judge
-            benchmark_test.evaluate_answer = fake_evaluate_answer
+            scoring_evaluation.evaluate_record = fake_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5591,14 +5601,11 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("proposer-1-proposal", entry.runner_meta["fallback_source"])
             self.assertEqual({"status": "done", "terminal_state": "failed"}, entry.raw["run_status"])
         finally:
-            if original_build_runner is None:
-                delattr(benchmark_test, "build_runner")
-            else:
-                benchmark_test.build_runner = original_build_runner
-            benchmark_test.evaluate_answer = original_evaluate_answer
+            runner_adapters.build_runner = original_build_runner
+            scoring_evaluation.evaluate_record = original_evaluate_answer
 
     def test_run_group_accepts_structural_result_object_for_unscored_recovery(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="structural-recovery-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5636,18 +5643,18 @@ Points: 0.5, Item: Second criterion
                 return FakeResult()
 
         stub_runner = StubRunner()
-        original_build_runner = getattr(benchmark_test, "build_runner", None)
-        original_evaluate_answer = benchmark_test.evaluate_answer
+        original_build_runner = runner_adapters.build_runner
+        original_evaluate_answer = scoring_evaluation.evaluate_record
         try:
-            benchmark_test.build_runner = lambda **kwargs: stub_runner
+            runner_adapters.build_runner = lambda **kwargs: stub_runner
 
             def fail_evaluate_answer(*args, **kwargs):
                 raise AssertionError("evaluate_answer should not be called for unscored recovery")
 
-            benchmark_test.evaluate_answer = fail_evaluate_answer
+            scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5678,14 +5685,11 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("test-double", entry.recovery_mode)
             self.assertTrue(entry.degraded_execution)
         finally:
-            if original_build_runner is None:
-                delattr(benchmark_test, "build_runner")
-            else:
-                benchmark_test.build_runner = original_build_runner
-            benchmark_test.evaluate_answer = original_evaluate_answer
+            runner_adapters.build_runner = original_build_runner
+            scoring_evaluation.evaluate_record = original_evaluate_answer
 
     def test_run_group_structural_unscored_recovery_without_failure_attr_uses_runner_meta_error(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="structural-omitted-failure-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5722,18 +5726,18 @@ Points: 0.5, Item: Second criterion
                 return FakeResult()
 
         stub_runner = StubRunner()
-        original_build_runner = getattr(benchmark_test, "build_runner", None)
-        original_evaluate_answer = benchmark_test.evaluate_answer
+        original_build_runner = runner_adapters.build_runner
+        original_evaluate_answer = scoring_evaluation.evaluate_record
         try:
-            benchmark_test.build_runner = lambda **kwargs: stub_runner
+            runner_adapters.build_runner = lambda **kwargs: stub_runner
 
             def fail_evaluate_answer(*args, **kwargs):
                 raise AssertionError("evaluate_answer should not be called for unscored recovery")
 
-            benchmark_test.evaluate_answer = fail_evaluate_answer
+            scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
-                results = benchmark_test.run_group(
-                    group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                results = run_group_for_test(
+                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5758,15 +5762,12 @@ Points: 0.5, Item: Second criterion
             self.assertEqual({"status": "done", "terminal_state": "failed"}, entry.raw["run_status"])
             self.assertEqual("ChemQA run `demo-run` terminated as failed (reason=stalled)", entry.error)
         finally:
-            if original_build_runner is None:
-                delattr(benchmark_test, "build_runner")
-            else:
-                benchmark_test.build_runner = original_build_runner
-            benchmark_test.evaluate_answer = original_evaluate_answer
+            runner_adapters.build_runner = original_build_runner
+            scoring_evaluation.evaluate_record = original_evaluate_answer
 
     def test_materialize_group_failure_results_writes_error_entries(self) -> None:
         records = [
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="r1",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -5775,7 +5776,7 @@ Points: 0.5, Item: Second criterion
                 reference_answer="A",
                 payload={},
             ),
-            benchmark_test.BenchmarkRecord(
+            BenchmarkRecord(
                 record_id="r2",
                 dataset="chembench",
                 source_file="/tmp/demo.jsonl",
@@ -5786,8 +5787,8 @@ Points: 0.5, Item: Second criterion
             ),
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            results = benchmark_test.materialize_group_failure_results(
-                group=benchmark_test.EXPERIMENT_GROUPS["chemqa_skills_on"],
+            results = materialize_failure_results_for_test(
+                group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                 records=records,
                 output_root=Path(tmpdir),
                 error_message="group crashed",
@@ -5798,12 +5799,12 @@ Points: 0.5, Item: Second criterion
             self.assertTrue((Path(tmpdir) / "per-record" / "chemqa_skills_on" / "r2.json").exists())
 
     def test_benchmark_test_build_error_group_record_result_preserves_legacy_compatibility(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="demo-record",
             dataset="frontierscience",
             source_file="/tmp/frontier.jsonl",
             prompt="Question?",
-            grading=benchmark_test.GradingSpec(
+            grading=GradingSpec(
                 kind="frontierscience_research",
                 reference_answer="42",
                 subset="frontierscience_Research",
@@ -5811,8 +5812,8 @@ Points: 0.5, Item: Second criterion
             ),
             raw_payload={"track": "research"},
         )
-        entry = benchmark_test.build_error_group_record_result(
-            group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
+        entry = build_error_result_for_test(
+            group=experiments.EXPERIMENT_GROUPS["single_llm_skills_off"],
             record=record,
             error_message="boom",
             full_response_text="Reasoning\nFinal conclusion",
@@ -5823,7 +5824,7 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("Reasoning\nFinal conclusion", entry.answer_text)
 
     def test_shared_reporting_build_error_group_record_result_requires_explicit_dependencies(self) -> None:
-        record = benchmark_test.BenchmarkRecord(
+        record = BenchmarkRecord(
             record_id="demo-record",
             dataset="chembench",
             source_file="/tmp/demo.jsonl",
@@ -5834,7 +5835,7 @@ Points: 0.5, Item: Second criterion
         )
         with self.assertRaises(TypeError):
             shared_build_error_group_record_result(
-                group=benchmark_test.EXPERIMENT_GROUPS["single_llm_skills_off"],
+                group=experiments.EXPERIMENT_GROUPS["single_llm_skills_off"],
                 record=record,
                 error_message="group crashed",
             )
