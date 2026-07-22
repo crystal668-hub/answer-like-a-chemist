@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 from benchmarking.runtime.config import render_run_config
-from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, ProtectedRoot, WorkspaceTemplate
+from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, WorkspaceTemplate
+from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,

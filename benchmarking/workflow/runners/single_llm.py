@@ -25,10 +25,12 @@ from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceLease,
     AttemptWorkspaceManager,
+    WorkspaceIsolationError,
+)
+from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     WorkspaceAccessPolicy,
     WorkspaceAudit,
-    WorkspaceIsolationError,
     ensure_workspace_audit,
 )
 from benchmarking.runtime.session_isolation import (

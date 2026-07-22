@@ -12,11 +12,10 @@ from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
     AttemptWorkspaceLease,
-    WorkspaceAudit,
     WorkspaceIsolationError,
     WorkspaceLeaseSet,
-    ensure_workspace_audit,
 )
+from benchmarking.runtime.workspace_policy import WorkspaceAudit, ensure_workspace_audit
 from benchmarking.runtime.session_isolation import sanitize_agent_id
 
 
@@ -282,4 +281,3 @@ class ChemQAWorkspaceSupport:
             environment=os.environ,
             policy=policy,
         )
-

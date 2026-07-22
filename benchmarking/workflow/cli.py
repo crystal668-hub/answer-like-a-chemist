@@ -69,11 +69,13 @@ from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
     AttemptWorkspaceManager,
+    WorkspaceIsolationError,
+    default_workspace_templates,
+)
+from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     ProtectedRoot,
     WorkspaceAudit,
-    WorkspaceIsolationError,
-    default_workspace_templates,
     ensure_workspace_audit,
 )
 from benchmarking.runtime.config_pool import (

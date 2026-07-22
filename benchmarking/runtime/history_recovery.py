@@ -16,9 +16,9 @@ from benchmarking.core.datasets import load_records
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
-    ProtectedRoot,
     WorkspaceTemplate,
 )
+from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.scoring.evaluation import evaluate_record, register_default_evaluators
 
 

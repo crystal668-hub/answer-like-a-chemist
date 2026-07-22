@@ -12,11 +12,10 @@ from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
-    ContaminationAudit,
     WorkspaceIsolationError,
     WorkspaceLeaseSet,
-    adjudicate_workspace_findings,
 )
+from benchmarking.runtime.workspace_policy import ContaminationAudit, adjudicate_workspace_findings
 from benchmarking.workflow.runners.chemqa_artifacts import ChemQAArtifactSupport
 from benchmarking.workflow.runners.chemqa_workspaces import ChemQAWorkspaceSupport
 

@@ -57,7 +57,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry and implementations for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspaces and access policy, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess environment, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI, prompts, wave/group orchestration, single-LLM runner, and the ChemQA runner with dedicated artifact and workspace support modules. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -66,6 +66,12 @@ runbooks.
 `benchmarking.runtime.paths` is the shared path authority used by the package
 and scripts. The benchmark CLI is owned directly by `benchmarking.workflow.cli`;
 there is no root-level compatibility facade.
+
+Attempt workspace responsibilities are split by dependency direction:
+`benchmarking.runtime.workspace_policy` owns immutable access policy and audit
+adjudication, `benchmarking.runtime.workspace_audit` owns transcript and path
+evidence parsing, and `benchmarking.runtime.agent_workspace` owns workspace
+templates, leases, recovery, sealing, quarantine, and audit orchestration.
 
 ### Skill bundles
 

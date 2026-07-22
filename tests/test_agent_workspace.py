@@ -7,17 +7,19 @@ from pathlib import Path
 
 from benchmarking.runtime.agent_workspace import (
     SENTINEL_FILENAME,
-    AccessScope,
     AttemptIdentity,
     AttemptOutcome,
     AttemptWorkspaceManager,
+    WorkspaceIsolationError,
+    WorkspaceTemplate,
+    default_workspace_templates,
+)
+from benchmarking.runtime.workspace_policy import (
+    AccessScope,
     ProtectedRoot,
     WorkspaceAccessPolicy,
     WorkspaceAudit,
-    WorkspaceIsolationError,
-    WorkspaceTemplate,
     adjudicate_workspace_findings,
-    default_workspace_templates,
 )
 
 
@@ -372,7 +374,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                     "content": [{"type": "text", "text": text}],
                     "isError": expected_adjudication == "scoreable_degraded",
                 }
-                from benchmarking.runtime.agent_workspace import _workdir_fallback_finding
+                from benchmarking.runtime.workspace_audit import _workdir_fallback_finding
 
                 parsed = _workdir_fallback_finding(result_message, line_number=1, policy=policy)
                 audit = adjudicate_workspace_findings((parsed,))

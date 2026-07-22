@@ -10,11 +10,10 @@ from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
-    ProtectedRoot,
-    ContaminationAudit,
     WorkspaceIsolationError,
     default_workspace_templates,
 )
+from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
 from benchmarking.runtime.session_isolation import inspect_postflight_session
 from benchmarking.workflow.cli import ChemQARunner
 

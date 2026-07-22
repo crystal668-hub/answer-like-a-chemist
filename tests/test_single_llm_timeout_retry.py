@@ -12,11 +12,13 @@ from unittest import mock
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
-    ProtectedRoot,
-    ContaminationAudit,
-    adjudicate_workspace_findings,
     WorkspaceTemplate,
     WorkspaceIsolationError,
+)
+from benchmarking.runtime.workspace_policy import (
+    ContaminationAudit,
+    ProtectedRoot,
+    adjudicate_workspace_findings,
 )
 from benchmarking.workflow.runners.single_llm import SingleLLMRunner
 from benchmarking.workflow.prompts import build_single_llm_prompt
