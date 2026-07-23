@@ -20,9 +20,6 @@ __pycache__/
 /memory/
 /state/
 /docs/*
-!/docs/archive/
-/docs/archive/*
-!/docs/archive/2026-05-09-single-llm-benchmark-blockers.md
 !/docs/superpowers/
 /data/
 /benchmark-single-skills-on/
