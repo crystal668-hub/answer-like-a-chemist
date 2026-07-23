@@ -20,9 +20,9 @@ runbooks.
 - Persistent source changes belong under this root. The primary source surfaces
   are `benchmarking/`, `skills/`, `scripts/`, `docs/`, `tests/`,
   `pyproject.toml`, and `uv.lock`.
-- Documentation under `docs/superpowers/plans/` and
-  `docs/superpowers/specs/` is tracked source documentation; other generated or
-  local documentation remains subject to the repository ignore rules.
+- All documentation and subdirectories under `docs/superpowers/` are tracked
+  source content; other generated or local documentation remains subject to the
+  repository ignore rules.
 
 ### OpenClaw runtime home
 
