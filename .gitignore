@@ -25,6 +25,7 @@ __pycache__/
 !/docs/archive/2026-05-09-single-llm-benchmark-blockers.md
 !/docs/superpowers/
 /docs/superpowers/*
+!/docs/superpowers/plans/
 !/docs/superpowers/specs/
 /data/
 /benchmark-single-skills-on/
