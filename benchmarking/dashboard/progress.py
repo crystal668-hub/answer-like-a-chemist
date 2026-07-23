@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -53,6 +54,8 @@ class ProgressWriter:
                 for group in self.groups
             },
             "errors": [],
+            "owner_pid": os.getpid(),
+            "cancellation": {},
         }
 
     def _emit(self, event_type: str, **payload: Any) -> None:
@@ -120,6 +123,24 @@ class ProgressWriter:
             group["updated_at"] = timestamp()
             self._emit("record_completed", group_id=group_id, record_id=record_id, status=status, score=score)
 
+    def record_cancelled(self, group_id: str, record_id: str) -> None:
+        with self._lock:
+            group = self._group(group_id)
+            completed = list(group.get("completed_records") or [])
+            if record_id not in completed:
+                completed.append(record_id)
+                self._state["completed"] = int(self._state.get("completed") or 0) + 1
+            cancelled = list(group.get("cancelled_records") or [])
+            if record_id not in cancelled:
+                cancelled.append(record_id)
+            group["completed_records"] = completed
+            group["cancelled_records"] = cancelled
+            group["completed_count"] = len(completed)
+            group["current_record_id"] = None
+            group["current_index"] = None
+            group["updated_at"] = timestamp()
+            self._emit("record_cancelled", group_id=group_id, record_id=record_id)
+
     def group_completed(self, group_id: str, *, status: str = "completed") -> None:
         with self._lock:
             group = self._group(group_id)
@@ -131,6 +152,42 @@ class ProgressWriter:
             group["completed_at"] = now
             self._emit("group_completed", group_id=group_id, status=status)
 
+    def group_cancelled(self, group_id: str) -> None:
+        with self._lock:
+            group = self._group(group_id)
+            if group.get("status") == "cancelled":
+                return
+            now = timestamp()
+            group.update(
+                status="cancelled",
+                current_record_id=None,
+                current_index=None,
+                updated_at=now,
+                completed_at=now,
+            )
+            self._emit("group_cancelled", group_id=group_id)
+
+    def run_cancelling(self, *, reason: dict[str, Any]) -> None:
+        with self._lock:
+            if self._state.get("status") in {"cancelling", "cancelled", "cancelled_with_errors"}:
+                return
+            self._state["status"] = "cancelling"
+            self._state["cancellation"] = dict(reason)
+            self._emit("run_cancelling", reason=dict(reason))
+
+    def run_cancelled(self, *, errors: list[dict[str, Any]] | None = None) -> None:
+        with self._lock:
+            errors = [dict(error) for error in (errors or [])]
+            status = "cancelled_with_errors" if errors else "cancelled"
+            if self._state.get("status") in {"cancelled", "cancelled_with_errors"}:
+                return
+            now = timestamp()
+            self._state["status"] = status
+            self._state["updated_at"] = now
+            self._state["completed_at"] = now
+            self._state.setdefault("cancellation", {})["errors"] = errors
+            self._emit("run_cancelled", status=status, errors=errors)
+
     def error(self, *, group_id: str | None = None, record_id: str | None = None, message: str) -> None:
         with self._lock:
             error = {"group_id": group_id, "record_id": record_id, "message": message, "timestamp": timestamp()}
@@ -141,6 +198,8 @@ class ProgressWriter:
 
     def run_completed(self, *, status: str = "completed") -> None:
         with self._lock:
+            if self._state.get("status") in {"cancelling", "cancelled", "cancelled_with_errors"}:
+                return
             now = timestamp()
             self._state["status"] = status
             self._state["updated_at"] = now
@@ -240,6 +299,70 @@ def _reconcile_progress_state(
     return payload
 
 
+def _owner_is_alive(owner_pid: Any) -> bool:
+    if not isinstance(owner_pid, int) or owner_pid <= 0:
+        return True
+    try:
+        os.kill(owner_pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _persist_stale_terminal_state(payload: dict[str, Any], root: Path) -> dict[str, Any]:
+    if payload.get("status") not in {"running", "cancelling"} or _owner_is_alive(payload.get("owner_pid")):
+        return payload
+    now = timestamp()
+    error = {
+        "code": "stale_run_owner_missing",
+        "message": "The benchmark owner process is no longer alive; stale active state was reconciled.",
+        "timestamp": now,
+    }
+    payload["status"] = "cancelled_with_errors"
+    payload["updated_at"] = now
+    payload["completed_at"] = now
+    payload.setdefault("errors", []).append(error)
+    payload.setdefault("cancellation", {}).update({"source": "stale_reconciliation", "errors": [error]})
+    for group in (payload.get("groups") or {}).values():
+        if isinstance(group, dict) and group.get("status") in {"pending", "running", "cancelling"}:
+            group.update(status="cancelled", current_record_id=None, current_index=None, updated_at=now, completed_at=now)
+    _write_json(root / "progress" / "state.json", payload)
+    with (root / "progress" / "events.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "run_cancelled", "timestamp": now, "status": payload["status"], "errors": [error]}) + "\n")
+    wave_root = root / "waves"
+    if wave_root.is_dir():
+        for wave_path in wave_root.glob("*.json"):
+            try:
+                wave = _read_json(wave_path)
+            except Exception:
+                continue
+            if isinstance(wave, dict) and wave.get("status") in {"pending", "running", "cancelling"}:
+                wave.update(status="cancelled", completed_at=now, errors=[error])
+                _write_json(wave_path, wave)
+    manifest_path = root / "runtime-manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = _read_json(manifest_path)
+            if isinstance(manifest, dict):
+                manifest["terminal_status"] = payload["status"]
+                manifest["cancellation"] = dict(payload["cancellation"])
+                _write_json(manifest_path, manifest)
+        except Exception:
+            pass
+    else:
+        _write_json(
+            manifest_path,
+            {
+                "terminal_status": payload["status"],
+                "cancellation": dict(payload["cancellation"]),
+                "stale_reconciliation": True,
+            },
+        )
+    return payload
+
+
 def load_progress(
     run_root: str | Path,
     *,
@@ -251,6 +374,7 @@ def load_progress(
     if state_path.is_file():
         payload = _read_json(state_path)
         if isinstance(payload, dict):
+            payload = _persist_stale_terminal_state(payload, root)
             payload.setdefault("source", "progress_state")
             return _reconcile_progress_state(payload, root, expected_total=expected_total, group_ids=group_ids)
 

@@ -19,6 +19,12 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     default_workspace_templates,
 )
+from benchmarking.runtime.cancellation import (
+    CancellationOutcome,
+    CancellationReason,
+    CancellationToken,
+    OwnedProcessRegistry,
+)
 from benchmarking.runtime.cleanroom import (
     CleanroomError,
     CleanroomRuntime,
@@ -59,12 +65,16 @@ def _compatibility_protected_roots(*, runtime_root: Path, output_root: Path) -> 
     )
 
 
-def _load_cleanroom_runtime() -> CleanroomRuntime:
+def _load_cleanroom_runtime(*, process_registry: OwnedProcessRegistry | None = None) -> CleanroomRuntime:
     try:
         return CleanroomRuntime.load(
             cleanroom_root=DEFAULT_CLEANROOM_ROOT,
             current_python=lambda: subprocess_utils.current_python(),
-            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_subprocess(*args, **kwargs),
+            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_owned_subprocess(
+                *args,
+                process_registry=process_registry,
+                **kwargs,
+            ),
         )
     except CleanroomError as exc:
         raise BenchmarkError(str(exc)) from exc
@@ -76,7 +86,19 @@ def run_pending_cleanroom_cleanup() -> list[dict[str, Any]]:
     return _load_cleanroom_runtime().run_pending_cleanroom_cleanup()
 
 
-class SingleLLMRunner(BaseSingleLLMRunner):
+class _CancellationRunnerMixin:
+    _cancellation_token: CancellationToken
+    _process_registry: OwnedProcessRegistry
+
+    def cancel(self, reason: CancellationReason) -> None:
+        self._cancellation_enabled = True
+        self._cancellation_token.cancel(reason)
+
+    def wait_cancelled(self, deadline: float) -> CancellationOutcome:
+        return self._process_registry.wait_cancelled(deadline)
+
+
+class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
     def __init__(
         self,
         *,
@@ -94,7 +116,14 @@ class SingleLLMRunner(BaseSingleLLMRunner):
         no_timeout: bool = False,
         workspace_manager: AttemptWorkspaceManager | None = None,
         contamination_auditor=None,
+        cancellation_token: CancellationToken | None = None,
+        process_registry: OwnedProcessRegistry | None = None,
     ) -> None:
+        self._cancellation_enabled = cancellation_token is not None
+        self._cancellation_token = cancellation_token or CancellationToken()
+        self._process_registry = process_registry or OwnedProcessRegistry(
+            cancellation_token=self._cancellation_token
+        )
         compatibility_manager = workspace_manager is None
         if workspace_manager is None:
             compatibility_root = runtime_bundle_root.expanduser().resolve()
@@ -125,7 +154,12 @@ class SingleLLMRunner(BaseSingleLLMRunner):
             timeout_retry_backoff_seconds=timeout_retry_backoff_seconds,
             sleep_fn=sleep_fn,
             no_timeout=no_timeout,
-            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_subprocess(*args, **kwargs),
+            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_owned_subprocess(
+                *args,
+                cancellation_token=self._cancellation_token,
+                process_registry=self._process_registry,
+                **kwargs,
+            ),
             parse_json_stdout=subprocess_utils.parse_json_stdout,
             unwrap_agent_payload=subprocess_utils.unwrap_agent_payload,
             summarize_payloads=subprocess_utils.summarize_payloads,
@@ -146,7 +180,7 @@ class SingleLLMRunner(BaseSingleLLMRunner):
         )
 
 
-class ChemQARunner(BaseChemQARunner):
+class ChemQARunner(_CancellationRunnerMixin, BaseChemQARunner):
     def __init__(
         self,
         *,
@@ -162,7 +196,14 @@ class ChemQARunner(BaseChemQARunner):
         convergence_policy: ConvergencePolicy | None = None,
         workspace_manager: AttemptWorkspaceManager | None = None,
         contamination_auditor=None,
+        cancellation_token: CancellationToken | None = None,
+        process_registry: OwnedProcessRegistry | None = None,
     ) -> None:
+        self._cancellation_enabled = cancellation_token is not None
+        self._cancellation_token = cancellation_token or CancellationToken()
+        self._process_registry = process_registry or OwnedProcessRegistry(
+            cancellation_token=self._cancellation_token
+        )
         compatibility_manager = workspace_manager is None
         if workspace_manager is None:
             compatibility_root = runtime_bundle_root.expanduser().resolve()
@@ -181,7 +222,7 @@ class ChemQARunner(BaseChemQARunner):
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
-        cleanroom = _load_cleanroom_runtime()
+        cleanroom = _load_cleanroom_runtime(process_registry=self._process_registry)
         super().__init__(
             chemqa_root=chemqa_root,
             timeout_seconds=timeout_seconds,
@@ -196,7 +237,12 @@ class ChemQARunner(BaseChemQARunner):
             collect_script=chemqa_root / "scripts" / "collect_artifacts.py",
             runtime_dir=chemqa_root.parent / "debateclaw-v1" / "scripts",
             current_python=lambda: subprocess_utils.current_python(),
-            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_subprocess(*args, **kwargs),
+            run_subprocess=lambda *args, **kwargs: subprocess_utils.run_owned_subprocess(
+                *args,
+                cancellation_token=self._cancellation_token,
+                process_registry=self._process_registry,
+                **kwargs,
+            ),
             parse_json_stdout=subprocess_utils.parse_json_stdout,
             deep_copy_jsonish=subprocess_utils.deep_copy_jsonish,
             ensure_runtime_bundle=lambda record, *, bundle_root: runtime_bundles.ensure_runtime_bundle(

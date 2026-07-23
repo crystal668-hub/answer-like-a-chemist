@@ -7,6 +7,9 @@ This workspace belongs only to the current attempt.
 - Do not read, search, or list parent directories, other workspaces, benchmark results, archives, quarantine, agent sessions, raw datasets, or verifier resources.
 - Do not modify absolute paths, guess run identifiers, or search the filesystem to locate resources.
 - For `exec`, omit `workdir` and enter the runner-provided scratch environment inside the command.
+- Use native `exec` for normal single-line shell commands and local tools.
+- Do not use heredocs, here-strings, or inline multiline `python -c` or `node -e` scripts.
+- For a multiline script, use a structured file tool to write `scratch/tmp/<name>.<ext>`, then run that file with native `exec` from the runner-provided scratch environment.
 - For structured file tools, use only workspace-relative `scratch/...` paths.
 - After a path error, reuse the current relative path or runner-provided environment variable. Do not try parent, sibling, or similarly named run paths.
 - If the guard blocks an operation or a tool fails, correct the current operation and continue.

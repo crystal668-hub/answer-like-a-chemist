@@ -92,3 +92,56 @@ def test_load_progress_never_reports_total_below_completed_count(tmp_path: Path)
 
     assert progress["completed"] == 2
     assert progress["total"] == 2
+
+
+def test_progress_cancellation_is_terminal_and_idempotent(tmp_path: Path) -> None:
+    writer = dashboard_progress.ProgressWriter(tmp_path, total_records=1, groups=["g1"])
+    writer.run_started()
+    writer.group_started("g1")
+    writer.record_started("g1", "r1", index=1)
+    writer.run_cancelling(reason={"source": "signal", "signal": "SIGINT"})
+    writer.record_cancelled("g1", "r1")
+    writer.group_cancelled("g1")
+    writer.run_cancelled(errors=[])
+    writer.run_cancelled(errors=[])
+    writer.run_completed()
+
+    state = json.loads((tmp_path / "progress" / "state.json").read_text(encoding="utf-8"))
+    events = [json.loads(line) for line in (tmp_path / "progress" / "events.jsonl").read_text().splitlines()]
+    assert state["status"] == "cancelled"
+    assert state["groups"]["g1"]["status"] == "cancelled"
+    assert state["groups"]["g1"]["cancelled_records"] == ["r1"]
+    assert [event["type"] for event in events].count("run_cancelled") == 1
+    assert all(event["type"] != "run_completed" for event in events)
+
+
+def test_load_progress_reconciles_dead_owner_to_cancelled_with_errors(tmp_path: Path) -> None:
+    write_json(
+        tmp_path / "progress" / "state.json",
+        {
+            "status": "running",
+            "owner_pid": 2**31 - 1,
+            "total": 1,
+            "completed": 0,
+            "groups": {
+                "g1": {
+                    "status": "running",
+                    "current_record_id": "r1",
+                    "completed_records": [],
+                }
+            },
+        },
+    )
+    write_json(tmp_path / "waves" / "wave-01.json", {"status": "running", "groups": ["g1"]})
+
+    progress = dashboard_progress.load_progress(tmp_path, expected_total=1, group_ids=["g1"])
+    persisted = json.loads((tmp_path / "progress" / "state.json").read_text(encoding="utf-8"))
+    wave = json.loads((tmp_path / "waves" / "wave-01.json").read_text(encoding="utf-8"))
+    manifest = json.loads((tmp_path / "runtime-manifest.json").read_text(encoding="utf-8"))
+
+    assert progress["status"] == "cancelled_with_errors"
+    assert progress["groups"]["g1"]["status"] == "cancelled"
+    assert persisted["status"] == "cancelled_with_errors"
+    assert persisted["errors"][0]["code"] == "stale_run_owner_missing"
+    assert wave["status"] == "cancelled"
+    assert manifest["terminal_status"] == "cancelled_with_errors"

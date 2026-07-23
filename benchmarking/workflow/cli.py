@@ -5,6 +5,7 @@ import argparse
 import gc
 import json
 import os
+import signal
 import time
 import uuid
 import sys
@@ -41,6 +42,7 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceIsolationError,
     default_workspace_templates,
 )
+from benchmarking.runtime.cancellation import CancellationReason, CancellationToken, OwnedProcessRegistry
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
 from benchmarking.runtime.web_search_preflight import run_web_search_preflight
 from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
@@ -57,6 +59,32 @@ DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
 
 
 register_default_evaluators()
+
+
+def install_cancellation_signal_handlers(
+    cancellation_token: CancellationToken,
+) -> dict[signal.Signals, Any]:
+    previous_handlers: dict[signal.Signals, Any] = {}
+
+    def request_cancellation(signum: int, _frame: Any) -> None:
+        signal_value = signal.Signals(signum)
+        cancellation_token.cancel(
+            CancellationReason(
+                source="signal",
+                signal_name=signal_value.name,
+                message=f"Benchmark run cancelled by {signal_value.name}",
+            )
+        )
+
+    for signal_value in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signal_value] = signal.getsignal(signal_value)
+        signal.signal(signal_value, request_cancellation)
+    return previous_handlers
+
+
+def restore_signal_handlers(previous_handlers: dict[signal.Signals, Any]) -> None:
+    for signal_value, previous_handler in previous_handlers.items():
+        signal.signal(signal_value, previous_handler)
 
 
 
@@ -452,6 +480,8 @@ def main() -> int:
         workspace_startup_recovery = workspace_manager.recover_all_incomplete()
     except WorkspaceIsolationError as exc:
         raise _BenchmarkError(f"Benchmark workspace startup recovery failed: {exc.message}") from exc
+    cancellation_token = CancellationToken()
+    process_registry = OwnedProcessRegistry(cancellation_token=cancellation_token)
     pending_records_by_group = {
         group_id: run_state.pending_records_for_group(
             records,
@@ -493,6 +523,8 @@ def main() -> int:
         config_path=config_pool.judge_config_path(),
         thinking=args.judge_agent_thinking,
         workspace_manager=workspace_manager,
+        cancellation_token=cancellation_token,
+        process_registry=process_registry,
     )
     group_waves = build_group_waves(group_ids, max_concurrent_groups=args.max_concurrent_groups)
     progress_writer = ProgressWriter(
@@ -501,6 +533,7 @@ def main() -> int:
         groups=group_ids,
     )
     progress_writer.run_started()
+    previous_signal_handlers = install_cancellation_signal_handlers(cancellation_token)
 
     build_error_result = partial(
         _build_error_group_record_result,
@@ -530,8 +563,11 @@ def main() -> int:
     )
 
     group_results: dict[str, list[_GroupRecordResult]] = {}
+    cancellation_errors: list[dict[str, Any]] = []
     try:
         for wave_index, wave_group_ids in enumerate(group_waves, start=1):
+            if cancellation_token.is_cancelled:
+                break
             started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             run_state.write_wave_status(
                 output_root,
@@ -544,6 +580,8 @@ def main() -> int:
             with ThreadPoolExecutor(max_workers=max(1, len(wave_group_ids))) as executor:
                 future_map = {}
                 for group_id in wave_group_ids:
+                    if cancellation_token.is_cancelled:
+                        break
                     group = experiments.EXPERIMENT_GROUPS[group_id]
                     group_records = pending_records_by_group[group_id]
                     if not group_records:
@@ -599,6 +637,8 @@ def main() -> int:
                         experiment_specs=effective_experiment_specs,
                         skill_health_summary=skill_health_summary,
                         progress_writer=progress_writer,
+                        cancellation_token=cancellation_token,
+                        process_registry=process_registry,
                     )
                     future_map[future] = group_id
 
@@ -627,16 +667,104 @@ def main() -> int:
                 output_root,
                 wave_index=wave_index,
                 wave_group_ids=wave_group_ids,
-                status="completed",
+                status="cancelled" if cancellation_token.is_cancelled else "completed",
                 started_at=started_at,
                 completed_at=completed_at,
                 per_record_counts=run_state.count_per_record_outputs(output_root, group_ids=wave_group_ids),
                 inter_wave_delay_seconds=args.inter_wave_delay_seconds,
             )
+            if cancellation_token.is_cancelled:
+                break
             if wave_index < len(group_waves) and args.inter_wave_delay_seconds > 0:
-                time.sleep(args.inter_wave_delay_seconds)
+                cancellation_token.wait(args.inter_wave_delay_seconds)
     finally:
-        runner_adapters.run_pending_cleanroom_cleanup()
+        if cancellation_token.is_cancelled:
+            reason = cancellation_token.reason
+            progress_writer.run_cancelling(reason=reason.to_payload() if reason is not None else {})
+            outcome = process_registry.terminate_all(force=cancellation_token.request_count > 1)
+            cancellation_errors.extend(outcome.errors)
+            if not outcome.completed:
+                cancellation_errors.append(
+                    {
+                        "stage": "owned_process_cleanup",
+                        "active_process_count": outcome.active_process_count,
+                        "message": "Owned benchmark processes remained after cancellation cleanup.",
+                    }
+                )
+        try:
+            runner_adapters.run_pending_cleanroom_cleanup()
+        except Exception as exc:
+            if not cancellation_token.is_cancelled:
+                raise
+            cancellation_errors.append(
+                {"stage": "cleanroom_cleanup", "error": f"{type(exc).__name__}: {exc}"}
+            )
+        finally:
+            restore_signal_handlers(previous_signal_handlers)
+
+    if cancellation_token.is_cancelled:
+        for wave_index, wave_group_ids in enumerate(group_waves, start=1):
+            wave_path = output_root / "waves" / f"wave-{wave_index:02d}.json"
+            if wave_path.exists():
+                continue
+            cancelled_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            run_state.write_wave_status(
+                output_root,
+                wave_index=wave_index,
+                wave_group_ids=wave_group_ids,
+                status="cancelled",
+                started_at=cancelled_at,
+                completed_at=cancelled_at,
+                per_record_counts=run_state.count_per_record_outputs(output_root, group_ids=wave_group_ids),
+                inter_wave_delay_seconds=args.inter_wave_delay_seconds,
+            )
+        for group_id in group_ids:
+            existing = {item.record_id for item in group_results.get(group_id, [])}
+            group = experiments.EXPERIMENT_GROUPS[group_id]
+            for record in pending_records_by_group[group_id]:
+                if record.record_id in existing:
+                    continue
+                entry = _orchestration.build_cancelled_group_record_result(
+                    group=group,
+                    record=record,
+                    build_error_group_record_result_fn=build_error_result,
+                )
+                group_results.setdefault(group_id, []).append(entry)
+                run_state.save_json(
+                    output_root / "per-record" / group_id / f"{run_state.slugify(record.record_id)}.json",
+                    asdict(entry),
+                )
+                progress_writer.record_cancelled(group_id, record.record_id)
+            if any(item.run_lifecycle_status == "cancelled" for item in group_results.get(group_id, [])):
+                progress_writer.group_cancelled(group_id)
+            elif not pending_records_by_group[group_id]:
+                progress_writer.group_completed(group_id, status="completed")
+        for entries in group_results.values():
+            for entry in entries:
+                if entry.run_lifecycle_status != "cancelled":
+                    continue
+                isolation = (entry.runner_meta or {}).get("workspace_isolation")
+                isolation = isolation if isinstance(isolation, dict) else {}
+                cleanup = isolation.get("cleanup")
+                cleanup = cleanup if isinstance(cleanup, dict) else {}
+                if isolation.get("archive_ok") is False:
+                    cancellation_errors.append(
+                        {
+                            "stage": "workspace_seal",
+                            "group_id": entry.group_id,
+                            "record_id": entry.record_id,
+                            "error": isolation.get("archive_error") or "workspace archive failed",
+                        }
+                    )
+                if int(cleanup.get("failed_count") or 0) > 0:
+                    cancellation_errors.append(
+                        {
+                            "stage": "workspace_cleanup",
+                            "group_id": entry.group_id,
+                            "record_id": entry.record_id,
+                            "failed_count": int(cleanup.get("failed_count") or 0),
+                        }
+                    )
 
     aggregate_group_ids = run_state.resolve_aggregate_group_ids(
         group_ids,
@@ -677,6 +805,13 @@ def main() -> int:
                     workspace_policies[slot_digest] = slot_policy
     payload = {
         "schema_version": 3,
+        "status": (
+            "cancelled_with_errors"
+            if cancellation_token.is_cancelled and cancellation_errors
+            else "cancelled"
+            if cancellation_token.is_cancelled
+            else "completed"
+        ),
         "status_axes_description": {
             "run_lifecycle_status": "completed|failed|cancelled",
             "protocol_completion_status": "completed|failed|missing|not_applicable",
@@ -742,6 +877,7 @@ def main() -> int:
     run_state.save_json(output_root / "results.json", payload)
     run_state.remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
+        "terminal_status": payload["status"],
         "execution_plan": {
             "mode": "wave-batched",
             "max_concurrent_groups": args.max_concurrent_groups,
@@ -811,7 +947,16 @@ def main() -> int:
         },
     }
     run_state.save_json(output_root / "runtime-manifest.json", runtime_manifest)
-    if bool(getattr(args, "no_analysis", False)):
+    if cancellation_token.is_cancelled:
+        automated_evaluation_status = run_state.automated_evaluation_skipped(output_root)
+        automated_evaluation_status["reason"] = "run_cancelled"
+        run_state.save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
+        runtime_manifest["cancellation"] = {
+            **(cancellation_token.reason.to_payload() if cancellation_token.reason is not None else {}),
+            "request_count": cancellation_token.request_count,
+            "errors": cancellation_errors,
+        }
+    elif bool(getattr(args, "no_analysis", False)):
         automated_evaluation_status = run_state.automated_evaluation_skipped(output_root)
         run_state.save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
     else:
@@ -822,9 +967,12 @@ def main() -> int:
             run_state.save_json(Path(automated_evaluation_status["status_path"]), automated_evaluation_status)
     runtime_manifest["automated_evaluation"] = automated_evaluation_status
     run_state.save_json(output_root / "runtime-manifest.json", runtime_manifest)
-    progress_writer.run_completed(status="completed")
+    if cancellation_token.is_cancelled:
+        progress_writer.run_cancelled(errors=cancellation_errors)
+    else:
+        progress_writer.run_completed(status="completed")
     print(json.dumps({"output_dir": str(output_root), "summary": summary}, indent=2, ensure_ascii=False))
-    return 0
+    return 130 if cancellation_token.is_cancelled else 0
 
 
 if __name__ == "__main__":

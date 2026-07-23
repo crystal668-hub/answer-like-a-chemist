@@ -1,6 +1,6 @@
 # Benchmark Audit Error Allowlist and Cancellation Specification
 
-状态：`PROPOSED`
+状态：`DONE`
 
 日期：2026-07-23
 

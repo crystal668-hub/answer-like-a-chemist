@@ -4,6 +4,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from benchmarking.runtime.agent_workspace import (
     SENTINEL_FILENAME,
@@ -288,6 +289,10 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
 
         base_rule = "structured file tools, use only workspace-relative `scratch/...` paths."
         self.assertTrue(all(base_rule in contract for contract in contracts.values()))
+        self.assertTrue(all("Use native `exec` for normal single-line shell commands" in contract for contract in contracts.values()))
+        self.assertTrue(all("Do not use heredocs, here-strings" in contract for contract in contracts.values()))
+        self.assertTrue(all("write `scratch/tmp/<name>.<ext>`" in contract for contract in contracts.values()))
+        self.assertTrue(all("then run that file with native `exec`" in contract for contract in contracts.values()))
         self.assertIn("Skill use is optional", contracts["single-llm-skills-on-v1"])
         self.assertIn("Skills and local skill scripts are unavailable", contracts["single-llm-skills-off-v1"])
         self.assertIn("Return only the requested JSON verdict", contracts["judge-v1"])
@@ -1172,6 +1177,98 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("benchmark_dataset_root", finding["policy_id"])
         self.assertEqual("exec.heredoc", finding["candidate_source"])
         self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
+
+    def test_unterminated_heredoc_eof_recovers_with_structured_warning(self) -> None:
+        audit = self._audit_tool_event(
+            tool_name="exec",
+            arguments={
+                "command": "TOKEN=topsecret python3 <<'PY'\nprint('ok')\\nPY",
+                "cwd": ".",
+            },
+            result={
+                "text": "shell warning\nCommand exited with code 1",
+                "isError": True,
+                "details": {"exitCode": 1},
+            },
+        )
+
+        self.assertEqual("complete", audit.audit_execution_status)
+        self.assertEqual("warning", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable", audit.adjudication)
+        self.assertEqual(1, len(audit.findings))
+        finding = audit.findings[0]
+        self.assertEqual("transcript_audit_recovered", finding["rule_id"])
+        self.assertEqual("exec_unterminated_heredoc_eof", finding["audit_error_code"])
+        self.assertEqual("recover_unterminated_heredoc_eof", finding["recovery_handler"])
+        self.assertEqual(1, finding["recovery_version"])
+        self.assertEqual("failed", finding["operation_outcome"])
+        self.assertEqual({"call_line", "result_line", "result_is_error", "exit_code"}, set(finding["evidence"]))
+        self.assertNotIn("topsecret", finding["command_excerpt"])
+
+    def test_completed_heredoc_does_not_emit_recovery_warning(self) -> None:
+        audit = self._audit_tool_event(
+            tool_name="exec",
+            arguments={"command": "python3 <<'PY'\nprint('ok')\nPY\n"},
+            result={"text": "ok", "isError": False, "details": {"exitCode": 0}},
+        )
+
+        self.assertEqual("clean", audit.status)
+        self.assertFalse(any(finding["rule_id"] == "transcript_audit_recovered" for finding in audit.findings))
+
+    def test_unterminated_heredoc_recovery_preserves_prefix_and_body_protected_paths(self) -> None:
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        commands = (
+            f'cat "{protected}"; python3 <<\'PY\'\npayload',
+            f'python3 <<\'PY\'\nfrom pathlib import Path\nPath("{protected}").read_text()',
+            "python3 <<'PY'\nfrom pathlib import Path\nPath(\"$PROTECTED_FILE\").read_text()",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                audit = self._audit_tool_event(
+                    tool_name="exec",
+                    arguments={"command": command},
+                    result={
+                        "text": "protected answer contents" if index == 0 else "ok",
+                        "isError": index == 0,
+                        "details": {"exitCode": 1 if index == 0 else 0},
+                    },
+                    environment={"PROTECTED_FILE": str(protected)},
+                )
+
+                self.assertEqual("complete", audit.audit_execution_status)
+                self.assertEqual("non_evaluable", audit.adjudication)
+                protected_findings = [
+                    finding for finding in audit.findings if finding["rule_id"] == "protected_path_access"
+                ]
+                self.assertEqual(1, len(protected_findings))
+                self.assertEqual(str(protected.resolve(strict=False)), protected_findings[0]["resolved_path"])
+                self.assertTrue(
+                    any(finding["rule_id"] == "transcript_audit_recovered" for finding in audit.findings)
+                )
+
+    def test_unterminated_heredoc_recovery_failure_remains_unavailable(self) -> None:
+        import benchmarking.runtime.workspace_audit as workspace_audit
+
+        def fail_recovery(command, condition):
+            del command, condition
+            raise RuntimeError("recovery failed")
+
+        with patch.dict(
+            workspace_audit.AUDIT_ERROR_RECOVERY_HANDLERS,
+            {"exec_unterminated_heredoc_eof": fail_recovery},
+            clear=True,
+        ):
+            audit = self._audit_tool_event(
+                tool_name="exec",
+                arguments={"command": "false; python3 <<'PY'\npayload"},
+                result={"text": "Command exited with code 1", "isError": True},
+            )
+
+        self.assertEqual("unavailable", audit.audit_execution_status)
+        self.assertEqual("non_evaluable", audit.adjudication)
+        self.assertEqual("transcript_audit_failed", audit.findings[0]["rule_id"])
+        self.assertEqual("RuntimeError", audit.findings[0]["exception_type"])
 
     def test_cd_chain_resolves_relative_paths_from_effective_directory(self) -> None:
         clean = self._audit_tool_call(

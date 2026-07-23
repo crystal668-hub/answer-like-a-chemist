@@ -20,6 +20,19 @@ class PathCandidate:
 
 
 @dataclass(frozen=True)
+class AuditParserCondition(Exception):
+    code: str
+    details: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class AuditProjection:
+    text: str
+    recovery_code: str | None = None
+    recovery_version: int | None = None
+
+
+@dataclass(frozen=True)
 class ToolEvent:
     tool_call_id: str
     tool_name: str
@@ -366,6 +379,8 @@ _HEREDOC_BODY_END = "\x00OPENCLAW_AUDIT_HEREDOC_BODY_END\x00"
 _HEREDOC_BODY_UNSAFE = re.compile(r"[^A-Za-z0-9_./~${}=:+@%!-]+")
 _COMMAND_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
 _SHELL_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_UNTERMINATED_HEREDOC_CODE = "exec_unterminated_heredoc_eof"
+_UNTERMINATED_HEREDOC_RECOVERY_VERSION = 1
 
 
 def _heredoc_declarations(line: str) -> list[tuple[str, bool]]:
@@ -437,7 +452,7 @@ def _heredoc_declarations(line: str) -> list[tuple[str, bool]]:
     return declarations
 
 
-def _command_audit_projection(command: str) -> str:
+def _build_command_audit_projection(command: str) -> AuditProjection:
     projected: list[str] = []
     pending: list[tuple[str, bool]] = []
     body_open = False
@@ -470,21 +485,75 @@ def _command_audit_projection(command: str) -> str:
             body_open = True
 
     if pending or body_open:
-        delimiter = pending[0][0] if pending else ""
-        raise ValueError(f"Unterminated here-document: {delimiter}")
-    return "".join(projected)
+        raise AuditParserCondition(
+            code=_UNTERMINATED_HEREDOC_CODE,
+            details={
+                "partial_projection": "".join(projected),
+                "pending_delimiters": tuple(delimiter for delimiter, _ in pending),
+                "body_open": body_open,
+            },
+        )
+    return AuditProjection(text="".join(projected))
 
 
-def _exec_tokens(command: str) -> list[str]:
+def recover_unterminated_heredoc_eof(
+    command: str,
+    condition: AuditParserCondition,
+) -> AuditProjection:
+    del command
+    partial_projection = condition.details.get("partial_projection")
+    pending_delimiters = condition.details.get("pending_delimiters")
+    if (
+        condition.code != _UNTERMINATED_HEREDOC_CODE
+        or not isinstance(partial_projection, str)
+        or not partial_projection
+        or not isinstance(pending_delimiters, tuple)
+        or not pending_delimiters
+        or condition.details.get("body_open") is not True
+        or _HEREDOC_BODY_START not in partial_projection
+    ):
+        raise ValueError("Incomplete unterminated heredoc audit projection state")
+    return AuditProjection(
+        text=f"{partial_projection} {_HEREDOC_BODY_END} ",
+        recovery_code=condition.code,
+        recovery_version=_UNTERMINATED_HEREDOC_RECOVERY_VERSION,
+    )
+
+
+AUDIT_ERROR_RECOVERY_HANDLERS = {
+    _UNTERMINATED_HEREDOC_CODE: recover_unterminated_heredoc_eof,
+}
+
+
+def _command_audit_projection(command: str) -> AuditProjection:
+    try:
+        return _build_command_audit_projection(command)
+    except AuditParserCondition as condition:
+        handler = AUDIT_ERROR_RECOVERY_HANDLERS.get(condition.code)
+        if handler is None:
+            raise
+        projection = handler(command, condition)
+        if (
+            not isinstance(projection, AuditProjection)
+            or projection.recovery_code != condition.code
+            or not isinstance(projection.recovery_version, int)
+            or projection.recovery_version < 1
+            or not projection.text
+        ):
+            raise ValueError(f"Incomplete audit recovery projection: {condition.code}")
+        return projection
+
+
+def _exec_tokens(command: str) -> tuple[list[str], AuditProjection]:
     projection = _command_audit_projection(command)
     lexer = shlex.shlex(
-        _without_dynamic_command_substitutions(projection),
+        _without_dynamic_command_substitutions(projection.text),
         posix=True,
         punctuation_chars="|&;()<>",
     )
     lexer.whitespace_split = True
     lexer.commenters = ""
-    return list(lexer)
+    return list(lexer), projection
 
 
 def _exec_command_candidates(
@@ -492,7 +561,7 @@ def _exec_command_candidates(
     *,
     workspace: Path,
     environment: Mapping[str, str],
-) -> list[PathCandidate]:
+) -> tuple[list[PathCandidate], AuditProjection]:
     candidates: list[PathCandidate] = []
     current_dir: Path | None = workspace
     command_name = ""
@@ -500,7 +569,8 @@ def _exec_command_candidates(
     cd_target_seen = False
     in_heredoc = False
 
-    for raw_token in _exec_tokens(command):
+    tokens, projection = _exec_tokens(command)
+    for raw_token in tokens:
         token = raw_token.strip()
         if not token:
             continue
@@ -566,7 +636,7 @@ def _exec_command_candidates(
         pending_cd = cd_candidate.resolved_path if cd_candidate is not None else None
         if candidate is None and cd_candidate is not None:
             candidates.append(cd_candidate)
-    return candidates
+    return candidates, projection
 
 
 def _candidate_paths(
@@ -575,7 +645,7 @@ def _candidate_paths(
     *,
     workspace: Path,
     environment: Mapping[str, str],
-) -> list[PathCandidate]:
+) -> tuple[list[PathCandidate], AuditProjection | None]:
     normalized_tool = str(tool_name or "").strip().lower()
     candidates: list[PathCandidate] = []
     if normalized_tool in _EXEC_TOOLS:
@@ -586,14 +656,13 @@ def _candidate_paths(
             command = str(arguments.get("command") or "")
             explicit_arguments = arguments
         else:
-            return []
-        candidates.extend(
-            _exec_command_candidates(
-                command,
-                workspace=workspace,
-                environment=environment,
-            )
+            return [], None
+        command_candidates, projection = _exec_command_candidates(
+            command,
+            workspace=workspace,
+            environment=environment,
         )
+        candidates.extend(command_candidates)
         for key in ("workdir", "cwd"):
             value = explicit_arguments.get(key)
             if isinstance(value, (str, os.PathLike)):
@@ -606,10 +675,10 @@ def _candidate_paths(
                 )
                 if candidate is not None:
                     candidates.append(candidate)
-        return candidates
+        return candidates, projection
 
     if not isinstance(arguments, Mapping):
-        return []
+        return [], None
     for key, value in arguments.items():
         normalized_key = str(key).strip().lower()
         if normalized_key not in _PATH_ARGUMENT_KEYS or not isinstance(value, (str, os.PathLike)):
@@ -623,7 +692,7 @@ def _candidate_paths(
         )
         if candidate is not None:
             candidates.append(candidate)
-    return candidates
+    return candidates, None
 
 
 def _command_excerpt(tool_name: str, arguments: Any) -> str:
@@ -753,13 +822,38 @@ def _forbidden_access_findings(
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    candidates = _candidate_paths(
+    candidates, projection = _candidate_paths(
         event.tool_name,
         event.arguments,
         workspace=workspace,
         environment=environment,
     )
     outcome = _operation_outcome(event.result)
+    if projection is not None and projection.recovery_code is not None:
+        recovery_handler = AUDIT_ERROR_RECOVERY_HANDLERS.get(projection.recovery_code)
+        findings.append(
+            {
+                "rule_id": "transcript_audit_recovered",
+                "audit_error_code": projection.recovery_code,
+                "recovery_handler": getattr(recovery_handler, "__name__", ""),
+                "recovery_version": projection.recovery_version,
+                "tool_call_id": event.tool_call_id,
+                "tool_name": str(event.tool_name or "").strip().lower(),
+                "candidate_source": "transcript.tool_call",
+                "access_mode": "unknown",
+                "operation_outcome": outcome,
+                "resource_provenance": "unknown",
+                "information_exposure": "none",
+                "boundary_effect": "warning",
+                "command_excerpt": _command_excerpt(event.tool_name, event.arguments),
+                "evidence": {
+                    "call_line": event.call_line,
+                    "result_line": event.result_line,
+                    "result_is_error": bool(event.result and event.result.get("isError") is True),
+                    "exit_code": _result_exit_code(event.result),
+                },
+            }
+        )
     for candidate in candidates:
         access_mode = _access_mode_for_candidate(event.tool_name, candidate)
         if policy.allows(access_mode, candidate.resolved_path):
@@ -805,4 +899,3 @@ def _forbidden_access_findings(
             }
         )
     return findings
-

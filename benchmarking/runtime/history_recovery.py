@@ -78,6 +78,28 @@ def _protected_roots(runtime_manifest: dict[str, Any]) -> tuple[ProtectedRoot, .
     return tuple(roots)
 
 
+def _dry_run_manifest_from_record(run_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    runner_meta = payload.get("runner_meta")
+    runner_meta = runner_meta if isinstance(runner_meta, dict) else {}
+    isolation = runner_meta.get("workspace_isolation")
+    isolation = isolation if isinstance(isolation, dict) else {}
+    policy = isolation.get("policy")
+    policy = policy if isinstance(policy, dict) else {}
+    protected_roots = policy.get("protected_roots")
+    if not isinstance(protected_roots, list) or not protected_roots:
+        raise FileNotFoundError(
+            "Historical dry-run requires runtime-manifest.json or a persisted per-record workspace policy."
+        )
+    return {
+        "workspace_isolation": {
+            "run_id": run_root.name,
+            "invocation_id": str(isolation.get("invocation_id") or "historical-replay"),
+            "runtime_runs_root": str(run_root / ".history-runtime"),
+            "forbidden_path_policy": {"protected_roots": protected_roots},
+        }
+    }
+
+
 def _historical_environment(payload: dict[str, Any]) -> dict[str, str]:
     runner_meta = payload.get("runner_meta")
     runner_meta = runner_meta if isinstance(runner_meta, dict) else {}
@@ -186,8 +208,20 @@ def replay_workspace_adjudication(
     runtime_manifest_path = run_root / "runtime-manifest.json"
     results_path = run_root / "results.json"
     progress_path = run_root / "progress" / "state.json"
-    runtime_manifest = json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
-    results_payload = json.loads(results_path.read_text(encoding="utf-8"))
+    if apply and (not runtime_manifest_path.is_file() or not results_path.is_file()):
+        raise FileNotFoundError("Historical apply requires runtime-manifest.json and results.json.")
+    first_record_path = _record_path(run_root, group_id, str(record_ids[0]))
+    first_record_payload = json.loads(first_record_path.read_text(encoding="utf-8"))
+    runtime_manifest = (
+        json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
+        if runtime_manifest_path.is_file()
+        else _dry_run_manifest_from_record(run_root, first_record_payload)
+    )
+    results_payload = (
+        json.loads(results_path.read_text(encoding="utf-8"))
+        if results_path.is_file()
+        else {"schema_version": 3, "results": [], "summary": {}}
+    )
     isolation_manifest = runtime_manifest.get("workspace_isolation") or {}
     protected_roots = _protected_roots(runtime_manifest)
     manager = AttemptWorkspaceManager(
@@ -251,9 +285,11 @@ def replay_workspace_adjudication(
         ).expanduser()
         hashes = {
             "per_record": _sha256(record_path),
-            "results": _sha256(results_path),
-            "runtime_manifest": _sha256(runtime_manifest_path),
         }
+        if results_path.is_file():
+            hashes["results"] = _sha256(results_path)
+        if runtime_manifest_path.is_file():
+            hashes["runtime_manifest"] = _sha256(runtime_manifest_path)
         if transcript_path.is_file():
             hashes["transcript"] = _sha256(transcript_path)
         scorer_identity: dict[str, Any] = {}

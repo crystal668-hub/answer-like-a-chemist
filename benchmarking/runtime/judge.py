@@ -17,6 +17,12 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceIsolationError,
     default_workspace_templates,
 )
+from benchmarking.runtime.cancellation import (
+    CancellationOutcome,
+    CancellationReason,
+    CancellationToken,
+    OwnedProcessRegistry,
+)
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
@@ -55,12 +61,18 @@ class JudgeClient:
         thinking: str = DEFAULT_JUDGE_THINKING,
         workspace_manager: AttemptWorkspaceManager | None = None,
         contamination_auditor: Callable[..., Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
+        process_registry: OwnedProcessRegistry | None = None,
     ) -> None:
         self.judge_agent = judge_agent
         self.timeout_seconds = timeout_seconds
         self.config_path = config_path
         self.thinking = thinking
         self._lock = threading.Lock()
+        self._cancellation_token = cancellation_token or CancellationToken()
+        self._process_registry = process_registry or OwnedProcessRegistry(
+            cancellation_token=self._cancellation_token
+        )
         compatibility_manager = workspace_manager is None
         if workspace_manager is None:
             runtime_root = config_path.expanduser().resolve().parent / ".benchmark-test-workspaces" / "runs"
@@ -81,6 +93,12 @@ class JudgeClient:
         self.workspace_manager = workspace_manager
         self._contamination_auditor = contamination_auditor
         self.last_workspace_isolation: dict[str, Any] = {}
+
+    def cancel(self, reason: CancellationReason) -> None:
+        self._cancellation_token.cancel(reason)
+
+    def wait_cancelled(self, deadline: float) -> CancellationOutcome:
+        return self._process_registry.wait_cancelled(deadline)
 
     def evaluate_json(self, prompt: str) -> dict[str, Any]:
         session_id = f"benchmark-judge-{uuid.uuid4().hex[:12]}"
@@ -141,10 +159,12 @@ class JudgeClient:
                     session_id,
                     config_path=self.config_path,
                 )
-                result = subprocess_utils.run_subprocess(
+                result = subprocess_utils.run_owned_subprocess(
                     command,
                     env=env,
                     timeout=self.timeout_seconds + 30,
+                    cancellation_token=self._cancellation_token,
+                    process_registry=self._process_registry,
                 )
                 postflight_audit = inspect_postflight_session(
                     self.judge_agent,

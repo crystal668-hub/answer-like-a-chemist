@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
+
+from benchmarking.runtime.cancellation import CancellationToken, OwnedProcessRegistry
 
 
 class SubprocessOutputError(RuntimeError):
@@ -28,15 +33,74 @@ def run_subprocess(
     env: dict[str, str] | None = None,
     cwd: Path | None = None,
     timeout: int | None = None,
+    cancellation_token: CancellationToken | None = None,
+    process_registry: OwnedProcessRegistry | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    if cancellation_token is not None:
+        cancellation_token.raise_if_cancelled()
+    process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,
         env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        capture_output=True,
+        start_new_session=process_registry is not None,
+    )
+    if process_registry is not None:
+        process_registry.register(process)
+    started = time.monotonic()
+    try:
+        while True:
+            if cancellation_token is not None and cancellation_token.is_cancelled:
+                if process_registry is not None:
+                    process_registry.terminate_all(force=cancellation_token.request_count > 1)
+                elif process.poll() is None:
+                    process.terminate()
+                process.communicate()
+                cancellation_token.raise_if_cancelled()
+            remaining = None if timeout is None else max(0.0, timeout - (time.monotonic() - started))
+            if remaining is not None and remaining <= 0:
+                if process_registry is not None:
+                    process_registry.signal_process_group(process, signal.SIGKILL)
+                else:
+                    process.kill()
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
+            try:
+                wait_seconds = min(0.1, remaining) if remaining is not None else 0.1
+                stdout, stderr = process.communicate(timeout=wait_seconds)
+                if cancellation_token is not None:
+                    cancellation_token.raise_if_cancelled()
+                return subprocess.CompletedProcess(command, process.returncode, stdout=stdout, stderr=stderr)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process_registry is not None:
+            process_registry.unregister(process)
+
+
+def run_owned_subprocess(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+    timeout: int | None = None,
+    cancellation_token: CancellationToken | None = None,
+    process_registry: OwnedProcessRegistry | None = None,
+) -> subprocess.CompletedProcess[str]:
+    parameters = inspect.signature(run_subprocess).parameters
+    cancellation_kwargs: dict[str, Any] = {}
+    if "cancellation_token" in parameters:
+        cancellation_kwargs["cancellation_token"] = cancellation_token
+    if "process_registry" in parameters:
+        cancellation_kwargs["process_registry"] = process_registry
+    return run_subprocess(
+        command,
+        env=env,
+        cwd=cwd,
         timeout=timeout,
-        check=False,
+        **cancellation_kwargs,
     )
 
 

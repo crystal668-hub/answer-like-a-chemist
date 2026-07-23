@@ -247,18 +247,22 @@ select {
   white-space: nowrap;
 }
 
-.pill.running {
+.pill.running,
+.pill.cancelling {
   color: var(--warn);
   border-color: #f2c37b;
 }
 
 .pill.completed,
+.pill.completed_with_errors,
 .pill.passed {
   color: var(--ok);
   border-color: #9ed4aa;
 }
 
 .pill.failed,
+.pill.cancelled,
+.pill.cancelled_with_errors,
 .pill.not_scored {
   color: var(--bad);
   border-color: #f2a4ab;

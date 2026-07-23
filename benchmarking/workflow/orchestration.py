@@ -9,10 +9,57 @@ from typing import Any, Callable
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.core.status import build_result_axes_from_runner
+from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationToken
 
 
 class OrchestrationError(RuntimeError):
     pass
+
+
+def build_cancelled_group_record_result(
+    *,
+    group: Any,
+    record: Any,
+    build_error_group_record_result_fn: Callable[..., GroupRecordResult],
+    elapsed_seconds: float = 0.0,
+    runner_meta: dict[str, Any] | None = None,
+    raw: dict[str, Any] | None = None,
+) -> GroupRecordResult:
+    message = "Benchmark run cancelled before evaluation completed."
+    entry = build_error_group_record_result_fn(
+        group=group,
+        record=record,
+        error_message=message,
+        elapsed_seconds=elapsed_seconds,
+        runner_meta={**dict(runner_meta or {}), "cancellation": {"status": "cancelled"}},
+        raw=dict(raw or {"status": "cancelled"}),
+    )
+    payload = asdict(entry)
+    payload.update(
+        {
+            "run_lifecycle_status": "cancelled",
+            "protocol_completion_status": "missing",
+            "answer_availability": "missing",
+            "answer_reliability": "none",
+            "evaluable": False,
+            "scored": False,
+            "recovery_mode": "none",
+            "degraded_execution": False,
+            "execution_error_kind": "cancelled",
+            "evaluation": {
+                "eval_kind": str(getattr(record, "eval_kind", "") or ""),
+                "score": None,
+                "max_score": None,
+                "normalized_score": None,
+                "passed": None,
+                "primary_metric": "cancelled",
+                "primary_metric_direction": "not_applicable",
+                "details": {"execution_error_kind": "cancelled"},
+            },
+            "error": message,
+        }
+    )
+    return GroupRecordResult(**payload)
 
 
 def ensure_compatible_runner_result(run_result: Any, *, runner_kind: str) -> None:
@@ -82,8 +129,34 @@ def run_group(
     no_timeout: bool = False,
     workspace_manager: Any | None = None,
     progress_writer: Any | None = None,
+    cancellation_token: CancellationToken | None = None,
+    process_registry: Any | None = None,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
+
+    def mark_cancelling() -> None:
+        if progress_writer is None or cancellation_token is None:
+            return
+        reason = cancellation_token.reason
+        progress_writer.run_cancelling(reason=reason.to_payload() if reason is not None else {})
+
+    if cancellation_token is not None and cancellation_token.is_cancelled:
+        mark_cancelling()
+        group_results = [
+            build_cancelled_group_record_result(
+                group=group,
+                record=record,
+                build_error_group_record_result_fn=build_error_group_record_result_fn,
+            )
+            for record in records
+        ]
+        for entry in group_results:
+            save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+            if progress_writer is not None:
+                progress_writer.record_cancelled(group.id, entry.record_id)
+        if progress_writer is not None:
+            progress_writer.group_cancelled(group.id)
+        return group_results
     try:
         if group.runner == "chemqa":
             runner = build_runner_fn(
@@ -99,6 +172,8 @@ def run_group(
                 launch_workspace_root=output_root / "chemqa-launch",
                 convergence_policy=chemqa_convergence_policy or ConvergencePolicy(timeout_seconds=chemqa_timeout),
                 workspace_manager=workspace_manager,
+                cancellation_token=cancellation_token,
+                process_registry=process_registry,
             )
         else:
             runner = build_runner_fn(
@@ -115,8 +190,30 @@ def run_group(
                 benchmark_agent_thinking=single_agent_thinking,
                 no_timeout=no_timeout,
                 workspace_manager=workspace_manager,
+                cancellation_token=cancellation_token,
+                process_registry=process_registry,
             )
     except Exception as exc:
+        if cancellation_token is not None and cancellation_token.is_cancelled:
+            mark_cancelling()
+            group_results = [
+                build_cancelled_group_record_result(
+                    group=group,
+                    record=record,
+                    build_error_group_record_result_fn=build_error_group_record_result_fn,
+                )
+                for record in records
+            ]
+            for entry in group_results:
+                save_json_fn(
+                    output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json",
+                    asdict(entry),
+                )
+                if progress_writer is not None:
+                    progress_writer.record_cancelled(group.id, entry.record_id)
+            if progress_writer is not None:
+                progress_writer.group_cancelled(group.id)
+            return group_results
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
         if progress_writer is not None:
             progress_writer.group_started(group.id)
@@ -142,12 +239,26 @@ def run_group(
     if progress_writer is not None:
         progress_writer.group_started(group.id)
     for index, record in enumerate(records, start=1):
+        if cancellation_token is not None and cancellation_token.is_cancelled:
+            mark_cancelling()
+            entry = build_cancelled_group_record_result(
+                group=group,
+                record=record,
+                build_error_group_record_result_fn=build_error_group_record_result_fn,
+            )
+            group_results.append(entry)
+            save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
+            if progress_writer is not None:
+                progress_writer.record_cancelled(group.id, record.record_id)
+            continue
         if progress_writer is not None:
             progress_writer.record_started(group.id, record.record_id, index=index)
         started = time.time()
         run_result: Any | None = None
         try:
             run_result = runner.run(record, group)
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             ensure_compatible_runner_result(run_result, runner_kind=group.runner)
             axes = build_result_axes_from_runner(run_result)
             if run_result.should_score():
@@ -204,7 +315,19 @@ def run_group(
                 entry = GroupRecordResult(**{**asdict(entry), **axes, "error": error_message})
         except Exception as exc:
             elapsed = time.time() - started
-            if run_result is not None:
+            if isinstance(exc, BenchmarkCancelledError) or (
+                cancellation_token is not None and cancellation_token.is_cancelled
+            ):
+                mark_cancelling()
+                entry = build_cancelled_group_record_result(
+                    group=group,
+                    record=record,
+                    build_error_group_record_result_fn=build_error_group_record_result_fn,
+                    elapsed_seconds=elapsed,
+                    runner_meta=(dict(run_result.runner_meta) if run_result is not None else None),
+                    raw=(dict(run_result.raw) if run_result is not None else None),
+                )
+            elif run_result is not None:
                 error_message = (
                     f"Record `{record.record_id}` judge/evaluator failed in group `{group.id}` after runner output: {exc}"
                 )
@@ -242,15 +365,21 @@ def run_group(
         group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
         if progress_writer is not None:
-            evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
-            score = evaluation.get("normalized_score", evaluation.get("score"))
-            progress_writer.record_completed(
-                group.id,
-                record.record_id,
-                status=str(entry.run_lifecycle_status or "completed"),
-                score=float(score) if isinstance(score, (int, float)) else None,
-            )
+            if entry.run_lifecycle_status == "cancelled":
+                progress_writer.record_cancelled(group.id, record.record_id)
+            else:
+                evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+                score = evaluation.get("normalized_score", evaluation.get("score"))
+                progress_writer.record_completed(
+                    group.id,
+                    record.record_id,
+                    status=str(entry.run_lifecycle_status or "completed"),
+                    score=float(score) if isinstance(score, (int, float)) else None,
+                )
     if progress_writer is not None:
-        group_status = "completed" if all(item.run_lifecycle_status == "completed" for item in group_results) else "completed_with_errors"
-        progress_writer.group_completed(group.id, status=group_status)
+        if any(item.run_lifecycle_status == "cancelled" for item in group_results):
+            progress_writer.group_cancelled(group.id)
+        else:
+            group_status = "completed" if all(item.run_lifecycle_status == "completed" for item in group_results) else "completed_with_errors"
+            progress_writer.group_completed(group.id, status=group_status)
     return group_results

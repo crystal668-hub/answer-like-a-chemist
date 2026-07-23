@@ -167,3 +167,61 @@ def test_history_replay_script_is_directly_executable() -> None:
     )
 
     assert "Replay benchmark workspace audit" in completed.stdout
+
+
+def test_history_dry_run_uses_persisted_record_policy_when_final_artifacts_are_missing(tmp_path: Path) -> None:
+    run_root = tmp_path / "interrupted-run"
+    workspace = tmp_path / "runtime" / "active" / "workspace"
+    scratch = workspace / "scratch"
+    protected = tmp_path / "datasets"
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call-1",
+                            "name": "exec",
+                            "arguments": {"command": "false; python3 <<'PY'\npayload"},
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record = {
+        "record_id": "record_one",
+        "skills_enabled": False,
+        "runner_meta": {
+            "session_isolation": {"postflight_entry_session_file": str(transcript)},
+            "workspace_scratch": {"workspace_dir": str(workspace), "scratch_dir": str(scratch)},
+            "workspace_isolation": {
+                "active_workspace": str(workspace),
+                "invocation_id": "invocation",
+                "policy": {
+                    "protected_roots": [
+                        {"policy_id": "benchmark_dataset_root", "path": str(protected), "source": "test"}
+                    ]
+                },
+            },
+        },
+    }
+    record_path = run_root / "per-record" / "single_llm_skills_off" / "record-one.json"
+    write_json(record_path, record)
+
+    report = replay_workspace_adjudication(
+        run_root=run_root,
+        group_id="single_llm_skills_off",
+        record_ids=["record_one"],
+    )
+
+    audit = report["records"][0]["audit"]
+    assert audit["audit_execution_status"] == "complete"
+    assert audit["boundary_status"] == "warning"
+    assert audit["adjudication"] == "scoreable"
+    assert audit["findings"][0]["audit_error_code"] == "exec_unterminated_heredoc_eof"

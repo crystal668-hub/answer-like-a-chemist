@@ -60,7 +60,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -83,6 +83,8 @@ and output-root classification, `benchmarking.workflow.run_state` owns persisted
 results and run metadata, and `benchmarking.workflow.runner_adapters` binds the
 generic runners to runtime bundles, cleanroom, sessions, and workspace policy.
 `benchmarking.runtime.subprocess_utils` owns shared subprocess and stdout helpers,
+`benchmarking.runtime.cancellation` owns run cancellation tokens, reasons, and
+owned process-group termination,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
 `benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
 isolated process bridge, and public package API calls. The scoring evaluator
@@ -160,7 +162,8 @@ For each invocation, the CLI:
 2. Runs skill health checks, filters skills-on allowlists, prepares a unique
    invocation identity, recovers sentinel-proven stale active workspaces, and
    writes run-scoped OpenClaw configs.
-3. Dispatches groups in waves through `benchmarking.workflow.orchestration` and
+3. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches groups in
+   waves through `benchmarking.workflow.orchestration` and
    `benchmarking.workflow.runner_adapters`. Each record runs through either the
    single-LLM runner or the ChemQA runner, then through the registered evaluator
    when the runner result is scoreable.
@@ -168,7 +171,17 @@ For each invocation, the CLI:
    update run artifacts, aggregate only `scored=true` records, and support
    historical per-record resume data; the CLI writes the final results and
    runtime manifest.
-5. Starts detached automated analysis unless `--no-analysis` is selected.
+5. Starts detached automated analysis unless `--no-analysis` is selected. A
+   cancelled run never launches detached analysis.
+
+Cancellation is run-scoped and cooperative. The first signal fixes the stable
+cancellation reason; later signals shorten process termination grace. Scheduling
+stops before another record, retry, wave, judge, or analysis launch. Registered
+subprocesses start in owned process groups so termination covers descendants.
+Active runners still audit and seal their attempt workspaces; cleanroom handles
+manifest-owned ChemQA processes. Progress, waves, results, and the runtime
+manifest finish as `cancelled` or `cancelled_with_errors`, and cancelled records
+are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 
 ### Single-LLM runner
 
@@ -215,9 +228,11 @@ For each invocation, the CLI:
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.
-- The dashboard recursively discovers classified run directories, stops scanning
-  below each detected run, and writes only its own annotation SQLite database.
-  It does not mutate benchmark results or launch benchmark processes.
+- The dashboard recursively discovers classified run directories and stops
+  scanning below each detected run. It writes its annotation SQLite database and
+  may persist a `cancelled_with_errors` terminal projection when a progress owner
+  PID proves that a `running` or `cancelling` run is stale. It does not rewrite
+  record scores or launch benchmark processes.
 
 ### Paper pipeline
 
@@ -247,6 +262,9 @@ GROBID profiles, and calls an OpenAI-compatible chat-completions endpoint.
 - `passed` is an evaluator quality outcome, not a runtime-health field.
   Verifier-grounded continuous scores use `passed = null`.
 - Aggregate score denominators contain only records with `scored=true`.
+- Run, wave, and group lifecycle projections distinguish `cancelling`,
+  `cancelled`, and `cancelled_with_errors`; records use `cancelled` without a
+  fabricated evaluator score.
 
 The final run artifact set includes:
 
@@ -265,6 +283,10 @@ The final run artifact set includes:
   commands enter scratch through runner-provided environment variables.
 - A canonical base `AGENTS.md` plus a minimal role overlay defines the same
   isolation behavior for single-LLM, judge, and ChemQA roles.
+- The canonical base keeps native `exec` available for single-line commands and
+  directs multiline scripts through a structured write to `scratch/tmp` before
+  native execution; heredocs, here-strings, and inline multiline interpreter
+  commands are discouraged in the workspace contract rather than record prompts.
 - Immutable `WorkspaceAccessPolicy` objects define normalized read, write, and
   exec-workdir scopes, exact-file scopes, protected roots, and a deterministic
   digest. Skills-off and judge policies do not grant access to the skill source
@@ -287,6 +309,15 @@ themselves prove information contamination. A write-only boundary violation can
 be `scoreable_degraded`; an allowed fallback is a warning and remains
 `scoreable`. Audit evidence recovery is attempted before an unavailable audit is
 finalized. Archive failure remains fail closed.
+
+Known audit parser conditions use stable codes and an in-code recovery-handler
+registry. `exec_unterminated_heredoc_eof` projects the complete EOF heredoc body
+through recovery version 1, emits `transcript_audit_recovered`, and continues the
+normal protected-path scan. Recovery success is a boundary warning; an unknown
+condition, incomplete projection, or recovery exception remains unavailable.
+Historical dry-run replay can use a persisted per-record workspace policy when
+an interrupted legacy run lacks final aggregate artifacts; apply mode still
+requires `results.json` and `runtime-manifest.json`.
 
 This lifecycle, guard, and transcript audit is not an operating-system security
 boundary. Processes still run as the same local user.
@@ -352,6 +383,9 @@ boundary. Processes still run as the same local user.
   replay contract.
 - `docs/superpowers/specs/2026-07-16-benchmark-forbidden-path-root-containment-spec.md`:
   protected-root containment and transcript path evidence.
+- `docs/superpowers/specs/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md`:
+  typed audit recovery, EOF heredoc handling, owned-process cancellation, and
+  persistent cancellation terminal states.
 - `docs/superpowers/specs/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`:
   verifier-grounded dataset exposure and isolated scoring contract.
 - `benchmarking/resources/verifier_grounded/release.json`: current pinned

@@ -209,6 +209,13 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
         unchanged_polls = 0
         recovery_attempts = 0
         while time.time() < deadline:
+            cancellation_token = (
+                getattr(self, "_cancellation_token", None)
+                if getattr(self, "_cancellation_enabled", False)
+                else None
+            )
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             last_status = self._read_run_status(run_id)
             if self._is_chemqa_terminal_status(last_status):
                 return last_status
@@ -230,7 +237,10 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                 recovery_attempts += 1
                 self._recover_stalled_run(run_id, last_status)
                 unchanged_polls = 0
-            time.sleep(30)
+            if cancellation_token is not None:
+                cancellation_token.wait(30)
+            else:
+                time.sleep(30)
         error_message = (
             f"ChemQA run `{run_id}` did not reach a terminal state within {timeout_seconds}s. Last status: {last_status}"
         )

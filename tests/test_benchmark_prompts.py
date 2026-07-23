@@ -450,6 +450,9 @@ class BenchmarkPromptsTests(unittest.TestCase):
         prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=False)
 
         self.assertEqual(record.prompt, prompt)
+        self.assertNotIn("heredoc", prompt.lower())
+        self.assertNotIn("scratch/tmp", prompt)
+        self.assertNotIn("inline multiline", prompt)
 
     def test_chemqa_goal_specializes_frontierscience_research(self) -> None:
         record = BenchmarkRecord(

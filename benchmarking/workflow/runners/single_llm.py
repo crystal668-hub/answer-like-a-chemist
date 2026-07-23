@@ -1226,6 +1226,13 @@ class SingleLLMRunner:
         total_attempts = self.timeout_retries + 1
         last_result: RunnerResult | None = None
         for attempt_index in range(total_attempts):
+            cancellation_token = (
+                getattr(self, "_cancellation_token", None)
+                if getattr(self, "_cancellation_enabled", False)
+                else None
+            )
+            if cancellation_token is not None:
+                cancellation_token.raise_if_cancelled()
             session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
             result = self._run_isolated_attempt(
                 record=record,
@@ -1263,7 +1270,10 @@ class SingleLLMRunner:
                     attempt_history=attempt_history,
                 )
             backoff = self.timeout_retry_backoff_seconds[attempt_index]
-            self._sleep(backoff)
+            if cancellation_token is not None and cancellation_token.wait(backoff):
+                cancellation_token.raise_if_cancelled()
+            else:
+                self._sleep(0 if cancellation_token is not None else backoff)
         assert last_result is not None
         return self._attach_timeout_retry_meta(
             last_result,
