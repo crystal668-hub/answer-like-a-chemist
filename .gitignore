@@ -26,10 +26,6 @@ __pycache__/
 !/docs/superpowers/
 /docs/superpowers/*
 !/docs/superpowers/specs/
-/docs/superpowers/specs/*
-!/docs/superpowers/specs/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md
-!/docs/superpowers/specs/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md
-!/docs/superpowers/specs/2026-07-16-benchmark-forbidden-path-root-containment-spec.md
 /data/
 /benchmark-single-skills-on/
 /benchmark-runs/
