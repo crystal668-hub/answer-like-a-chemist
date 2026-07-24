@@ -389,6 +389,43 @@ def test_get_record_relabels_legacy_skill_off_exec_diagnostics(tmp_path: Path) -
     assert diagnostics_by_group["single_llm_skills_off"]["skill_tool_failure_count"] == 0
 
 
+def test_get_record_exposes_structured_execution_error_diagnostics(tmp_path: Path) -> None:
+    run_root = tmp_path / "provider-error-run"
+    execution_error = {
+        "code": "provider_access_denied",
+        "message": "Access to model denied.",
+        "layer": "provider_authorization",
+        "retryable": False,
+        "source": "stderr",
+        "primary_error": {
+            "source": "stderr",
+            "line_number": 2,
+            "event_kind": "provider_request_failed",
+            "status_code": 403,
+            "error_code": None,
+            "error_type": None,
+            "message": "Access to model denied.",
+            "raw": "403 Access to model denied.",
+            "parser": "openclaw_raw_error",
+        },
+        "observed_errors": [],
+    }
+    payload = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="r1",
+        passed=False,
+        score=0.0,
+        primary_metric="execution_error",
+        runner_meta={"execution_error": execution_error},
+    )
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "r1.json", payload)
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    record = dashboard.get_record("provider-error-run", "r1")
+
+    assert record["groups"][0]["diagnostics"]["execution_error"] == execution_error
+
+
 def test_get_record_uses_runtime_bundle_question_markdown_and_assets(tmp_path: Path) -> None:
     run_root = tmp_path / "superchem-run"
     bundle_root = run_root / "input-bundles" / "superchem-r1"

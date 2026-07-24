@@ -87,6 +87,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         write_attempt_marker: bool = False,
         observed_old_marker: list[bool] | None = None,
         contamination_auditor: Any | None = None,
+        failure_stderr: str | None = None,
     ) -> SingleLLMRunner:
         calls = {"count": 0}
         prompt_builder = build_prompt or (lambda *args, **kwargs: "BASE PROMPT")
@@ -105,6 +106,8 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
                 (workspace / "attempt-marker.txt").write_text(str(calls["count"]), encoding="utf-8")
             if timeout_once and calls["count"] == 1:
                 raise subprocess.TimeoutExpired(command, timeout)
+            if failure_stderr is not None:
+                return CompletedProcess(returncode=1, stderr=failure_stderr)
             return CompletedProcess()
 
         return SingleLLMRunner(
@@ -441,6 +444,33 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         transcript_path = result.runner_meta["session_isolation"]["postflight_entry_session_file"]
         self.assertTrue(Path(transcript_path).is_file())
         self.assertEqual("provider_rate_limit_error", result.raw["execution_error"]["code"])
+
+    def test_provider_access_denied_preserves_primary_error_and_attempt_history(self) -> None:
+        raw_error = "403 Access to model denied. Please make sure you are eligible for using the model."
+        stderr = (
+            "[agent/embedded] embedded run agent end: error=LLM request failed. "
+            f"rawError={raw_error}"
+        )
+        runner = self._runner(
+            captured_commands=[],
+            timeout_once=False,
+            failure_stderr=stderr,
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        assert result.failure is not None
+        self.assertEqual("provider_access_denied", result.failure.code)
+        self.assertEqual(
+            "Access to model denied. Please make sure you are eligible for using the model.",
+            result.failure.message,
+        )
+        execution_error = result.raw["execution_error"]
+        self.assertEqual(403, execution_error["primary_error"]["status_code"])
+        self.assertEqual(raw_error, execution_error["primary_error"]["raw"])
+        attempt_error = result.runner_meta["timeout_retry"]["attempt_history"][0]["execution_error"]
+        self.assertEqual(execution_error, attempt_error)
+        self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])
 
 
 if __name__ == "__main__":

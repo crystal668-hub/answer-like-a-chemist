@@ -124,6 +124,8 @@ def _audit_int(audit: dict[str, Any], key: str) -> int:
 
 def _diagnostics_payload(result: dict[str, Any], skill_audit: dict[str, Any]) -> dict[str, Any]:
     skills_enabled = bool(result.get("skills_enabled", False))
+    runner_meta = result.get("runner_meta") if isinstance(result.get("runner_meta"), dict) else {}
+    execution_error = runner_meta.get("execution_error")
     legacy_skill_calls = _audit_int(skill_audit, "skill_tool_call_count")
     legacy_skill_failures = _audit_int(skill_audit, "skill_tool_failure_count")
     has_exec_call_count = isinstance(skill_audit.get("exec_tool_call_count"), (int, float))
@@ -142,6 +144,7 @@ def _diagnostics_payload(result: dict[str, Any], skill_audit: dict[str, Any]) ->
         "skill_tool_call_count": legacy_skill_calls if skills_enabled else 0,
         "skill_tool_failure_count": legacy_skill_failures if skills_enabled else 0,
         "coverage_checklist_present": skill_audit.get("coverage_checklist_present"),
+        "execution_error": dict(execution_error) if isinstance(execution_error, dict) else None,
     }
 
 

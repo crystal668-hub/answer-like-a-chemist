@@ -60,7 +60,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -83,6 +83,9 @@ and output-root classification, `benchmarking.workflow.run_state` owns persisted
 results and run metadata, and `benchmarking.workflow.runner_adapters` binds the
 generic runners to runtime bundles, cleanroom, sessions, and workspace policy.
 `benchmarking.runtime.subprocess_utils` owns shared subprocess and stdout helpers,
+`benchmarking.runtime.error_capture` owns execution-error evidence extraction,
+provider/config error classification, and preservation of original upstream
+status codes, error codes, messages, and matched log events,
 `benchmarking.runtime.cancellation` owns run cancellation tokens, reasons, and
 owned process-group termination,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
@@ -190,6 +193,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - The runner materializes the role contract, attaches current scratch paths,
   invokes `benchmarking.runtime.single_llm_openclaw_wrapper`, validates OpenClaw
   JSON stdout, and enforces the eval-aware candidate-answer contract.
+- Nonzero OpenClaw subprocess results are classified from structured error
+  evidence before diagnostic excerpts are truncated. Provider failures retain
+  a terminal `primary_error` plus ordered `observed_errors`; internal error
+  categories and retry policy do not replace the original upstream status code,
+  error code, message, or matched log text.
 - Timeout-family failures may create a fresh attempt. Transcript recovery and a
   same-session finalization repair can preserve a complete answer; incomplete or
   unreliable output remains non-scoreable.
@@ -261,6 +269,10 @@ GROBID profiles, and calls an OpenAI-compatible chat-completions endpoint.
   `protocol_completion_status`, `answer_availability`, `answer_reliability`,
   `evaluable`, `scored`, `recovery_mode`, `degraded_execution`, and
   `execution_error_kind`.
+- Structured runner execution errors retain a stable internal `code`, `layer`,
+  and `retryable` decision alongside original `primary_error` and
+  `observed_errors` evidence. Retry attempt history retains the complete
+  structured execution error for each failed attempt.
 - `passed` is an evaluator quality outcome, not a runtime-health field.
   Verifier-grounded continuous scores use `passed = null`.
 - Aggregate score denominators contain only records with `scored=true`.

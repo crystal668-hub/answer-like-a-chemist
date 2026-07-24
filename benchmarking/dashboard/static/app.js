@@ -285,8 +285,14 @@ function renderGroups(record) {
       const evalPayload = group.evaluation || {};
       const verifier = group.verifier;
       const isolation = group.workspace_isolation || {};
+      const executionError = group.diagnostics?.execution_error || {};
+      const primaryError = executionError.primary_error || {};
+      const observedErrors = executionError.observed_errors || [];
       const findings = (isolation.findings || []).map((finding) => `
         <li>${escapeHtml(finding.access_mode || "unknown")} / ${escapeHtml(finding.operation_outcome || "unknown")} · ${escapeHtml(finding.policy_id || "")} · ${escapeHtml(finding.resolved_path || "")}</li>
+      `).join("");
+      const observedErrorItems = observedErrors.map((error) => `
+        <li>${escapeHtml(error.source || "unknown")}:${escapeHtml(error.line_number ?? "-")} · ${escapeHtml(error.raw || error.message || "unknown error")}</li>
       `).join("");
       return `<section class="group-card">
         <div class="row-top">
@@ -313,6 +319,11 @@ function renderGroups(record) {
           ${!group.skills_enabled ? `<span>Exec failures: ${escapeHtml(group.diagnostics?.exec_tool_failure_count ?? "-")}</span>` : ""}
           <span>Recovery: ${escapeHtml(group.status_axes?.recovery_mode || "none")}</span>
         </div>
+        ${executionError.code ? `<details>
+          <summary>Execution error · ${escapeHtml(executionError.code)}${primaryError.status_code ? ` · HTTP ${escapeHtml(primaryError.status_code)}` : ""}</summary>
+          <p class="muted">${escapeHtml(executionError.message || primaryError.message || "Unknown execution error")}</p>
+          ${observedErrorItems ? `<ul>${observedErrorItems}</ul>` : ""}
+        </details>` : ""}
         ${findings ? `<details><summary>Workspace boundary findings</summary><ul>${findings}</ul></details>` : ""}
       </section>`;
     })
