@@ -1,11 +1,11 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "89ed5b9d83547bea98f6eeac4a03a131e33e8b90",
-  "source_tag": "v0.3.0",
+  "source_commit": "dfff4d08c5f93696126e3f119ba0aa0a055ceb64",
+  "source_tag": "v0.4.0",
   "sdist": {
-    "filename": "verifier_grounded_benchmark-0.3.0.tar.gz",
-    "sha256": "d75a04e01edb1e4d130b18a5b32a9321943dfc0dc420ba2247751dd5cccbf901"
+    "filename": "verifier_grounded_benchmark-0.4.0.tar.gz",
+    "sha256": "1b164883f7dc10c9c8ef07a4d901de5892fcac7733e3319cec1678d793b7ded9"
   },
   "tracks": {
     "property_calculation": {
@@ -19,7 +19,7 @@
     },
     "rdkit": {
       "dataset": "verifier_grounded_rdkit",
-      "task_count": 11,
+      "task_count": 14,
       "task_ids": [
         "rdkit_qed_max_001",
         "rdkit_sa_min_002",
@@ -31,13 +31,16 @@
         "rdkit_qed_sa_008",
         "rdkit_logp_tpsa_009",
         "rdkit_hba_hbd_010",
-        "rdkit_logp_target_011"
+        "rdkit_logp_target_011",
+        "rdkit_sa_logp_target_012",
+        "rdkit_chain_end_to_end_max_013",
+        "rdkit_caffeine_similarity_max_014"
       ],
       "timeout_seconds": 180.0
     },
     "xtb": {
       "dataset": "verifier_grounded_xtb_xyz",
-      "task_count": 18,
+      "task_count": 20,
       "task_ids": [
         "xtb_gap_window_001",
         "xtb_dipole_window_002",
@@ -56,15 +59,17 @@
         "xtb_two_fluorine_gap_min_015",
         "xtb_c10_f2_gap_min_016",
         "xtb_roy_singlepoint_energy_min_017",
-        "xtb_ritonavir_optimized_energy_min_018"
+        "xtb_ritonavir_optimized_energy_min_018",
+        "xtb_odd_element_counts_gap_max_019",
+        "xtb_pyrene_substituent_energy_min_020"
       ],
       "timeout_seconds": 1800.0
     }
   },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "wheel": {
-    "filename": "verifier_grounded_benchmark-0.3.0-py3-none-any.whl",
-    "sha256": "b93c18b818e8d19993e817de6439ccea910b36a8f386c551078b7c6b10420381",
-    "size": 143722
+    "filename": "verifier_grounded_benchmark-0.4.0-py3-none-any.whl",
+    "sha256": "6b2e9f18f2618622d813e77a86dcfca4144aa633bfee009e277dbec8512a8325",
+    "size": 157458
   }
 }

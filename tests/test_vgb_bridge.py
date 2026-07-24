@@ -10,15 +10,15 @@ from benchmarking.runtime import vgb_bridge as bridge
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = bridge.load_release_config()
 
-    assert config.version == "0.3.0"
-    assert config.source_tag == "v0.3.0"
-    assert config.source_commit == "89ed5b9d83547bea98f6eeac4a03a131e33e8b90"
-    assert config.wheel_sha256 == "b93c18b818e8d19993e817de6439ccea910b36a8f386c551078b7c6b10420381"
-    assert config.wheel_size == 143722
+    assert config.version == "0.4.0"
+    assert config.source_tag == "v0.4.0"
+    assert config.source_commit == "dfff4d08c5f93696126e3f119ba0aa0a055ceb64"
+    assert config.wheel_sha256 == "6b2e9f18f2618622d813e77a86dcfca4144aa633bfee009e277dbec8512a8325"
+    assert config.wheel_size == 157458
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation": 2,
-        "rdkit": 11,
-        "xtb": 18,
+        "rdkit": 14,
+        "xtb": 20,
     }
     assert all(track["task_count"] == len(track["task_ids"]) for track in config.tracks.values())
 
