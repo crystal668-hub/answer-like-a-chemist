@@ -132,6 +132,20 @@ async function loadRuns() {
   }
 }
 
+async function refreshRuns() {
+  const button = $("refresh-button");
+  button.classList.add("is-refreshing");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await loadRuns();
+  } finally {
+    button.classList.remove("is-refreshing");
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
 function renderFilterOptions() {
   const datasetFilter = $("dataset-filter");
   const subsetFilter = $("subset-filter");
@@ -401,7 +415,7 @@ async function deleteAnnotation(annotationId) {
   await selectRecord(state.selectedRecord);
 }
 
-$("refresh-button").addEventListener("click", loadRuns);
+$("refresh-button").addEventListener("click", refreshRuns);
 $("status-filter").addEventListener("change", renderRuns);
 $("dataset-filter").addEventListener("change", renderRuns);
 $("subset-filter").addEventListener("change", renderRuns);

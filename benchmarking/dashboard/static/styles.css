@@ -148,6 +148,32 @@ h3 {
   border-color: #b9b9bf;
 }
 
+.refresh-icon {
+  display: inline-block;
+}
+
+#refresh-button.is-refreshing {
+  color: var(--accent);
+  cursor: wait;
+}
+
+#refresh-button.is-refreshing .refresh-icon {
+  animation: refresh-spin 700ms linear infinite;
+}
+
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #refresh-button.is-refreshing .refresh-icon {
+    animation: none;
+    opacity: 0.45;
+  }
+}
+
 select {
   max-width: 150px;
   height: 32px;

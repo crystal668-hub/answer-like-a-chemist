@@ -30,6 +30,11 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "asset-image" in script
     assert "dataset-filter" in index
     assert "hide-run" in index
+    assert 'class="refresh-icon"' in index
+    assert 'button.classList.add("is-refreshing")' in script
+    assert 'button.setAttribute("aria-busy", "true")' in script
+    assert "animation: refresh-spin 700ms linear infinite" in styles
+    assert "@media (prefers-reduced-motion: reduce)" in styles
     assert "api/annotations" in script
     assert "function renderRecordScoreBadges" in script
     assert "score-badge-strip" in script

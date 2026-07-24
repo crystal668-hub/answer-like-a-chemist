@@ -232,7 +232,9 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   scanning below each detected run. It writes its annotation SQLite database and
   may persist a `cancelled_with_errors` terminal projection when a progress owner
   PID proves that a `running` or `cancelling` run is stale. It does not rewrite
-  record scores or launch benchmark processes.
+  record scores or launch benchmark processes. Manual dashboard refreshes expose
+  their pending state through the refresh control and restore the control after
+  either success or failure.
 
 ### Paper pipeline
 
