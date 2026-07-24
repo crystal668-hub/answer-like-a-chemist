@@ -128,3 +128,16 @@ def test_checked_in_datasets_match_pinned_release_inventory() -> None:
         records = load_records([path])
         assert len(records) == track_config["task_count"]
         assert all(record.grading.kind == "verifier_grounded" for record in records)
+
+
+def test_rdkit_chain_distance_prompt_exposes_smarts_and_uff_protocol() -> None:
+    path = RESOURCE_DATASET_ROOT / "verifier_grounded_rdkit.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    record = next(row for row in rows if row["id"] == "rdkit_chain_end_to_end_max_013")
+
+    assert (
+        "[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]"
+        in record["prompt"]
+    )
+    assert "Universal Force Field (UFF)" in record["prompt"]
+    assert "lowest-energy converged UFF conformer" in record["prompt"]

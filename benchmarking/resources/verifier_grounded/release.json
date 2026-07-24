@@ -1,11 +1,11 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "dfff4d08c5f93696126e3f119ba0aa0a055ceb64",
-  "source_tag": "v0.4.0",
+  "source_commit": "c31e7c8a9f36d97a13aa6eb8c07235d6b05f78cc",
+  "source_tag": "v0.4.1",
   "sdist": {
-    "filename": "verifier_grounded_benchmark-0.4.0.tar.gz",
-    "sha256": "1b164883f7dc10c9c8ef07a4d901de5892fcac7733e3319cec1678d793b7ded9"
+    "filename": "verifier_grounded_benchmark-0.4.1.tar.gz",
+    "sha256": "9bdc23ffd1b3ae25a0b2c9e25b122f622e263cdc7873d0adc2dfd948cd2a6785"
   },
   "tracks": {
     "property_calculation": {
@@ -66,10 +66,10 @@
       "timeout_seconds": 1800.0
     }
   },
-  "version": "0.4.0",
+  "version": "0.4.1",
   "wheel": {
-    "filename": "verifier_grounded_benchmark-0.4.0-py3-none-any.whl",
-    "sha256": "6b2e9f18f2618622d813e77a86dcfca4144aa633bfee009e277dbec8512a8325",
-    "size": 157458
+    "filename": "verifier_grounded_benchmark-0.4.1-py3-none-any.whl",
+    "sha256": "7be727f549e99d1c463e84c5c4694c00caf17a35caa729b0a15c26676e0f2691",
+    "size": 157566
   }
 }
