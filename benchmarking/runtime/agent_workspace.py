@@ -46,7 +46,7 @@ SCHEMA_VERSION = 1
 SCRATCH_CONTRACT_VERSION = 2
 WORKSPACE_FAILURE_LAYER = "benchmark_runtime"
 WORKSPACE_FAILURE_SOURCE = "workspace_isolation"
-UV_CACHE_GIT_MARKER = PurePosixPath("scratch/tmp/cache/uv/sdists-v9/.git")
+UV_CACHE_ROOT = PurePosixPath("scratch/tmp/cache/uv")
 
 WORKSPACE_FAILURE_CODES = frozenset(
     {
@@ -110,7 +110,12 @@ def _tree_stats(root: Path) -> tuple[int, int]:
 
 
 def _is_allowed_uv_cache_git_marker(relative: PurePosixPath, mode: int) -> bool:
-    return relative == UV_CACHE_GIT_MARKER and stat.S_ISREG(mode)
+    return (
+        stat.S_ISREG(mode)
+        and relative.name == ".git"
+        and len(relative.parts) > len(UV_CACHE_ROOT.parts)
+        and relative.parts[: len(UV_CACHE_ROOT.parts)] == UV_CACHE_ROOT.parts
+    )
 
 
 @dataclass(frozen=True)
