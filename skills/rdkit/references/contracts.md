@@ -74,20 +74,6 @@ Conformer force-field selection:
 - If the selected force field has no parameters for the molecule, the script
   returns a structured `error`; it never substitutes the other force field.
 
-Generic conformer request example:
-
-```json
-{
-  "molecule": {
-    "format": "smiles",
-    "value": "CCCCCC"
-  },
-  "num_conformers": 20,
-  "random_seed": 61453,
-  "force_field": "UFF"
-}
-```
-
 Multi-molecule scripts:
 
 - `substructure.py`
