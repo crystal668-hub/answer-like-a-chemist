@@ -56,5 +56,7 @@ python scripts/run_skill.py \
 - Use conformer scripts only when 3D geometry is relevant. Select the force
   field from the task or scientific protocol; never infer it from parameter
   availability and never substitute MMFF for UFF or UFF for MMFF.
+- Set `num_conformers` and `random_seed` explicitly for every conformer request.
+  The skill does not provide defaults or preferred values for either field.
 - Read `routing-rules.md` for script selection and
   `references/contracts.md` for request and result contracts.

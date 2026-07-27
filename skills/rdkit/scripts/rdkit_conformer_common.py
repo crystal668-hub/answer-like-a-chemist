@@ -9,14 +9,24 @@ def prepare_conformer_request(
     request: dict[str, Any], rdkit_ctx: dict[str, Any]
 ) -> tuple[Any, dict[str, Any], int, int]:
     Chem = rdkit_ctx["Chem"]
-    num_conformers = int(request.get("num_conformers", 1))
+    if "num_conformers" not in request:
+        raise RequestError(
+            "missing_field",
+            "Request field `num_conformers` is required.",
+        )
+    num_conformers = int(request["num_conformers"])
     if num_conformers <= 0:
         raise RequestError(
             "invalid_num_conformers",
             "Request field `num_conformers` must be a positive integer.",
             primary_result={"embedded_conformer_count": 0},
         )
-    random_seed = int(request.get("random_seed", 20260427))
+    if "random_seed" not in request:
+        raise RequestError(
+            "missing_field",
+            "Request field `random_seed` is required.",
+        )
+    random_seed = int(request["random_seed"])
     mol, metadata = load_molecule(rdkit_ctx, request.get("molecule"))
     return Chem.AddHs(mol), metadata, num_conformers, random_seed
 

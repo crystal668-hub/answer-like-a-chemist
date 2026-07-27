@@ -61,8 +61,14 @@ Single-molecule scripts accept:
 Optional flags:
 
 - `strip_atom_maps`: boolean, used by `canonicalize.py`
-- `num_conformers`: positive integer, used by all conformer scripts
-- `random_seed`: integer, used by all conformer scripts
+
+Required sampling fields for all conformer scripts:
+
+- `num_conformers`: positive integer
+- `random_seed`: integer
+
+Neither sampling field has a default. Choose both values for the task or
+scientific protocol instead of inferring them from the skill.
 
 Conformer force-field selection:
 

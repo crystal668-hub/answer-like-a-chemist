@@ -122,7 +122,9 @@ stable `EvaluationResult` shape and execution-error construction;
   exposure inventory; it is not a deterministic router.
 - The RDKit skill exposes neutral, explicit conformer force-field selection:
   its generic conformer entrypoint requires `MMFF` or `UFF`, and dedicated MMFF
-  and UFF scripts implement each family without cross-family fallback.
+  and UFF scripts implement each family without cross-family fallback. Every
+  conformer request also requires explicit `num_conformers` and `random_seed`
+  values; the skill defines no sampling defaults or preferred values.
 - `skills/paper-retrieval/`, `paper-access/`, `paper-parse/`, and
   `paper-rerank/` are independent paper-processing stages.
 

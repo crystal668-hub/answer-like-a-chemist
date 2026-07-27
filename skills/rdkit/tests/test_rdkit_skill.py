@@ -296,6 +296,7 @@ class ConformerEmbedTests(unittest.TestCase):
                     {
                         "molecule": {"format": "smiles", "value": "CCO"},
                         "num_conformers": 1,
+                        "random_seed": 7,
                         "force_field": request_value,
                     },
                 )
@@ -317,6 +318,7 @@ class ConformerEmbedTests(unittest.TestCase):
                     {
                         "molecule": {"format": "smiles", "value": "CCO"},
                         "num_conformers": 1,
+                        "random_seed": 7,
                     },
                 )
 
@@ -328,6 +330,8 @@ class ConformerEmbedTests(unittest.TestCase):
             "conformer_mmff.py",
             {
                 "molecule": {"format": "smiles", "value": "CCO"},
+                "num_conformers": 1,
+                "random_seed": 7,
                 "mmff_variant": "MMFF94s",
             },
         )
@@ -341,6 +345,8 @@ class ConformerEmbedTests(unittest.TestCase):
             "conformer_mmff.py",
             {
                 "molecule": {"format": "smiles", "value": "CCO"},
+                "num_conformers": 1,
+                "random_seed": 7,
                 "mmff_variant": "AUTO",
             },
         )
@@ -353,6 +359,8 @@ class ConformerEmbedTests(unittest.TestCase):
             "conformer_embed.py",
             {
                 "molecule": {"format": "smiles", "value": "B"},
+                "num_conformers": 1,
+                "random_seed": 7,
                 "force_field": "MMFF",
             },
         )
@@ -360,6 +368,8 @@ class ConformerEmbedTests(unittest.TestCase):
             "conformer_embed.py",
             {
                 "molecule": {"format": "smiles", "value": "B"},
+                "num_conformers": 1,
+                "random_seed": 7,
                 "force_field": "UFF",
             },
         )
@@ -370,6 +380,34 @@ class ConformerEmbedTests(unittest.TestCase):
         )
         self.assertEqual("success", uff_payload["status"])
         self.assertEqual("UFF", uff_payload["primary_result"]["force_field"])
+
+    def test_conformer_sampling_parameters_are_required(self) -> None:
+        scripts = {
+            "conformer_embed.py": {"force_field": "UFF"},
+            "conformer_mmff.py": {},
+            "conformer_uff.py": {},
+        }
+        sampling_fields = {
+            "num_conformers": {"random_seed": 7},
+            "random_seed": {"num_conformers": 1},
+        }
+        for script_name, script_fields in scripts.items():
+            for missing_field, sampling_values in sampling_fields.items():
+                with self.subTest(
+                    script_name=script_name, missing_field=missing_field
+                ):
+                    payload, _ = run_script(
+                        script_name,
+                        {
+                            "molecule": {"format": "smiles", "value": "CCO"},
+                            **script_fields,
+                            **sampling_values,
+                        },
+                    )
+
+                    self.assertEqual("error", payload["status"])
+                    self.assertEqual("missing_field", payload["errors"][0]["code"])
+                    self.assertIn(missing_field, payload["errors"][0]["message"])
 
     def test_conformer_embedding_failure(self) -> None:
         payload, _ = run_script(
