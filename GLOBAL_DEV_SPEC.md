@@ -255,9 +255,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   workspace evidence. It writes its annotation SQLite database and may persist a
   `cancelled_with_errors` terminal projection when a progress owner PID proves
   that a `running` or `cancelling` run is stale. It does not rewrite record scores
-  or launch benchmark processes. Manual dashboard refreshes expose their pending
-  state through the refresh control and restore the control after either success
-  or failure.
+  or launch benchmark processes. Dataset facets use the canonical
+  `source_file` dataset segment when it follows the standard
+  `<dataset>/data/<file>.jsonl` layout, correcting inconsistent persisted result
+  labels without rewriting run artifacts. Manual dashboard refreshes expose
+  their pending state through the refresh control and restore the control after
+  either success or failure.
 
 ### Paper pipeline
 

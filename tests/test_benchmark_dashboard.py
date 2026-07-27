@@ -129,6 +129,34 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
 
 
+def test_dashboard_uses_source_dataset_when_persisted_result_dataset_is_run_id(tmp_path: Path) -> None:
+    run_id = "temp-benchmark-20260513-141355"
+    run_root = tmp_path / run_id
+    result = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="r1",
+        dataset=run_id,
+    )
+    result["source_file"] = str(tmp_path / "temp-benchmarks" / "frontierscience" / "data" / "pool.jsonl")
+    write_json(
+        run_root / "results.json",
+        {
+            "schema_version": 2,
+            "generated_at": "2026-05-13T20:44:37+0800",
+            "records": 1,
+            "groups": [{"id": "single_llm_skills_on"}],
+            "results": [result],
+            "summary": {},
+        },
+    )
+
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    assert dashboard.list_runs()[0]["datasets"] == ["frontierscience"]
+    assert dashboard.list_records(run_id)[0]["dataset"] == "frontierscience"
+    assert dashboard.get_record(run_id, "r1")["dataset"] == "frontierscience"
+
+
 def test_list_runs_discovers_classified_run_without_descending_into_run_artifacts(tmp_path: Path) -> None:
     run_root = write_demo_run(
         tmp_path / "formal" / "verifier-grounded-rdkit" / "qwen3-7-max",

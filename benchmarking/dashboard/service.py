@@ -46,6 +46,16 @@ def _slug_variants(value: str) -> set[str]:
     return {stripped, stripped.replace("_", "-"), stripped.replace("-", "_")}
 
 
+def _dataset_from_source_file(result: dict[str, Any]) -> str:
+    source_file = str(result.get("source_file") or "").strip()
+    if not source_file:
+        return ""
+    source_path = Path(source_file)
+    if source_path.parent.name != "data":
+        return ""
+    return source_path.parent.parent.name
+
+
 def _format_number(value: Any) -> str:
     if not isinstance(value, (int, float)):
         return ""
@@ -54,6 +64,9 @@ def _format_number(value: Any) -> str:
 
 def _dashboard_dataset_subset(result: dict[str, Any]) -> tuple[str, str]:
     dataset = str(result.get("dataset") or "")
+    source_dataset = _dataset_from_source_file(result)
+    if source_dataset and source_dataset != dataset:
+        dataset = source_dataset
     subset = str(result.get("subset") or "")
     if dataset.startswith("verifier_grounded_"):
         return "vgb", subset or dataset
