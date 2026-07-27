@@ -46,6 +46,7 @@ SCHEMA_VERSION = 1
 SCRATCH_CONTRACT_VERSION = 2
 WORKSPACE_FAILURE_LAYER = "benchmark_runtime"
 WORKSPACE_FAILURE_SOURCE = "workspace_isolation"
+UV_CACHE_GIT_MARKER = PurePosixPath("scratch/tmp/cache/uv/sdists-v9/.git")
 
 WORKSPACE_FAILURE_CODES = frozenset(
     {
@@ -106,6 +107,10 @@ def _tree_stats(root: Path) -> tuple[int, int]:
             file_count += 1
             total_bytes += path.lstat().st_size
     return file_count, total_bytes
+
+
+def _is_allowed_uv_cache_git_marker(relative: PurePosixPath, mode: int) -> bool:
+    return relative == UV_CACHE_GIT_MARKER and stat.S_ISREG(mode)
 
 
 @dataclass(frozen=True)
@@ -1113,7 +1118,7 @@ class AttemptWorkspaceManager:
                     "Benchmark workspace preflight found a symlink or special file.",
                     details={"path": str(path)},
                 )
-            if ".git" in relative.parts:
+            if ".git" in relative.parts and not _is_allowed_uv_cache_git_marker(relative, mode):
                 raise WorkspaceIsolationError(
                     "workspace_path_unsafe",
                     "Benchmark workspace preflight found forbidden Git metadata.",
@@ -1208,7 +1213,14 @@ class AttemptWorkspaceManager:
     def _validate_runtime_tree(root: Path) -> None:
         for path in root.rglob("*"):
             mode = path.lstat().st_mode
-            if path.is_symlink() or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)) or ".git" in path.relative_to(root).parts:
+            relative = path.relative_to(root)
+            if path.is_symlink() or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise WorkspaceIsolationError(
+                    "workspace_path_unsafe",
+                    "Existing managed workspace contains a symlink, special file, or Git metadata.",
+                    details={"path": str(path)},
+                )
+            if ".git" in relative.parts and not _is_allowed_uv_cache_git_marker(relative, mode):
                 raise WorkspaceIsolationError(
                     "workspace_path_unsafe",
                     "Existing managed workspace contains a symlink, special file, or Git metadata.",

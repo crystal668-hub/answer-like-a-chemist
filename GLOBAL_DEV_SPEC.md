@@ -320,6 +320,10 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
 
 - Attempt workspaces use scratch contract version `2` with stable
   `scratch/requests`, `scratch/outputs`, `scratch/notes`, and `scratch/tmp`.
+- Workspace tree validation permits the exact regular-file marker
+  `scratch/tmp/cache/uv/sdists-v9/.git`, which `uv` may create in a
+  scratch-local cache. Other `.git` paths, symlinks, and special files remain
+  forbidden.
 - Structured file tools use workspace-relative `scratch/...` paths. Shell
   commands enter scratch through runner-provided environment variables.
 - A canonical base `AGENTS.md` plus a minimal role overlay defines the same

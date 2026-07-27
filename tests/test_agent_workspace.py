@@ -495,6 +495,31 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         fifo.unlink()
         self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
 
+    def test_uv_cache_git_marker_is_allowed_only_at_exact_regular_file_path(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        marker = lease.active_workspace / "scratch" / "tmp" / "cache" / "uv" / "sdists-v9" / ".git"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"")
+
+        self.manager._validate_runtime_tree(lease.active_workspace)
+        entries, template_sha256 = self.manager._template_entries(self.manager.templates["single-v1"])
+        self.manager._validate_preflight_tree(
+            lease.active_workspace,
+            identity=lease.identity,
+            template_entries=entries,
+            expected_template_sha256=template_sha256,
+            expected_workspace=lease.active_workspace,
+        )
+
+        ordinary_git_path = lease.active_workspace / "scratch" / "tmp" / "other" / ".git"
+        ordinary_git_path.parent.mkdir(parents=True)
+        ordinary_git_path.write_bytes(b"")
+        with self.assertRaises(WorkspaceIsolationError) as raised:
+            self.manager._validate_runtime_tree(lease.active_workspace)
+        self.assertEqual("workspace_path_unsafe", raised.exception.code)
+        ordinary_git_path.unlink()
+        self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
+
     def test_template_with_git_or_symlink_is_rejected(self) -> None:
         git_dir = self.template_root / ".git"
         git_dir.mkdir()
