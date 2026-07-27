@@ -49,6 +49,10 @@ runbooks.
   Formal and temporary inputs determine the top-level category; benchmark and
   single-LLM model slugs provide the next two levels. Verifier-grounded isolated
   runtimes and dashboard metadata also live under `workspace/state/`.
+- Explicitly retained fixed-workspace evidence lives under
+  `workspace/state/benchmark-runs/legacy-workspace-archives/<workspace>-<timestamp>`.
+  These snapshots are maintenance artifacts, not classified benchmark runs or
+  attempt workspace archives.
 - Active attempt workspaces default to `.openclaw/benchmark/workspaces`; live
   DebateClaw workspaces default to `.openclaw/debateclaw/workspaces`.
 
@@ -60,7 +64,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, and historical adjudication replay. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -131,6 +135,10 @@ stable `EvaluationResult` shape and execution-error construction;
 - `scripts/replay_workspace_adjudication.py` replays stored transcript evidence
   without a model call and can apply explicitly approved record-selective
   recovery.
+- `scripts/archive_legacy_benchmark_workspaces.py` copies complete fixed legacy
+  workspaces into an independent evidence archive, records a path/metadata/SHA-256
+  inventory, verifies every archive and unchanged source, and deletes sources
+  only when all requested archives pass those checks.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
   provider configuration and removes applicable stale agent provider caches.
 - `scripts/docker_services.sh` and `scripts/mineru_service.sh` manage the local
@@ -240,12 +248,14 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.
 - The dashboard recursively discovers classified run directories and stops
-  scanning below each detected run. It writes its annotation SQLite database and
-  may persist a `cancelled_with_errors` terminal projection when a progress owner
-  PID proves that a `running` or `cancelling` run is stale. It does not rewrite
-  record scores or launch benchmark processes. Manual dashboard refreshes expose
-  their pending state through the refresh control and restore the control after
-  either success or failure.
+  scanning below each detected run. It skips the reserved
+  `legacy-workspace-archives` maintenance tree rather than traversing retained
+  workspace evidence. It writes its annotation SQLite database and may persist a
+  `cancelled_with_errors` terminal projection when a progress owner PID proves
+  that a `running` or `cancelling` run is stale. It does not rewrite record scores
+  or launch benchmark processes. Manual dashboard refreshes expose their pending
+  state through the refresh control and restore the control after either success
+  or failure.
 
 ### Paper pipeline
 
@@ -291,6 +301,15 @@ The final run artifact set includes:
 - `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
 - `skill-health.json` and `web-search-preflight.json`;
 - `analysis/` status, evidence, and reports when automated analysis is enabled.
+
+Legacy fixed-workspace evidence uses a separate archive kind and schema. It
+retains the complete source tree, including Git metadata, plus an inventory of
+directories and regular files with modes, modification times, sizes, and SHA-256
+digests. The maintenance command rejects symlinks and special files, refuses
+overwrites, detects source mutation during copying, verifies the completed
+archive independently, and rechecks every source before optional deletion. It
+does not synthesize attempt identities or place legacy snapshots inside a run's
+`agent-workspace-archives/` tree.
 
 ### Attempt workspace contract
 

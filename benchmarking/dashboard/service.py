@@ -11,6 +11,9 @@ from benchmarking.dashboard.progress import load_progress
 from benchmarking.runtime import paths as runtime_paths
 
 
+RUN_DISCOVERY_IGNORED_DIRECTORIES = {"legacy-workspace-archives"}
+
+
 class DashboardError(RuntimeError):
     pass
 
@@ -201,6 +204,9 @@ class BenchmarkDashboard:
                 candidates.append(root)
                 continue
             for current, directories, _files in os.walk(root):
+                directories[:] = [
+                    name for name in directories if name not in RUN_DISCOVERY_IGNORED_DIRECTORIES
+                ]
                 path = Path(current)
                 if path == root or not self._looks_like_run(path):
                     continue

@@ -142,6 +142,16 @@ def test_list_runs_discovers_classified_run_without_descending_into_run_artifact
     assert runs[0]["path"] == str(run_root)
 
 
+def test_list_runs_skips_legacy_workspace_archives(tmp_path: Path) -> None:
+    archive_root = tmp_path / "legacy-workspace-archives"
+    fake_nested_run = archive_root / "benchmark-single-skills-on-20260727T010203Z" / "workspace" / "nested"
+    write_json(fake_nested_run / "results.json", {"results": []})
+
+    runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).list_runs()
+
+    assert runs == []
+
+
 def test_run_lookup_rejects_duplicate_ids_across_categories(tmp_path: Path) -> None:
     write_demo_run(tmp_path / "formal" / "demo" / "model", run_id="duplicate-run")
     write_demo_run(tmp_path / "temporary" / "demo" / "model", run_id="duplicate-run")
