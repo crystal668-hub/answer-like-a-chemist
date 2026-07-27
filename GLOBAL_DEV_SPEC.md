@@ -116,6 +116,9 @@ stable `EvaluationResult` shape and execution-error construction;
 - Chemistry provider skills live as independent bundles under `skills/`.
   `skills/chemistry-routing-matrix.json` is the machine-readable capability and
   exposure inventory; it is not a deterministic router.
+- The RDKit skill exposes neutral, explicit conformer force-field selection:
+  its generic conformer entrypoint requires `MMFF` or `UFF`, and dedicated MMFF
+  and UFF scripts implement each family without cross-family fallback.
 - `skills/paper-retrieval/`, `paper-access/`, `paper-parse/`, and
   `paper-rerank/` are independent paper-processing stages.
 

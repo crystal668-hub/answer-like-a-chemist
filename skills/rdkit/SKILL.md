@@ -40,7 +40,11 @@ python scripts/run_skill.py \
 - `stereochemistry.py`: chiral centers, specified vs unspecified stereochemistry, and double-bond stereo features
 - `similarity.py`: Morgan fingerprint similarity ranking against supplied candidates
 - `reaction_smarts.py`: reaction SMARTS validation and product generation
-- `conformer_embed.py`: ETKDG embedding plus available RDKit force-field optimization
+- `conformer_embed.py`: ETKDG embedding plus an explicitly selected `MMFF` or
+  `UFF` optimization; the request must name the force field
+- `conformer_mmff.py`: ETKDG embedding plus MMFF optimization, with an optional
+  `MMFF94` or `MMFF94s` variant
+- `conformer_uff.py`: ETKDG embedding plus UFF optimization
 
 ## Execution Rules
 
@@ -49,6 +53,8 @@ python scripts/run_skill.py \
   canonicalization, formula, ring systems, and stereochemistry. Do not look for
   or create graph-symmetry proton-count tooling; final NMR peak counts require
   manual spectroscopic interpretation.
-- Use `conformer_embed.py` only when 3D geometry is relevant.
+- Use conformer scripts only when 3D geometry is relevant. Select the force
+  field from the task or scientific protocol; never infer it from parameter
+  availability and never substitute MMFF for UFF or UFF for MMFF.
 - Read `routing-rules.md` for script selection and
   `references/contracts.md` for request and result contracts.

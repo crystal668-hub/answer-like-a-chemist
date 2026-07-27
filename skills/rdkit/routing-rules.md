@@ -17,7 +17,12 @@
   structure using deterministic fingerprint similarity.
 - Use `reaction_smarts.py` for reaction compatibility, product plausibility,
   and reaction-option filtering with explicit structural transforms.
-- Use `conformer_embed.py` only when approximate 3D geometry matters; do not
-  use it for name lookup or simple formula questions.
+- Use conformer scripts only when approximate 3D geometry matters; do not use
+  them for name lookup or simple formula questions.
+- Use `conformer_mmff.py` when the task or protocol specifies MMFF. Use
+  `conformer_uff.py` when it specifies UFF. Use `conformer_embed.py` only when a
+  caller must choose dynamically, and always pass `force_field` explicitly.
+  None of these scripts falls back to the other force-field family when the
+  requested parameters are unavailable.
 - For NMR peak-count questions, use RDKit scripts only to verify structural
   facts. Do not use graph-symmetry proton-class tooling for NMR signal counts.

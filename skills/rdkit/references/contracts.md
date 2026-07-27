@@ -61,8 +61,32 @@ Single-molecule scripts accept:
 Optional flags:
 
 - `strip_atom_maps`: boolean, used by `canonicalize.py`
-- `num_conformers`: integer, used by `conformer_embed.py`
-- `random_seed`: integer, used by `conformer_embed.py`
+- `num_conformers`: positive integer, used by all conformer scripts
+- `random_seed`: integer, used by all conformer scripts
+
+Conformer force-field selection:
+
+- `conformer_embed.py` requires `force_field` with exactly one of the values
+  `MMFF` or `UFF` (case-insensitive). There is no default or automatic fallback.
+- `conformer_mmff.py` always uses MMFF and accepts optional `mmff_variant` with
+  value `MMFF94` (default) or `MMFF94s`.
+- `conformer_uff.py` always uses UFF.
+- If the selected force field has no parameters for the molecule, the script
+  returns a structured `error`; it never substitutes the other force field.
+
+Generic conformer request example:
+
+```json
+{
+  "molecule": {
+    "format": "smiles",
+    "value": "CCCCCC"
+  },
+  "num_conformers": 20,
+  "random_seed": 61453,
+  "force_field": "UFF"
+}
+```
 
 Multi-molecule scripts:
 
@@ -90,7 +114,10 @@ Multi-molecule scripts:
   fingerprint similarity.
 - `reaction_smarts.py`: applies an explicit reaction transform and returns
   product candidates when the reactants match.
-- `conformer_embed.py`: embeds and optimizes available conformers locally.
+- `conformer_embed.py`: dispatches to the explicitly requested MMFF or UFF
+  conformer implementation.
+- `conformer_mmff.py`: embeds conformers and optimizes them only with MMFF.
+- `conformer_uff.py`: embeds conformers and optimizes them only with UFF.
 - NMR peak-count questions are not covered by a dedicated RDKit script. Use
   RDKit scripts only for structural facts, then perform the NMR signal
   assignment manually.
@@ -102,5 +129,7 @@ Multi-molecule scripts:
 - Unsupported structure format: structured `error`
 - Invalid SMILES or InChI: structured `error`
 - Missing RDKit dependency: structured `error`
+- Missing or unsupported conformer `force_field`: structured `error`
+- Requested force-field parameters unavailable: structured `error`
 - No reaction application result: structured `error`
 - Heuristic ambiguity or limited interpretation: structured `partial`

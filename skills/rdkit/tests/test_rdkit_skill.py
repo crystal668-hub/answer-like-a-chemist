@@ -65,6 +65,8 @@ class RdkitSkillLayoutTests(unittest.TestCase):
             "similarity.py",
             "reaction_smarts.py",
             "conformer_embed.py",
+            "conformer_mmff.py",
+            "conformer_uff.py",
         ]
         for name in expected:
             self.assertTrue((SCRIPTS_ROOT / name).is_file(), f"missing script: {name}")
@@ -261,7 +263,7 @@ class ReactionSmartsTests(unittest.TestCase):
 
 
 class ConformerEmbedTests(unittest.TestCase):
-    def test_conformer_embedding_success(self) -> None:
+    def test_conformer_embedding_requires_explicit_force_field(self) -> None:
         payload, _ = run_script(
             "conformer_embed.py",
             {
@@ -270,10 +272,104 @@ class ConformerEmbedTests(unittest.TestCase):
             },
         )
 
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("missing_field", payload["errors"][0]["code"])
+
+    def test_conformer_embedding_rejects_unknown_force_field(self) -> None:
+        payload, _ = run_script(
+            "conformer_embed.py",
+            {
+                "molecule": {"format": "smiles", "value": "CCO"},
+                "force_field": "AUTO",
+            },
+        )
+
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("unsupported_force_field", payload["errors"][0]["code"])
+
+    def test_conformer_embedding_dispatches_explicit_force_field(self) -> None:
+        cases = {"MMFF": "MMFF", "uff": "UFF"}
+        for request_value, expected_force_field in cases.items():
+            with self.subTest(force_field=request_value):
+                payload, _ = run_script(
+                    "conformer_embed.py",
+                    {
+                        "molecule": {"format": "smiles", "value": "CCO"},
+                        "num_conformers": 1,
+                        "force_field": request_value,
+                    },
+                )
+
+                self.assertEqual("success", payload["status"])
+                primary = payload["primary_result"]
+                self.assertGreaterEqual(primary["embedded_conformer_count"], 1)
+                self.assertEqual(expected_force_field, primary["force_field"])
+
+    def test_dedicated_force_field_scripts(self) -> None:
+        cases = {
+            "conformer_mmff.py": "MMFF",
+            "conformer_uff.py": "UFF",
+        }
+        for script_name, force_field in cases.items():
+            with self.subTest(script_name=script_name):
+                payload, _ = run_script(
+                    script_name,
+                    {
+                        "molecule": {"format": "smiles", "value": "CCO"},
+                        "num_conformers": 1,
+                    },
+                )
+
+                self.assertEqual("success", payload["status"])
+                self.assertEqual(force_field, payload["primary_result"]["force_field"])
+
+    def test_mmff_variant_is_explicit_in_result(self) -> None:
+        payload, _ = run_script(
+            "conformer_mmff.py",
+            {
+                "molecule": {"format": "smiles", "value": "CCO"},
+                "mmff_variant": "MMFF94s",
+            },
+        )
+
         self.assertEqual("success", payload["status"])
-        primary = payload["primary_result"]
-        self.assertGreaterEqual(primary["embedded_conformer_count"], 1)
-        self.assertIn(primary["force_field"], {"UFF", "MMFF94", "MMFF94s"})
+        self.assertEqual("MMFF", payload["primary_result"]["force_field"])
+        self.assertEqual("MMFF94s", payload["primary_result"]["force_field_variant"])
+
+    def test_invalid_mmff_variant_is_rejected(self) -> None:
+        payload, _ = run_script(
+            "conformer_mmff.py",
+            {
+                "molecule": {"format": "smiles", "value": "CCO"},
+                "mmff_variant": "AUTO",
+            },
+        )
+
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("unsupported_mmff_variant", payload["errors"][0]["code"])
+
+    def test_unavailable_mmff_does_not_fall_back_to_uff(self) -> None:
+        mmff_payload, _ = run_script(
+            "conformer_embed.py",
+            {
+                "molecule": {"format": "smiles", "value": "B"},
+                "force_field": "MMFF",
+            },
+        )
+        uff_payload, _ = run_script(
+            "conformer_embed.py",
+            {
+                "molecule": {"format": "smiles", "value": "B"},
+                "force_field": "UFF",
+            },
+        )
+
+        self.assertEqual("error", mmff_payload["status"])
+        self.assertEqual(
+            "mmff_parameters_unavailable", mmff_payload["errors"][0]["code"]
+        )
+        self.assertEqual("success", uff_payload["status"])
+        self.assertEqual("UFF", uff_payload["primary_result"]["force_field"])
 
     def test_conformer_embedding_failure(self) -> None:
         payload, _ = run_script(
@@ -281,6 +377,7 @@ class ConformerEmbedTests(unittest.TestCase):
             {
                 "molecule": {"format": "smiles", "value": "CCO"},
                 "num_conformers": 0,
+                "force_field": "UFF",
             },
         )
 
