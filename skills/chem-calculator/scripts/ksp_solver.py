@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from chemcalc_core import ChemCalcError, as_float, build_result, parse_formula, require_mapping, require_text, run_cli, set_success
+from chemcalc_core import (
+    ChemCalcError,
+    as_float,
+    build_result,
+    parse_formula,
+    require_mapping,
+    require_text,
+    run_cli,
+    set_success,
+)
 
 
 def _species_stoichiometric_count(solid_formula: str, ion_species: str) -> int:

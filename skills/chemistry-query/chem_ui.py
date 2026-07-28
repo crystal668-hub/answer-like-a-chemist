@@ -1,8 +1,8 @@
-import gradio as gr
-import subprocess
 import json
 import os
-import pandas as pd
+import subprocess
+
+import gradio as gr
 from PIL import Image
 
 WORK_DIR = "/home/democritus/.openclaw/workspace/skills/chemistry-query/scripts"

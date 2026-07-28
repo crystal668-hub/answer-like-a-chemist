@@ -8,7 +8,6 @@ Validates tool parameters, response structures, and documentation accuracy.
 
 import sys
 import time
-import traceback
 
 # Track results
 test_results = []
@@ -470,7 +469,7 @@ def generate_report():
 def main():
     print("Chemical Safety & Toxicology Skill - Comprehensive Test Suite")
     print("=" * 60)
-    print(f"Testing against: Acetaminophen (primary), Bisphenol A (environmental)")
+    print("Testing against: Acetaminophen (primary), Bisphenol A (environmental)")
     print()
 
     start_time = time.time()

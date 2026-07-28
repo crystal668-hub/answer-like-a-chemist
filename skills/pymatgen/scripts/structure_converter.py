@@ -19,7 +19,6 @@ Examples:
 import argparse
 import sys
 from pathlib import Path
-from typing import List
 
 try:
     from pymatgen.core import Structure
@@ -63,7 +62,7 @@ def convert_structure(input_path: Path, output_path: Path = None, output_format:
         return False
 
 
-def batch_convert(input_files: List[Path], output_dir: Path, output_format: str) -> None:
+def batch_convert(input_files: list[Path], output_dir: Path, output_format: str) -> None:
     """
     Convert multiple structure files to a common format.
 

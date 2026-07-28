@@ -4,9 +4,10 @@ import json
 import os
 import re
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from benchmarking.runtime.workspace_policy import WorkspaceAccessPolicy, _path_is_within
 

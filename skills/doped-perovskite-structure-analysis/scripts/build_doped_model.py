@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+
 import numpy as np
 from pymatgen.core import Structure
 

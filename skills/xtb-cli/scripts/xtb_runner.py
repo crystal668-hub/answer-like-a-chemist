@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 SKILL_NAME = "xtb-cli"
 RESULT_FILE_NAME = "result.json"
 RUN_TYPES = {"single_point", "opt", "hess", "ohess", "vomega", "vfukui"}

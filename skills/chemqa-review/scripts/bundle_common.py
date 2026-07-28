@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 REQUIRED_SKILLS = (
     "debateclaw-v1",
     "act-like-a-chemist",

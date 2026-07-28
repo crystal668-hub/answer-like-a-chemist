@@ -13,8 +13,8 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceIsolationError,
     default_workspace_templates,
 )
-from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
 from benchmarking.runtime.session_isolation import inspect_postflight_session
+from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
 from benchmarking.workflow.runner_adapters import ChemQARunner
 
 

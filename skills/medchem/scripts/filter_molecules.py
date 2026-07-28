@@ -14,13 +14,11 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-import json
 
 try:
-    import pandas as pd
     import datamol as dm
     import medchem as mc
+    import pandas as pd
     from rdkit import Chem
     from tqdm import tqdm
 except ImportError as e:
@@ -29,7 +27,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def load_molecules(input_file: Path, smiles_column: str = "smiles") -> Tuple[pd.DataFrame, List[Chem.Mol]]:
+def load_molecules(input_file: Path, smiles_column: str = "smiles") -> tuple[pd.DataFrame, list[Chem.Mol]]:
     """
     Load molecules from various file formats.
 
@@ -66,7 +64,7 @@ def load_molecules(input_file: Path, smiles_column: str = "smiles") -> Tuple[pd.
             print(f"Available columns: {', '.join(df.columns)}")
             sys.exit(1)
 
-        print(f"Converting SMILES to molecules...")
+        print("Converting SMILES to molecules...")
         mols = [dm.to_mol(smi) for smi in tqdm(df[smiles_column], desc="Parsing")]
 
     elif suffix == ".txt":
@@ -75,7 +73,7 @@ def load_molecules(input_file: Path, smiles_column: str = "smiles") -> Tuple[pd.
             smiles_list = [line.strip() for line in f if line.strip()]
 
         df = pd.DataFrame({"smiles": smiles_list})
-        print(f"Converting SMILES to molecules...")
+        print("Converting SMILES to molecules...")
         mols = [dm.to_mol(smi) for smi in tqdm(smiles_list, desc="Parsing")]
 
     else:
@@ -95,7 +93,7 @@ def load_molecules(input_file: Path, smiles_column: str = "smiles") -> Tuple[pd.
     return df, mols
 
 
-def apply_rule_filters(mols: List[Chem.Mol], rules: List[str], n_jobs: int) -> pd.DataFrame:
+def apply_rule_filters(mols: list[Chem.Mol], rules: list[str], n_jobs: int) -> pd.DataFrame:
     """Apply medicinal chemistry rule filters."""
     print(f"\nApplying rule filters: {', '.join(rules)}")
 
@@ -111,7 +109,7 @@ def apply_rule_filters(mols: List[Chem.Mol], rules: List[str], n_jobs: int) -> p
     return df_results
 
 
-def apply_structural_alerts(mols: List[Chem.Mol], alert_type: str, n_jobs: int) -> pd.DataFrame:
+def apply_structural_alerts(mols: list[Chem.Mol], alert_type: str, n_jobs: int) -> pd.DataFrame:
     """Apply structural alert filters."""
     print(f"\nApplying {alert_type} structural alerts...")
 
@@ -156,7 +154,7 @@ def apply_structural_alerts(mols: List[Chem.Mol], alert_type: str, n_jobs: int) 
     return df_results
 
 
-def apply_complexity_filter(mols: List[Chem.Mol], max_complexity: float, method: str = "bertz") -> pd.DataFrame:
+def apply_complexity_filter(mols: list[Chem.Mol], max_complexity: float, method: str = "bertz") -> pd.DataFrame:
     """Calculate molecular complexity."""
     print(f"\nCalculating molecular complexity (method={method}, max={max_complexity})...")
 
@@ -173,7 +171,7 @@ def apply_complexity_filter(mols: List[Chem.Mol], max_complexity: float, method:
     return df_results
 
 
-def apply_constraints(mols: List[Chem.Mol], constraints: Dict, n_jobs: int) -> pd.DataFrame:
+def apply_constraints(mols: list[Chem.Mol], constraints: dict, n_jobs: int) -> pd.DataFrame:
     """Apply custom property constraints."""
     print(f"\nApplying constraints: {constraints}")
 
@@ -188,7 +186,7 @@ def apply_constraints(mols: List[Chem.Mol], constraints: Dict, n_jobs: int) -> p
     return df_results
 
 
-def apply_chemical_groups(mols: List[Chem.Mol], groups: List[str]) -> pd.DataFrame:
+def apply_chemical_groups(mols: list[Chem.Mol], groups: list[str]) -> pd.DataFrame:
     """Detect chemical groups."""
     print(f"\nDetecting chemical groups: {', '.join(groups)}")
 

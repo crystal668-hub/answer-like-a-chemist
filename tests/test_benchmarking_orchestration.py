@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
 from benchmarking.core.datasets import BenchmarkRecord
-from benchmarking.core.answer_processing import normalize_answer_tracks
-from benchmarking.scoring.results import EvaluationResult
 from benchmarking.core.experiments import ExperimentSpec
-from benchmarking.workflow.orchestration import run_group
 from benchmarking.core.reporting import build_error_group_record_result
 from benchmarking.dashboard.progress import ProgressWriter
+from benchmarking.scoring.results import EvaluationResult
+from benchmarking.workflow.orchestration import run_group
 
 
 @dataclass(frozen=True)

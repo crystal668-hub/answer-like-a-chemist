@@ -6,7 +6,6 @@ import sys
 import uuid
 from pathlib import Path
 
-
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = SKILL_ROOT / "scripts"
 RESULT_FILENAME = "result.json"

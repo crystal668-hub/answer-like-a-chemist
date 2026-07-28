@@ -13,9 +13,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlsplit
-
 
 SECTION_HEADING_BODY = (
     r"(?:#{1,6}\s*)?"
@@ -84,7 +83,7 @@ def _read_dotenv(path_str: str) -> dict[str, str]:
     return values
 
 
-def _default_env_value(name: str) -> Optional[str]:
+def _default_env_value(name: str) -> str | None:
     runtime_value = _compact_text(os.environ.get(name))
     if runtime_value:
         return runtime_value
@@ -121,7 +120,7 @@ def _text_chunks(value: Any) -> list[str]:
     return [normalized] if normalized else []
 
 
-def _extract_section_heading(value: Any) -> Optional[dict[str, str]]:
+def _extract_section_heading(value: Any) -> dict[str, str] | None:
     candidate = _compact_text(value)
     if not candidate:
         return None
@@ -160,7 +159,7 @@ class ParserConfig:
     secondary_backend: str = "pymupdf"
     mineru_backend: str = "pipeline"
     mineru_method: str = "auto"
-    mineru_api_url: Optional[str] = None
+    mineru_api_url: str | None = None
     min_total_chars: int = 800
     min_chars_per_text_page: int = 80
     min_text_page_ratio: float = 0.5
@@ -170,7 +169,7 @@ class ParserConfig:
     preserve_page_blocks: bool = True
 
     @classmethod
-    def from_dict(cls, payload: Optional[dict[str, Any]]) -> "ParserConfig":
+    def from_dict(cls, payload: dict[str, Any] | None) -> ParserConfig:
         raw = dict(payload or {})
         config = cls(
             enabled=bool(raw.get("enabled", True)),
@@ -220,12 +219,12 @@ class ExtractionAttempt:
     page_count: int = 0
     metrics: dict[str, Any] = field(default_factory=dict)
     usable: bool = False
-    failure_reason: Optional[str] = None
+    failure_reason: str | None = None
     ocr_applied: bool = False
 
 
 class PaperParseEngine:
-    def __init__(self, *, config: Optional[ParserConfig | dict[str, Any]] = None) -> None:
+    def __init__(self, *, config: ParserConfig | dict[str, Any] | None = None) -> None:
         if isinstance(config, ParserConfig):
             self.config = config
         else:
@@ -629,7 +628,7 @@ class PaperParseEngine:
         *,
         fulltext: str,
         page_spans: list[dict[str, int]],
-        heading_page_hints: Optional[list[dict[str, int]]] = None,
+        heading_page_hints: list[dict[str, int]] | None = None,
         fallback_page_count: int = 1,
     ) -> list[ExtractedSection]:
         normalized = _normalize_text(fulltext)
@@ -857,7 +856,7 @@ class PaperParseEngine:
                 )
         return warnings
 
-    def _attempt_warning(self, *, document_id: str, attempt: ExtractionAttempt) -> Optional[str]:
+    def _attempt_warning(self, *, document_id: str, attempt: ExtractionAttempt) -> str | None:
         backend_label = PDF_BACKEND_DISPLAY_NAMES.get(attempt.extractor, attempt.extractor)
         if attempt.failure_reason:
             return f"{document_id}: {backend_label} extraction failed: {attempt.failure_reason}"
@@ -869,7 +868,7 @@ class PaperParseEngine:
             )
         return None
 
-    def _mineru_subprocess_env(self) -> Optional[dict[str, str]]:
+    def _mineru_subprocess_env(self) -> dict[str, str] | None:
         if not self.config.mineru_api_url:
             return None
         hostname = _compact_text(urlsplit(self.config.mineru_api_url).hostname).lower()
@@ -895,7 +894,7 @@ class PaperParseEngine:
         env["no_proxy"] = _merged_no_proxy(env.get("no_proxy"))
         return env
 
-    def _find_mineru_markdown(self, *, temp_dir: Path, document_stem: str) -> Optional[Path]:
+    def _find_mineru_markdown(self, *, temp_dir: Path, document_stem: str) -> Path | None:
         candidates = [path for path in temp_dir.rglob("*.md") if path.is_file()]
         if not candidates:
             return None
@@ -903,7 +902,7 @@ class PaperParseEngine:
         selected = exact_name or candidates
         return max(selected, key=lambda path: (path.stat().st_size, -len(path.parts), str(path)))
 
-    def _find_mineru_content_list(self, *, temp_dir: Path, document_stem: str) -> Optional[Path]:
+    def _find_mineru_content_list(self, *, temp_dir: Path, document_stem: str) -> Path | None:
         candidates = [
             path
             for path in temp_dir.rglob("*.json")
@@ -954,9 +953,7 @@ class PaperParseEngine:
         if item_type in MINERU_PAGE_AUXILIARY_TYPES:
             return ""
         text_parts: list[str] = []
-        if item_type == "text":
-            text_parts.extend(_text_chunks(item.get("text")))
-        elif item_type == "equation":
+        if item_type == "text" or item_type == "equation":
             text_parts.extend(_text_chunks(item.get("text")))
         elif item_type in {"image", "chart"}:
             text_parts.extend(_text_chunks(item.get("image_caption")))
@@ -977,7 +974,7 @@ class PaperParseEngine:
         return "\n\n".join(chunk for chunk in text_parts if chunk)
 
 
-def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Portable paper parsing skill")
     parser.add_argument("--input", required=True, help="Local PDF/text path to parse")
     parser.add_argument("--output-dir", required=True, help="Directory for emitted artifacts")
@@ -985,7 +982,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     config = ParserConfig.from_dict(json.loads(args.config_json) if args.config_json else None)
     engine = PaperParseEngine(config=config)

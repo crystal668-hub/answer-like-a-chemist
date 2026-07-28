@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
-
+from typing import Any
 
 WORKSPACE_POLICY_SCHEMA_VERSION = 1
 WORKSPACE_ISOLATION_SCHEMA_VERSION = 3

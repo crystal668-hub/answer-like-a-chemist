@@ -4,11 +4,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import yaml
-
 from provider_trace_policy import PROVIDER_TRACE_MODES, validate_provider_traces
 
 ARTIFACT_CONTRACT_VERSION = "react-reviewed-v2"
@@ -80,7 +79,7 @@ def terminal_failure_filename() -> str:
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def pretty_json(payload: dict[str, Any]) -> str:

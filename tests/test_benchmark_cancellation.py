@@ -22,11 +22,14 @@ from benchmarking.runtime.cancellation import (
     CancellationToken,
     OwnedProcessRegistry,
 )
-from benchmarking.scoring.results import build_execution_error_evaluation
-from benchmarking.workflow.orchestration import run_group
-from benchmarking.workflow.cli import install_cancellation_signal_handlers, restore_signal_handlers
-from benchmarking.workflow import runner_adapters
 from benchmarking.runtime.judge import JudgeClient
+from benchmarking.scoring.results import build_execution_error_evaluation
+from benchmarking.workflow import runner_adapters
+from benchmarking.workflow.cli import (
+    install_cancellation_signal_handlers,
+    restore_signal_handlers,
+)
+from benchmarking.workflow.orchestration import run_group
 
 
 def _record(record_id: str) -> BenchmarkRecord:
@@ -94,8 +97,8 @@ def test_signal_handlers_record_first_signal_and_restore(monkeypatch) -> None:
 
 def test_runners_and_judge_expose_uniform_cancellation_interface() -> None:
     for runner_type in (runner_adapters.SingleLLMRunner, runner_adapters.ChemQARunner, JudgeClient):
-        assert callable(getattr(runner_type, "cancel"))
-        assert callable(getattr(runner_type, "wait_cancelled"))
+        assert callable(runner_type.cancel)
+        assert callable(runner_type.wait_cancelled)
 
 
 def test_owned_process_registry_terminates_parent_and_child_process_group(tmp_path: Path) -> None:

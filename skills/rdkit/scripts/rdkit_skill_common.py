@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 RESULT_FILE_NAME = "result.json"
 
@@ -94,7 +94,15 @@ def ensure_mapping_request(request: Any) -> dict[str, Any]:
 def safe_import_rdkit() -> dict[str, Any]:
     try:
         from rdkit import Chem, DataStructs, rdBase
-        from rdkit.Chem import AllChem, Crippen, Descriptors, Lipinski, rdChemReactions, rdFingerprintGenerator, rdMolDescriptors
+        from rdkit.Chem import (
+            AllChem,
+            Crippen,
+            Descriptors,
+            Lipinski,
+            rdChemReactions,
+            rdFingerprintGenerator,
+            rdMolDescriptors,
+        )
     except ImportError as exc:
         raise DependencyError("rdkit_missing", "RDKit is not installed in the current Python environment.") from exc
 

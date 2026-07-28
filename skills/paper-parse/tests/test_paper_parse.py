@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "paper_parse.py"
 MODULE_NAME = "paper_parse_under_test"
 SPEC = importlib.util.spec_from_file_location(MODULE_NAME, MODULE_PATH)

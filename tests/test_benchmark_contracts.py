@@ -4,8 +4,8 @@ from benchmarking.core.contracts import (
     AnswerPayload,
     FailureInfo,
     RecoveryInfo,
-    RunStatus,
     RunnerResult,
+    RunStatus,
 )
 from benchmarking.core.experiments import ExperimentSpec
 

@@ -5,11 +5,14 @@ import re
 import subprocess
 import time
 import uuid
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
-from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env, proxy_environment_report
-
+from benchmarking.runtime.openclaw_env import (
+    build_openclaw_subprocess_env,
+    proxy_environment_report,
+)
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 SleepFunc = Callable[[float], None]

@@ -3,7 +3,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = ROOT / "skills"
 RUNTIME_OR_ORCHESTRATION_SKILLS = {"benchmark-cleanroom", "debateclaw-v1", "chemqa-review"}
@@ -110,7 +109,10 @@ EXPECTED_EXPERIMENTAL_SKILLS = {
 
 
 def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
-    from benchmarking.skills.tree import benchmark_skill_allowlist, load_chemistry_skill_inventory
+    from benchmarking.skills.tree import (
+        benchmark_skill_allowlist,
+        load_chemistry_skill_inventory,
+    )
 
     inventory = load_chemistry_skill_inventory()
     skill_names = set(benchmark_skill_allowlist())
@@ -118,7 +120,7 @@ def test_experimental_matrix_covers_selected_mid_plus_skills() -> None:
     assert len(inventory["skills"]) == 86
     assert len(skill_names) == len(inventory["skills"])
     assert "act-like-a-chemist" in skill_names
-    assert EXPECTED_EXPERIMENTAL_SKILLS <= skill_names
+    assert skill_names >= EXPECTED_EXPERIMENTAL_SKILLS
     assert {"rdkit", "opsin", "pubchem", "chem-calculator"} <= skill_names
     assert inventory["mode"] == "experimental_mid_plus"
 

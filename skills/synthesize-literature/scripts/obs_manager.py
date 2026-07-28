@@ -66,7 +66,7 @@ class OBSManager:
             else:
                 return ""
 
-        except Exception as e:
+        except Exception:
             return ""
 
     def _calc_file_hash(self, file_path: str) -> str:

@@ -10,9 +10,10 @@ Provides a robust client for interacting with the OpenAlex API with:
 """
 
 import time
-import requests
-from typing import Dict, List, Optional, Any
+from typing import Any
 from urllib.parse import urljoin
+
+import requests
 
 
 class OpenAlexClient:
@@ -20,7 +21,7 @@ class OpenAlexClient:
 
     BASE_URL = "https://api.openalex.org"
 
-    def __init__(self, email: Optional[str] = None, requests_per_second: int = 10):
+    def __init__(self, email: str | None = None, requests_per_second: int = 10):
         """
         Initialize OpenAlex client.
 
@@ -44,9 +45,9 @@ class OpenAlexClient:
     def _make_request(
         self,
         endpoint: str,
-        params: Optional[Dict] = None,
+        params: dict | None = None,
         max_retries: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Make API request with retry logic.
 
@@ -100,13 +101,13 @@ class OpenAlexClient:
 
     def search_works(
         self,
-        search: Optional[str] = None,
-        filter_params: Optional[Dict] = None,
+        search: str | None = None,
+        filter_params: dict | None = None,
         per_page: int = 200,
         page: int = 1,
-        sort: Optional[str] = None,
-        select: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        sort: str | None = None,
+        select: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Search works with filters.
 
@@ -141,7 +142,7 @@ class OpenAlexClient:
 
         return self._make_request('/works', params)
 
-    def get_entity(self, entity_type: str, entity_id: str) -> Dict[str, Any]:
+    def get_entity(self, entity_type: str, entity_id: str) -> dict[str, Any]:
         """
         Get single entity by ID.
 
@@ -158,9 +159,9 @@ class OpenAlexClient:
     def batch_lookup(
         self,
         entity_type: str,
-        ids: List[str],
+        ids: list[str],
         id_field: str = 'openalex_id'
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Look up multiple entities by ID efficiently.
 
@@ -192,9 +193,9 @@ class OpenAlexClient:
     def paginate_all(
         self,
         endpoint: str,
-        params: Optional[Dict] = None,
-        max_results: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+        params: dict | None = None,
+        max_results: int | None = None
+    ) -> list[dict[str, Any]]:
         """
         Paginate through all results.
 
@@ -238,9 +239,9 @@ class OpenAlexClient:
     def sample_works(
         self,
         sample_size: int,
-        seed: Optional[int] = None,
-        filter_params: Optional[Dict] = None
-    ) -> List[Dict[str, Any]]:
+        seed: int | None = None,
+        filter_params: dict | None = None
+    ) -> list[dict[str, Any]]:
         """
         Get random sample of works.
 
@@ -296,8 +297,8 @@ class OpenAlexClient:
         self,
         entity_type: str,
         group_field: str,
-        filter_params: Optional[Dict] = None
-    ) -> List[Dict[str, Any]]:
+        filter_params: dict | None = None
+    ) -> list[dict[str, Any]]:
         """
         Aggregate results by field.
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import requests
-
 
 class DummyResponse:
     def __init__(self, *, status_code: int, payload: dict, url: str) -> None:

@@ -5,7 +5,7 @@ import json
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -143,7 +143,7 @@ class ListwiseReranker:
         )
         response.raise_for_status()
         payload = response.json()
-        content = str((((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "")).strip()
+        content = str(((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         parsed = json.loads(content)
         decisions = list(parsed.get("decisions") or [])
         if not decisions:
@@ -305,14 +305,14 @@ def rerank_candidates(*, request: dict[str, Any], output_dir: str | Path) -> dic
     return result
 
 
-def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Portable paper rerank skill")
     parser.add_argument("--request-json", required=True, help="Path to request JSON")
     parser.add_argument("--output-dir", required=True, help="Directory for emitted artifacts")
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     request = json.loads(Path(args.request_json).read_text(encoding="utf-8"))
     result = rerank_candidates(request=request, output_dir=args.output_dir)

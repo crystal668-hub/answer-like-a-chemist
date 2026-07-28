@@ -3,19 +3,29 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from benchmarking.core.contracts import (
+    AnswerPayload,
+    FailureInfo,
+    RecoveryInfo,
+    RunnerResult,
+    RunStatus,
+)
 from benchmarking.core.convergence import ConvergencePolicy
-from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
-from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
     WorkspaceLeaseSet,
 )
-from benchmarking.runtime.workspace_policy import ContaminationAudit, adjudicate_workspace_findings
+from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
+from benchmarking.runtime.workspace_policy import (
+    ContaminationAudit,
+    adjudicate_workspace_findings,
+)
 from benchmarking.workflow.runners.chemqa_artifacts import ChemQAArtifactSupport
 from benchmarking.workflow.runners.chemqa_workspaces import ChemQAWorkspaceSupport
 
@@ -340,7 +350,7 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                 timeout=self.convergence_policy.timeout_seconds,
             )
             payload = self._parse_json_stdout(result, command)
-            materialize = self._deep_copy_jsonish((payload.get("materialize") or {}))
+            materialize = self._deep_copy_jsonish(payload.get("materialize") or {})
             self._update_cleanup_manifest(
                 manifest_path,
                 {
@@ -350,7 +360,7 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                         .expanduser()
                         .resolve()
                     ),
-                    "session_assignments": self._deep_copy_jsonish(((payload.get("compile") or {}).get("session_assignments") or {})),
+                    "session_assignments": self._deep_copy_jsonish((payload.get("compile") or {}).get("session_assignments") or {}),
                     "control_roots": [
                         str(self.chemqa_root / "control" / "runplans" / f"{run_id}.json"),
                         str(self.chemqa_root / "control" / "run-status" / f"{run_id}.json"),
@@ -468,7 +478,7 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                     "artifact_collection": artifact_collection,
                     "run_status": run_status,
                     "non_success_terminal_status": legacy_status or terminal_state or "unknown",
-                    "missing_reviewer_lanes": list(((run_status.get("phase_progress") or {}).get("missing_reviewer_lanes") or [])),
+                    "missing_reviewer_lanes": list((run_status.get("phase_progress") or {}).get("missing_reviewer_lanes") or []),
                     "error": message,
                     **archive_meta,
                 }

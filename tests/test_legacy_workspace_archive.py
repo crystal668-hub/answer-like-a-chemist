@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -17,8 +17,7 @@ from benchmarking.runtime.legacy_workspace_archive import (
     verify_source_matches_archive,
 )
 
-
-ARCHIVED_AT = datetime(2026, 7, 27, 1, 2, 3, tzinfo=timezone.utc)
+ARCHIVED_AT = datetime(2026, 7, 27, 1, 2, 3, tzinfo=UTC)
 
 
 def make_workspace(root: Path, name: str) -> Path:

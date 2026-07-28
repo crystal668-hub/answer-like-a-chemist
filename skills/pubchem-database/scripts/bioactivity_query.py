@@ -6,10 +6,9 @@ This script provides functions for retrieving biological activity data
 from PubChem for compounds and assays.
 """
 
-import sys
 import json
+import sys
 import time
-from typing import Dict, List, Optional
 
 try:
     import requests
@@ -25,7 +24,7 @@ PUG_VIEW_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug_view"
 REQUEST_DELAY = 0.21  # seconds between requests
 
 
-def rate_limited_request(url: str, method: str = 'GET', **kwargs) -> Optional[requests.Response]:
+def rate_limited_request(url: str, method: str = 'GET', **kwargs) -> requests.Response | None:
     """
     Make a rate-limited request to PubChem API.
 
@@ -52,7 +51,7 @@ def rate_limited_request(url: str, method: str = 'GET', **kwargs) -> Optional[re
         return None
 
 
-def get_bioassay_summary(cid: int) -> Optional[Dict]:
+def get_bioassay_summary(cid: int) -> dict | None:
     """
     Get bioassay summary for a compound.
 
@@ -72,8 +71,8 @@ def get_bioassay_summary(cid: int) -> Optional[Dict]:
 
 def get_compound_bioactivities(
     cid: int,
-    activity_outcome: Optional[str] = None
-) -> List[Dict]:
+    activity_outcome: str | None = None
+) -> list[dict]:
     """
     Get bioactivity data for a compound.
 
@@ -107,7 +106,7 @@ def get_compound_bioactivities(
     return activities
 
 
-def get_assay_description(aid: int) -> Optional[Dict]:
+def get_assay_description(aid: int) -> dict | None:
     """
     Get detailed description for a specific assay.
 
@@ -125,7 +124,7 @@ def get_assay_description(aid: int) -> Optional[Dict]:
     return None
 
 
-def get_assay_targets(aid: int) -> List[str]:
+def get_assay_targets(aid: int) -> list[str]:
     """
     Get biological targets for an assay.
 
@@ -160,7 +159,7 @@ def get_assay_targets(aid: int) -> List[str]:
 def search_assays_by_target(
     target_name: str,
     max_results: int = 100
-) -> List[int]:
+) -> list[int]:
     """
     Search for assays targeting a specific protein or gene.
 
@@ -182,7 +181,7 @@ def search_assays_by_target(
     return []
 
 
-def get_active_compounds_in_assay(aid: int, max_results: int = 1000) -> List[int]:
+def get_active_compounds_in_assay(aid: int, max_results: int = 1000) -> list[int]:
     """
     Get list of active compounds in an assay.
 
@@ -203,7 +202,7 @@ def get_active_compounds_in_assay(aid: int, max_results: int = 1000) -> List[int
     return []
 
 
-def get_compound_annotations(cid: int, section: Optional[str] = None) -> Optional[Dict]:
+def get_compound_annotations(cid: int, section: str | None = None) -> dict | None:
     """
     Get comprehensive compound annotations from PUG-View.
 
@@ -226,7 +225,7 @@ def get_compound_annotations(cid: int, section: Optional[str] = None) -> Optiona
     return None
 
 
-def get_drug_information(cid: int) -> Optional[Dict]:
+def get_drug_information(cid: int) -> dict | None:
     """
     Get drug and medication information for a compound.
 
@@ -239,7 +238,7 @@ def get_drug_information(cid: int) -> Optional[Dict]:
     return get_compound_annotations(cid, section="Drug and Medication Information")
 
 
-def get_safety_hazards(cid: int) -> Optional[Dict]:
+def get_safety_hazards(cid: int) -> dict | None:
     """
     Get safety and hazard information for a compound.
 
@@ -252,7 +251,7 @@ def get_safety_hazards(cid: int) -> Optional[Dict]:
     return get_compound_annotations(cid, section="Safety and Hazards")
 
 
-def summarize_bioactivities(cid: int) -> Dict:
+def summarize_bioactivities(cid: int) -> dict:
     """
     Generate a summary of bioactivity data for a compound.
 
@@ -290,9 +289,9 @@ def summarize_bioactivities(cid: int) -> Dict:
 
 def find_compounds_by_bioactivity(
     target: str,
-    threshold: Optional[float] = None,
+    threshold: float | None = None,
     max_compounds: int = 100
-) -> List[Dict]:
+) -> list[dict]:
     """
     Find compounds with bioactivity against a specific target.
 

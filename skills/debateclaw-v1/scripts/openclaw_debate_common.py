@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 API_KEY_HINTS = ("API_KEY", "ACCESS_TOKEN", "TOKEN", "KEY")
 BASE_URL_HINTS = ("ANTHROPIC_BASE_URL", "OPENAI_RESPONSE_API_BASE_URL", "API_BASE_URL", "BASE_URL", "ENDPOINT", "URL")

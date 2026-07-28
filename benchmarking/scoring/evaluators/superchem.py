@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
-from benchmarking.core.answer_processing import last_nonempty_line, normalize_space, resolve_candidate_answer_text
+from benchmarking.core.answer_processing import (
+    last_nonempty_line,
+    normalize_space,
+    resolve_candidate_answer_text,
+)
 from benchmarking.core.convergence import extract_final_answer_line
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.scoring.errors import EvaluationError
 from benchmarking.scoring.evaluators._shared import coerce_unit_score
 from benchmarking.scoring.results import EvaluationResult
-
 
 SUPERCHM_XML_CHECKPOINT_RE = re.compile(
     r"<\s*checkpoint\b(?P<attrs>[^>]*)>(?P<body>.*?)</\s*checkpoint\s*>",

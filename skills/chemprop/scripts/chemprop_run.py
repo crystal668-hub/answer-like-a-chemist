@@ -19,8 +19,8 @@ import os
 import sys
 import time
 import uuid
-from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 UPLOAD_URL = "http://114.214.215.131:40080/worker/file/upload"
 UPLOAD_IDENTIFIES = "691c9f24af764bd6ac955a0e8dd0dba9"
@@ -45,7 +45,7 @@ def upload_file(filepath):
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
         f"Content-Type: {content_type}\r\n\r\n"
-    ).encode("utf-8") + filedata + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    ).encode() + filedata + f"\r\n--{boundary}--\r\n".encode()
 
     headers = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
@@ -86,7 +86,7 @@ def execute_task(params, task_id, created_by="user"):
     try:
         with urlopen(req, timeout=120) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-            print(f"[execute] 任务提交响应:")
+            print("[execute] 任务提交响应:")
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return result
     except HTTPError as e:
@@ -113,7 +113,7 @@ def query_task(job_id):
 
             print(f"[query] 任务状态: {status}")
             if status in ["PENDING", "DISPATCHED", "RUNNING"]:
-                print(f"[query] 任务尚未完成")
+                print("[query] 任务尚未完成")
             else:
                 print(f"[query] 任务已完成，状态: {status}")
                 print(f"[query] 任务 ID: {task_id}")
@@ -143,7 +143,7 @@ def download_result(task_id):
                 print(f"[download] 结果已下载: {filename}")
                 return filename
             else:
-                print(f"[download] 任务尚未完成或无结果", file=sys.stderr)
+                print("[download] 任务尚未完成或无结果", file=sys.stderr)
                 return None
     except (HTTPError, URLError) as e:
         print(f"[download] 下载失败: {e}", file=sys.stderr)

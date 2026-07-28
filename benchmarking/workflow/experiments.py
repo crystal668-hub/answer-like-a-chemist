@@ -7,7 +7,6 @@ from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.skills.tree import benchmark_skill_allowlist
 from benchmarking.workflow.errors import BenchmarkError
 
-
 DEFAULT_SINGLE_AGENT = "benchmark-single-skills-off"
 DEFAULT_SINGLE_AGENT_MODEL = "qwen3.5-plus"
 DEFAULT_JUDGE_AGENT = "benchmark-judge"

@@ -11,8 +11,8 @@ from pathlib import Path
 from bundle_common import (
     default_runtime_dir,
     dump_json,
-    engine_skill_root,
     engine_script_path,
+    engine_skill_root,
     load_json,
     openclaw_env_file,
     read_text,
@@ -129,7 +129,7 @@ def build_command_map(
     command_map: dict[str, list[str]] = {}
     slot_assignments = dict(run_plan.get("slot_assignments") or {})
     role_slots = dict(run_plan.get("launch_spec", {}).get("role_slots") or {})
-    chemqa_context = dict(((run_plan.get("runtime_context") or {}).get("chemqa_review") or {}))
+    chemqa_context = dict((run_plan.get("runtime_context") or {}).get("chemqa_review") or {})
     stop_loss = dict(chemqa_context.get("stop_loss") or {})
     provider_trace_mode = str(chemqa_context.get("provider_trace_mode") or "").strip()
     driver_path = skill_root / "scripts" / "chemqa_review_openclaw_driver.py"

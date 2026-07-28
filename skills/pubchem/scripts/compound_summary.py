@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from cid_to_properties import run as run_cid_to_properties
 from name_to_cid import run as run_name_to_cid
+from pubchem_common import (
+    finalize_success,
+    handle_exception,
+    load_request,
+    parse_cli_args,
+)
 from synonyms import run as run_synonyms
-from pubchem_common import finalize_success, handle_exception, load_request, parse_cli_args
-
 
 RESULT_FILE = "compound_summary_result.json"
 
@@ -51,7 +55,7 @@ def run(request: dict[str, Any], *, output_dir: str | Path, requester=None, pers
     return finalize_success(result, output_dir=output_dir, filename=RESULT_FILE) if persist else result
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = parse_cli_args(argv)
     request = load_request(args.request_json)
     try:

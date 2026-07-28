@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pubchem_common import (
     PubChemClient,
-    PubChemHttpError,
     apply_http_error,
     base_result,
     finalize_success,
@@ -17,7 +16,6 @@ from pubchem_common import (
     require_fields,
     status_from_parts,
 )
-
 
 RESULT_FILE = "name_to_cid_result.json"
 
@@ -59,7 +57,7 @@ def run(request: dict[str, Any], *, output_dir: str | Path, requester=None, pers
     return finalize_success(result, output_dir=output_dir, filename=RESULT_FILE) if persist else result
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = parse_cli_args(argv)
     request = load_request(args.request_json)
     try:

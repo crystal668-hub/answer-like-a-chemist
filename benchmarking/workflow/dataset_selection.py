@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from benchmarking.core.answer_processing import normalize_space
 from benchmarking.core.datasets import (
     BenchmarkRecord,
     RecordValidationError,
     classify_subset,
     dataset_name_from_file,
-    load_records as load_benchmark_records,
     source_pair_key,
 )
-from benchmarking.core.answer_processing import normalize_space
+from benchmarking.core.datasets import (
+    load_records as load_benchmark_records,
+)
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.run_state import slugify
-
 
 SUBSET_ORDER = (
     "chembench",

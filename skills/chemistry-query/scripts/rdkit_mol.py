@@ -1,15 +1,14 @@
 import argparse
 import json
-import sys
-import re
 import os
+import re
 import subprocess
-from rdkit import Chem
-from rdkit import DataStructs
-from rdkit.Chem import Descriptors, Draw, AllChem
-from rdkit.Chem import BRICS
+import sys
+
+from rdkit import Chem, DataStructs
+from rdkit.Chem import BRICS, AllChem, Descriptors, Draw, rdChemReactions
 from rdkit.Chem.Draw import rdMolDraw2D
-from rdkit.Chem import rdChemReactions
+
 
 def get_mol(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -123,7 +122,6 @@ def main():
                 with open(output, "w") as f:
                     f.write(svg)
             else:  # png
-                from PIL import Image
                 img = Draw.MolToImage(mol, size=(300,300))
                 img.save(output)
                 print(json.dumps({"image_path": output, "success": True}, indent=2))

@@ -9,9 +9,7 @@ import argparse
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-
 
 GIT_SOURCE = "git+https://github.com/HKUDS/ClawTeam"
 

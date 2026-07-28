@@ -23,7 +23,6 @@ from benchmarking.runtime.vgb_bridge import (
     validate_runtime_files,
 )
 
-
 REFERENCE_PLACEHOLDER = "No reference answer is exposed; score with the pinned verifier release."
 PUBLIC_ANSWER_SCHEMA_KEYS = {
     "cardinality",

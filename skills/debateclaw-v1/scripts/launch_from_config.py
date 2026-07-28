@@ -7,7 +7,7 @@ import os
 import shlex
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +18,7 @@ CONTROL_UI_HOME_ENV = 'DEBATECLAW_CONTROL_UI_HOME'
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
 def default_control_ui_home() -> Path:
@@ -58,7 +58,7 @@ def dump_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def backup_path(path: Path, *, label: str = 'bak') -> Path:
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%SZ')
+    stamp = datetime.now(UTC).strftime('%Y%m%d%H%M%SZ')
     return path.with_suffix(path.suffix + f'.{label}.{stamp}')
 
 

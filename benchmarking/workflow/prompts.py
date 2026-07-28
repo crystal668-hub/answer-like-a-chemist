@@ -6,7 +6,6 @@ from typing import Any, Protocol
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.skills.tree import render_top_level_skill_tree
 
-
 FORMULA_SIGNAL_RE = re.compile(
     r"(?:\\\(|\\\[|[A-Za-z]_[A-Za-z0-9]+|\[[A-Za-z0-9_]+\]|\bK_[A-Za-z0-9]+|\bK_M\b|\^|/|=)"
 )

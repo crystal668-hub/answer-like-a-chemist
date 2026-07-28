@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-
 FINAL_ANSWER_LINE_RE = re.compile(
     r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
     re.IGNORECASE,

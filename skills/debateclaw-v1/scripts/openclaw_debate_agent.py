@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +123,7 @@ def write_cleanroom_lease(*, slot: str, session_id: str, status: str) -> tuple[P
 
 
 def now_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def openclaw_config_path() -> Path:
@@ -602,7 +602,7 @@ def main() -> int:
 
     lease_handle = None
     _, lease_handle = write_cleanroom_lease(slot=effective_slot, session_id=str(args.session_id or ""), status="starting")
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     def write_turn_result(returncode: int, *, stdout: str = "", stderr: str = "") -> None:
         turn_result_file = getattr(args, "turn_result_file", None)
@@ -623,7 +623,7 @@ def main() -> int:
             "stdout_preview": " ".join((stdout or "").split())[:240],
             "stderr_preview": " ".join((stderr or "").split())[:240],
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
         atomic_write_json(Path(str(turn_result_file)).expanduser().resolve(), payload)
 

@@ -6,16 +6,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from benchmarking.runtime.config import ConfigRenderError, render_run_config
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
 )
-from benchmarking.runtime.workspace_policy import WorkspaceAccessPolicy, build_workspace_access_policy
+from benchmarking.runtime.config import ConfigRenderError, render_run_config
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
     ensure_basic_agent_dirs,
+)
+from benchmarking.runtime.workspace_policy import (
+    WorkspaceAccessPolicy,
+    build_workspace_access_policy,
 )
 
 

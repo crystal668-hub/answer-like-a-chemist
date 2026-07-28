@@ -7,11 +7,18 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
+from benchmarking.core.contracts import (
+    AnswerPayload,
+    FailureInfo,
+    RecoveryInfo,
+    RunnerResult,
+    RunStatus,
+)
 from benchmarking.core.convergence import (
     ConvergencePolicy,
     has_final_answer_marker,
@@ -19,7 +26,6 @@ from benchmarking.core.convergence import (
     is_complete_answer_for_eval,
     is_timeout_family_text,
 )
-from benchmarking.skills.audit import build_skill_use_audit
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -31,17 +37,17 @@ from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
     capture_execution_error,
 )
+from benchmarking.runtime.session_isolation import (
+    SessionIsolationError,
+    inspect_postflight_session,
+)
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     WorkspaceAccessPolicy,
     WorkspaceAudit,
     ensure_workspace_audit,
 )
-from benchmarking.runtime.session_isolation import (
-    SessionIsolationError,
-    inspect_postflight_session,
-)
-
+from benchmarking.skills.audit import build_skill_use_audit
 
 OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
 OPENCLAW_IDLE_TIMEOUT_TEXT = "The model did not produce a response before the LLM idle timeout"
@@ -1194,7 +1200,7 @@ class SingleLLMRunner:
                     details=dict(stdout_diagnostics),
                 ),
             )
-        payloads = list((result_payload.get("payloads") or []))
+        payloads = list(result_payload.get("payloads") or [])
         full_response_text = self._summarize_payloads(payloads)
         short_answer_text, full_response_text = self._normalize_answer_tracks(full_response_text=full_response_text)
         runner_meta["skill_use_audit"] = build_skill_use_audit(

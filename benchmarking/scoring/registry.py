@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.scoring.errors import EvaluationRegistryError
@@ -11,9 +12,10 @@ from benchmarking.scoring.evaluators.frontierscience import (
 )
 from benchmarking.scoring.evaluators.generic import evaluate_generic_semantic
 from benchmarking.scoring.evaluators.hle import evaluate_hle
-from benchmarking.scoring.evaluators.superchem import evaluate_superchem_multiple_choice_rpf
+from benchmarking.scoring.evaluators.superchem import (
+    evaluate_superchem_multiple_choice_rpf,
+)
 from benchmarking.scoring.evaluators.verifier_grounded import evaluate_verifier_grounded
-
 
 Evaluator = Callable[..., Any]
 EVALUATORS: dict[str, Evaluator] = {}

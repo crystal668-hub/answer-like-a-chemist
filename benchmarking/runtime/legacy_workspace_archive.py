@@ -6,10 +6,10 @@ import os
 import shutil
 import stat
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 LEGACY_ARCHIVE_KIND = "openclaw-legacy-benchmark-workspace-archive"
 LEGACY_ARCHIVE_SCHEMA_VERSION = 1
@@ -67,10 +67,10 @@ def _snapshot(root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 
 def _timestamp(value: datetime | None = None) -> str:
-    current = value or datetime.now(timezone.utc)
+    current = value or datetime.now(UTC)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    return current.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _load_manifest(archive_dir: Path) -> dict[str, Any]:
@@ -155,7 +155,7 @@ def archive_legacy_workspace(
             "schema_version": LEGACY_ARCHIVE_SCHEMA_VERSION,
             "archive_id": archive_name,
             "archived_at": datetime.strptime(timestamp, "%Y%m%dT%H%M%SZ")
-            .replace(tzinfo=timezone.utc)
+            .replace(tzinfo=UTC)
             .isoformat()
             .replace("+00:00", "Z"),
             "source_workspace": str(source),

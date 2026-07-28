@@ -5,9 +5,10 @@ import json
 import math
 import re
 import sys
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pint
 import sympy

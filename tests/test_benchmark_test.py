@@ -9,28 +9,43 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import contextmanager
-from contextlib import redirect_stdout
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterator
 from unittest import mock
 
-from benchmarking.core.contracts import AnswerPayload, FailureInfo, RecoveryInfo, RunnerResult, RunStatus
 from benchmarking.core.answer_processing import (
     extract_candidate_short_answer,
     normalize_answer_tracks,
 )
+from benchmarking.core.contracts import (
+    AnswerPayload,
+    FailureInfo,
+    RecoveryInfo,
+    RunnerResult,
+    RunStatus,
+)
 from benchmarking.core.convergence import ConvergencePolicy, extract_final_answer_line
-from benchmarking.core.datasets import BenchmarkRecord, GradingSpec, classify_subset, load_records
+from benchmarking.core.datasets import (
+    BenchmarkRecord,
+    GradingSpec,
+    classify_subset,
+    load_records,
+)
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.core.reporting import (
     GroupRecordResult,
     aggregate_results,
-    build_error_group_record_result as shared_build_error_group_record_result,
     materialize_group_failure_results,
 )
-from benchmarking.core.status import is_chemqa_terminal_status, normalize_chemqa_run_status
+from benchmarking.core.reporting import (
+    build_error_group_record_result as shared_build_error_group_record_result,
+)
+from benchmarking.core.status import (
+    is_chemqa_terminal_status,
+    normalize_chemqa_run_status,
+)
 from benchmarking.runtime import bundles as runtime_bundles
 from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import judge as judge_runtime
@@ -40,10 +55,20 @@ from benchmarking.runtime.cleanroom import CleanroomRuntime
 from benchmarking.runtime.workspace_policy import ContaminationAudit
 from benchmarking.scoring import registry as scoring_evaluation
 from benchmarking.scoring.evaluators import chembench, frontierscience, superchem
-from benchmarking.scoring.results import EvaluationResult, build_execution_error_evaluation
+from benchmarking.scoring.results import (
+    EvaluationResult,
+    build_execution_error_evaluation,
+)
 from benchmarking.skills.tree import load_chemistry_skill_inventory
 from benchmarking.workflow import cli as benchmark_test
-from benchmarking.workflow import dataset_selection, experiments, orchestration, run_state, runner_adapters, runtime_config
+from benchmarking.workflow import (
+    dataset_selection,
+    experiments,
+    orchestration,
+    run_state,
+    runner_adapters,
+    runtime_config,
+)
 from benchmarking.workflow.chemqa_response import (
     build_chemqa_full_response,
     build_chemqa_response_from_submission,
@@ -5276,7 +5301,7 @@ Points: 0.5, Item: Second criterion
 
             def run(self, record: object, group: object) -> object:
                 _ = group
-                if getattr(record, "record_id") == "r1":
+                if record.record_id == "r1":
                     raise RuntimeError("boom")
                 return RunnerResult(
                     status=RunStatus.COMPLETED,

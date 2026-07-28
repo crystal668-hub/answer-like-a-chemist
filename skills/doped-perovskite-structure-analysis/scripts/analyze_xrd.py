@@ -8,10 +8,11 @@ Usage:
 """
 
 import argparse
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pymatgen.core import Structure
 from pymatgen.analysis.diffraction.xrd import XRDCalculator
+from pymatgen.core import Structure
 from pymatgen.io.vasp import Poscar
 
 

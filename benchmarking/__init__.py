@@ -2,21 +2,26 @@ from .core.contracts import (
     AnswerPayload,
     FailureInfo,
     RecoveryInfo,
-    RunStatus,
     RunnerResult,
+    RunStatus,
 )
 from .core.convergence import ConvergencePolicy
 from .core.datasets import BenchmarkRecord, GradingSpec
-from .scoring.errors import EvaluationRegistryError
-from .scoring.registry import EVALUATORS, evaluate_record, register_default_evaluators, register_evaluator
-from .scoring.results import EvaluationResult
 from .core.experiments import ExperimentSpec
+from .scoring.errors import EvaluationRegistryError
+from .scoring.registry import (
+    EVALUATORS,
+    evaluate_record,
+    register_default_evaluators,
+    register_evaluator,
+)
+from .scoring.results import EvaluationResult
 
 __all__ = [
+    "EVALUATORS",
     "AnswerPayload",
     "BenchmarkRecord",
     "ConvergencePolicy",
-    "EVALUATORS",
     "EvaluationRegistryError",
     "EvaluationResult",
     "ExperimentSpec",

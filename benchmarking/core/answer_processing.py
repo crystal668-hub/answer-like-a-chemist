@@ -6,7 +6,6 @@ from typing import Any
 
 from benchmarking.core.convergence import extract_final_answer_line
 
-
 JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", re.DOTALL | re.IGNORECASE)
 INVALID_JSON_BACKSLASH_RE = re.compile(r'\\(?!["\\/bfnrtu])')
 

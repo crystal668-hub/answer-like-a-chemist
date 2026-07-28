@@ -14,7 +14,6 @@ from benchmarking.dashboard.service import (
 )
 from benchmarking.runtime import paths as runtime_paths
 
-
 FASTAPI_EXTRA_MESSAGE = (
     "Benchmark dashboard requires the web-ui optional dependencies. "
     "Run it with: uv run --extra web-ui python -m benchmarking.dashboard.app"

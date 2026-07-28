@@ -6,11 +6,12 @@ import os
 import shutil
 import subprocess
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 from benchmarking.core.datasets import load_records
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results

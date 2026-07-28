@@ -1,8 +1,9 @@
 import argparse
 import json
-import sys
+
 from rdkit import Chem
 from rdkit.Chem import Descriptors
+
 
 def lipinski(mol):
     hba = Descriptors.NumHAcceptors(mol)

@@ -6,9 +6,8 @@ This script provides functions for searching and retrieving compound information
 from PubChem using the PubChemPy library.
 """
 
-import sys
 import json
-from typing import List, Dict, Optional, Union
+import sys
 
 try:
     import pubchempy as pcp
@@ -17,7 +16,7 @@ except ImportError:
     sys.exit(1)
 
 
-def search_by_name(name: str, max_results: int = 10) -> List[pcp.Compound]:
+def search_by_name(name: str, max_results: int = 10) -> list[pcp.Compound]:
     """
     Search for compounds by name.
 
@@ -36,7 +35,7 @@ def search_by_name(name: str, max_results: int = 10) -> List[pcp.Compound]:
         return []
 
 
-def search_by_smiles(smiles: str) -> Optional[pcp.Compound]:
+def search_by_smiles(smiles: str) -> pcp.Compound | None:
     """
     Search for a compound by SMILES string.
 
@@ -54,7 +53,7 @@ def search_by_smiles(smiles: str) -> Optional[pcp.Compound]:
         return None
 
 
-def get_compound_by_cid(cid: int) -> Optional[pcp.Compound]:
+def get_compound_by_cid(cid: int) -> pcp.Compound | None:
     """
     Retrieve a compound by its CID (Compound ID).
 
@@ -72,10 +71,10 @@ def get_compound_by_cid(cid: int) -> Optional[pcp.Compound]:
 
 
 def get_compound_properties(
-    identifier: Union[str, int],
+    identifier: str | int,
     namespace: str = 'name',
-    properties: Optional[List[str]] = None
-) -> Dict:
+    properties: list[str] | None = None
+) -> dict:
     """
     Get specific properties for a compound.
 
@@ -111,7 +110,7 @@ def similarity_search(
     smiles: str,
     threshold: int = 90,
     max_records: int = 10
-) -> List[pcp.Compound]:
+) -> list[pcp.Compound]:
     """
     Perform similarity search for compounds similar to the query structure.
 
@@ -140,7 +139,7 @@ def similarity_search(
 def substructure_search(
     smiles: str,
     max_records: int = 100
-) -> List[pcp.Compound]:
+) -> list[pcp.Compound]:
     """
     Perform substructure search for compounds containing the query structure.
 
@@ -164,7 +163,7 @@ def substructure_search(
         return []
 
 
-def get_synonyms(identifier: Union[str, int], namespace: str = 'name') -> List[str]:
+def get_synonyms(identifier: str | int, namespace: str = 'name') -> list[str]:
     """
     Get all synonyms for a compound.
 
@@ -186,10 +185,10 @@ def get_synonyms(identifier: Union[str, int], namespace: str = 'name') -> List[s
 
 
 def batch_search(
-    identifiers: List[str],
+    identifiers: list[str],
     namespace: str = 'name',
-    properties: Optional[List[str]] = None
-) -> List[Dict]:
+    properties: list[str] | None = None
+) -> list[dict]:
     """
     Batch search for multiple compounds.
 
@@ -211,11 +210,11 @@ def batch_search(
 
 
 def download_structure(
-    identifier: Union[str, int],
+    identifier: str | int,
     namespace: str = 'name',
     format: str = 'SDF',
-    filename: Optional[str] = None
-) -> Optional[str]:
+    filename: str | None = None
+) -> str | None:
     """
     Download compound structure in specified format.
 

@@ -22,8 +22,8 @@ import os
 import sys
 import time
 import uuid
-from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 UPLOAD_URL = "http://114.214.211.25:30082/api/file/upload"
 EXECUTE_URL = "http://114.214.211.25:30082/api/jobs/tpl"
@@ -50,7 +50,7 @@ def upload_file(filepath):
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
         f"Content-Type: {content_type}\r\n\r\n"
-    ).encode("utf-8") + filedata + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    ).encode() + filedata + f"\r\n--{boundary}--\r\n".encode()
 
     headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
     req = Request(UPLOAD_URL, data=body, headers=headers, method="POST")

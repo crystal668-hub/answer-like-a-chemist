@@ -4,9 +4,9 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 DEFAULT_TIMEOUT_SECONDS = 3600
 

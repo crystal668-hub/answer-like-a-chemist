@@ -11,7 +11,7 @@ import argparse
 import json
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,6 @@ from openclaw_debate_common import (
     provider_id_for,
 )
 
-
 DEFAULT_RUNTIME_ROOT = Path.home() / ".clawteam" / "debateclaw" / "bin"
 SLOT_SENTINEL_FILENAME = ".debateclaw-slot.json"
 SLOT_SENTINEL_KIND = "debateclaw-slot-workspace"
@@ -40,7 +39,7 @@ TRASH_ROOT = Path.home() / ".Trash" / "openclaw-debateclaw-slot-trash"
 
 
 def now_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def slot_agents_template_path() -> Path:

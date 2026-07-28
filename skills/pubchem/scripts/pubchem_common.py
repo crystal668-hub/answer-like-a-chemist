@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from urllib.parse import quote
 
 import requests
-
 
 PUBCHEM_BASE_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 DEFAULT_PROPERTIES = [
@@ -28,9 +28,9 @@ Requester = Callable[..., Any]
 @dataclass
 class PubChemHttpError(RuntimeError):
     message: str
-    http_status: Optional[int] = None
+    http_status: int | None = None
     payload: Any = None
-    url: Optional[str] = None
+    url: str | None = None
     timed_out: bool = False
     parse_status: str = "not_attempted"
     trace: list[dict[str, Any]] | None = None
@@ -51,7 +51,7 @@ def _ensure_list(value: Any) -> list[Any]:
     return [value]
 
 
-def parse_cli_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="PubChem provider skill")
     parser.add_argument("--request-json", required=True, help="Path to request JSON")
     parser.add_argument("--output-dir", required=True, help="Directory for emitted artifacts")
@@ -143,7 +143,7 @@ class PubChemClient:
         *,
         timeout_seconds: float = 8.0,
         retry_attempts: int = 1,
-        requester: Optional[Requester] = None,
+        requester: Requester | None = None,
     ) -> None:
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self.retry_attempts = max(0, int(retry_attempts))
@@ -156,7 +156,7 @@ class PubChemClient:
         url: str,
         outcome: str,
         elapsed_ms: float,
-        http_status: Optional[int],
+        http_status: int | None,
         timed_out: bool,
         parse_status: str,
     ) -> dict[str, Any]:
@@ -176,14 +176,14 @@ class PubChemClient:
             "outcome": outcome,
         }
 
-    def request_json(self, path: str, *, params: Optional[dict[str, Any]] = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def request_json(self, path: str, *, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         encoded_path = "/".join(quote(part, safe=",") for part in path.split("/"))
         url = f"{PUBCHEM_BASE_URL}/{encoded_path}/JSON"
         trace: list[dict[str, Any]] = []
         attempts = self.retry_attempts + 1
         for attempt in range(1, attempts + 1):
             timed_out = False
-            http_status: Optional[int] = None
+            http_status: int | None = None
             parse_status = "not_attempted"
             started = time.perf_counter()
             try:

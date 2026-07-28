@@ -18,7 +18,6 @@ from bundle_common import (
     resolve_skill_root,
 )
 
-
 SUPPORTED_AGENTS = ("codex", "claude", "openclaw", "none", "auto")
 
 

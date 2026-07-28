@@ -5,10 +5,9 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 ANSWER_KINDS = {
     "numeric_short_answer",
@@ -69,7 +68,7 @@ class FinalizationResult:
 
 
 def iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def clone_jsonish(value: Any) -> Any:

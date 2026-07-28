@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PySCF TDDFT excited state calculation template"""
-from pyscf import gto, dft, tddft
+from pyscf import dft, gto, tddft
 
 # Molecule definition (benzene)
 mol = gto.M(

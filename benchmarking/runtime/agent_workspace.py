@@ -9,10 +9,11 @@ import re
 import shutil
 import stat
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Mapping
+from typing import Any, BinaryIO
 
 from benchmarking.core.contracts import FailureInfo
 from benchmarking.runtime.workspace_audit import (
@@ -26,18 +27,33 @@ from benchmarking.runtime.workspace_audit import (
     _workdir_fallback_finding,
 )
 from benchmarking.runtime.workspace_policy import (
-    ContaminationAudit as _ContaminationAudit,
-    ProtectedRoot as _ProtectedRoot,
     WORKSPACE_ISOLATION_SCHEMA_VERSION as _WORKSPACE_ISOLATION_SCHEMA_VERSION,
+)
+from benchmarking.runtime.workspace_policy import (
+    ContaminationAudit as _ContaminationAudit,
+)
+from benchmarking.runtime.workspace_policy import (
+    ProtectedRoot as _ProtectedRoot,
+)
+from benchmarking.runtime.workspace_policy import (
     WorkspaceAccessPolicy as _WorkspaceAccessPolicy,
+)
+from benchmarking.runtime.workspace_policy import (
     WorkspaceAudit as _WorkspaceAudit,
+)
+from benchmarking.runtime.workspace_policy import (
     _normalize_protected_roots,
     _path_is_within,
+)
+from benchmarking.runtime.workspace_policy import (
     adjudicate_workspace_findings as _adjudicate_workspace_findings,
+)
+from benchmarking.runtime.workspace_policy import (
     build_workspace_access_policy as _build_workspace_access_policy,
+)
+from benchmarking.runtime.workspace_policy import (
     ensure_workspace_audit as _ensure_workspace_audit,
 )
-
 
 SENTINEL_FILENAME = ".benchmark-workspace.json"
 SENTINEL_KIND = "openclaw-benchmark-attempt-workspace"

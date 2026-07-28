@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PySCF post-HF correlation calculation template (MP2, CCSD, CCSD(T))"""
-from pyscf import gto, scf, mp, cc
+from pyscf import cc, gto, mp, scf
 
 # Molecule definition
 mol = gto.M(

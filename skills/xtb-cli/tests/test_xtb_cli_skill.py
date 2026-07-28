@@ -9,7 +9,6 @@ import textwrap
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SKILL_ROOT = ROOT / "skills" / "xtb-cli"
 SCRIPT_PATH = SKILL_ROOT / "scripts" / "xtb_runner.py"

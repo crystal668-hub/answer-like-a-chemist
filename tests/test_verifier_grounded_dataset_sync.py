@@ -13,7 +13,6 @@ from scripts.sync_verifier_grounded_datasets import (
     sync_datasets,
 )
 
-
 FORBIDDEN_KEYS = {
     "example",
     "gold",

@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 
 from chemcalc_core import (
-    ChemCalcError,
     FARADAY_CONSTANT_C_PER_MOL,
     IDEAL_GAS_CONSTANT_J_PER_MOL_K,
+    ChemCalcError,
     as_float,
     build_result,
     require_text,

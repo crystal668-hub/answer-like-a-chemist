@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 
 try:
+    from pymatgen.analysis.phase_diagram import PDPlotter, PhaseDiagram
     from pymatgen.core import Composition
-    from pymatgen.analysis.phase_diagram import PhaseDiagram, PDPlotter
 except ImportError:
     print("Error: pymatgen is not installed. Install with: pip install pymatgen")
     sys.exit(1)
@@ -106,15 +106,15 @@ def generate_phase_diagram(chemsys: str, args):
                 print(f"Energy above hull:    {e_above_hull:.4f} eV/atom")
 
                 if e_above_hull < 0.001:
-                    print(f"Status:               STABLE (on convex hull)")
+                    print("Status:               STABLE (on convex hull)")
                 elif e_above_hull < 0.05:
-                    print(f"Status:               METASTABLE (nearly stable)")
+                    print("Status:               METASTABLE (nearly stable)")
                 else:
-                    print(f"Status:               UNSTABLE")
+                    print("Status:               UNSTABLE")
 
                     # Get decomposition
                     decomp = pd.get_decomposition(comp)
-                    print(f"\nDecomposes to:")
+                    print("\nDecomposes to:")
                     for entry, fraction in decomp.items():
                         formula = entry.composition.reduced_formula
                         print(f"  {fraction:.3f} × {formula}")
@@ -129,7 +129,7 @@ def generate_phase_diagram(chemsys: str, args):
 
                 # Analyze hypothetical composition
                 decomp = pd.get_decomposition(comp)
-                print(f"\nWould decompose to:")
+                print("\nWould decompose to:")
                 for entry, fraction in decomp.items():
                     formula = entry.composition.reduced_formula
                     print(f"  {fraction:.3f} × {formula}")

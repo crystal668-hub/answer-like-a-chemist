@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from chemcalc_core import as_float, build_result, require_list, require_mapping, require_text, run_cli, set_success
+from chemcalc_core import (
+    as_float,
+    build_result,
+    require_list,
+    require_mapping,
+    require_text,
+    run_cli,
+    set_success,
+)
 
 
 def handle(request: dict[str, object]) -> dict[str, object]:

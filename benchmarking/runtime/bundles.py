@@ -6,9 +6,10 @@ import hashlib
 import re
 import shutil
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import urlparse
 
 from benchmarking.core.datasets import BenchmarkRecord, source_pair_key

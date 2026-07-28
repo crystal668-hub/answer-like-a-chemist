@@ -4,7 +4,6 @@ import json
 import re
 from pathlib import Path
 
-
 SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "act-like-a-chemist" / "SKILL.md"
 TRIGGER_RULES_PATH = SKILL_PATH.parent / "contract" / "skill-triggers.md"
 INVENTORY_PATH = SKILL_PATH.parent.parent / "chemistry-routing-matrix.json"

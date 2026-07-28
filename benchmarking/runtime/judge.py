@@ -4,10 +4,14 @@ import hashlib
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from benchmarking.core.answer_processing import AgentResponseParseError, parse_agent_json_response
+from benchmarking.core.answer_processing import (
+    AgentResponseParseError,
+    parse_agent_json_response,
+)
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.agent_workspace import (
@@ -35,7 +39,6 @@ from benchmarking.runtime.workspace_policy import (
     ProtectedRoot,
     ensure_workspace_audit,
 )
-
 
 DEFAULT_JUDGE_THINKING = "high"
 
@@ -181,7 +184,7 @@ class JudgeClient:
                     )
                 payload = subprocess_utils.parse_json_stdout(result, command)
                 result_payload = subprocess_utils.unwrap_agent_payload(payload)
-                reply = subprocess_utils.summarize_payloads(list((result_payload.get("payloads") or [])))
+                reply = subprocess_utils.summarize_payloads(list(result_payload.get("payloads") or []))
                 try:
                     parsed = parse_agent_json_response(reply)
                 except AgentResponseParseError as exc:

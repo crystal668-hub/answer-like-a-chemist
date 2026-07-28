@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 LEASE_KIND = "benchmark-cleanroom-lease"
 LEASE_VERSION = 1
 MANIFEST_KIND = "benchmark-cleanroom-manifest"

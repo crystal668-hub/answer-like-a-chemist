@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +12,7 @@ from control_store import FileControlStore
 
 
 def backup_path(path: Path, *, label: str = 'bak') -> Path:
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%SZ')
+    stamp = datetime.now(UTC).strftime('%Y%m%d%H%M%SZ')
     return path.with_suffix(path.suffix + f'.{label}.{stamp}')
 
 

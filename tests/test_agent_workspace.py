@@ -379,7 +379,9 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                     "content": [{"type": "text", "text": text}],
                     "isError": expected_adjudication == "scoreable_degraded",
                 }
-                from benchmarking.runtime.workspace_audit import _workdir_fallback_finding
+                from benchmarking.runtime.workspace_audit import (
+                    _workdir_fallback_finding,
+                )
 
                 parsed = _workdir_fallback_finding(result_message, line_number=1, policy=policy)
                 audit = adjudicate_workspace_findings((parsed,))

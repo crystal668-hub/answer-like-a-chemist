@@ -12,7 +12,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime.legacy_workspace_archive import archive_legacy_workspaces
 
-
 DEFAULT_ARCHIVE_ROOT = runtime_paths.project_state_root / "benchmark-runs" / "legacy-workspace-archives"
 
 

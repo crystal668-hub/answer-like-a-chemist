@@ -18,8 +18,8 @@ Usage:
  """
 
 import argparse
-import sys
 import os
+import sys
 
 try:
     from ase.build import bulk, molecule, surface
@@ -52,7 +52,7 @@ def validate_element(element: str) -> bool:
     """Validate if element symbol is valid"""
     if element not in ASE_ELEMENTS:
         print(f"Error: Invalid element symbol '{element}'", file=sys.stderr)
-        print(f"Please refer to ASE element list for valid symbols", file=sys.stderr)
+        print("Please refer to ASE element list for valid symbols", file=sys.stderr)
         return False
     return True
 
@@ -86,7 +86,7 @@ def parse_surface_indices(surface_str: str) -> tuple:
     try:
         indices = tuple(int(p) for p in parts)
     except ValueError:
-        raise ValueError(f"Surface indices must be integers, e.g., '111' or '1,1,1'")
+        raise ValueError("Surface indices must be integers, e.g., '111' or '1,1,1'")
 
     # Check if valid Miller indices
     if indices == (0, 0, 0):
@@ -131,7 +131,7 @@ def build_mol(mol_name: str, output_dir: str = ".") -> str:
         write(output_file, atoms)
         print(f"Saved: {output_file}")
         return output_file
-    except Exception as e:
+    except Exception:
         print(f"Error: Failed to build molecule '{mol_name}'. Please confirm molecule name is valid (e.g., H2O, CH3OH, C6H6)", file=sys.stderr)
         sys.exit(1)
 

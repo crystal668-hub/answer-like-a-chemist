@@ -6,7 +6,6 @@ import pytest
 
 from benchmarking.runtime.error_capture import capture_execution_error
 
-
 QWEN_ACCESS_DENIED = "403 Access to model denied. Please make sure you are eligible for using the model."
 
 

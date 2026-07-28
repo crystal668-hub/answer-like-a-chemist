@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
 import hashlib
 import importlib.util
 import json
@@ -11,11 +10,19 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from bundle_common import default_runtime_dir, dump_json, load_module_from_path, resolve_clawteam_executable, resolve_skill_root
-from bundle_common import resolve_python_interpreter
+from bundle_common import (
+    default_runtime_dir,
+    dump_json,
+    load_module_from_path,
+    resolve_clawteam_executable,
+    resolve_python_interpreter,
+    resolve_skill_root,
+)
 from chemqa_artifact_flow import finalize_failure, resolve_answer_kind
 from chemqa_review_artifacts import (
     CANDIDATE_OWNER,
@@ -37,13 +44,13 @@ from chemqa_review_artifacts import (
     proposal_filename,
     proposal_is_transport_placeholder,
     qualifying_candidate_reviews,
+    rebuttal_exists,
+    rebuttal_filename,
     render_placeholder_proposal,
     render_terminal_failure,
     render_transport_review,
     review_exists,
     review_filename,
-    rebuttal_exists,
-    rebuttal_filename,
     terminal_failure_filename,
 )
 from control_store import FileControlStore
@@ -51,9 +58,11 @@ from spawn_registry import (
     budget_state_from_registry,
     load_registry,
     prepare_respawn_budget_state,
-    role_process_is_running as registry_role_process_is_running,
     save_registry,
     slot_from_registry_entry,
+)
+from spawn_registry import (
+    role_process_is_running as registry_role_process_is_running,
 )
 
 POLL_SECONDS_DEFAULT = 20

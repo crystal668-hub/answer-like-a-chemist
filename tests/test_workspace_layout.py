@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from benchmarking.runtime import paths as runtime_paths
-
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENCLAW_HOME = ROOT.parent

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PySCF CASSCF multi-reference calculation template"""
-from pyscf import gto, scf, mcscf
+from pyscf import gto, mcscf, scf
 
 # Molecule definition (example: N2 molecule)
 mol = gto.M(

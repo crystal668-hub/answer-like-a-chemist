@@ -4,7 +4,6 @@ import math
 
 from chemcalc_core import (
     IDEAL_GAS_CONSTANT_J_PER_MOL_K,
-    as_float,
     build_result,
     convert_value,
     extract_quantity,

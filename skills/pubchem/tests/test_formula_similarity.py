@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def test_formula_search_multiple_candidates(load_module, tmp_path) -> None:
     module = load_module("formula_search")
     calls: list[tuple[str, str, dict | None]] = []

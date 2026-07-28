@@ -5,7 +5,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "skills" / "chemistry-routing-matrix.json"
 

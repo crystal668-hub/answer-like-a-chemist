@@ -21,15 +21,14 @@ from benchmarking.core.convergence import (
     is_complete_rescue_answer,
     summarize_transcript_convergence,
 )
+from benchmarking.core.result_contract import contract_to_payload, parse_agent_stdout
+from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
     merge_preflight_postflight_audit,
     reset_agent_main_session_if_stale,
 )
-from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
-from benchmarking.core.result_contract import contract_to_payload, parse_agent_stdout
-
 
 OPENCLAW_STREAM_READ_ERROR_TEXT = "stream_read_error"
 OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT = "Agent couldn't generate a response"

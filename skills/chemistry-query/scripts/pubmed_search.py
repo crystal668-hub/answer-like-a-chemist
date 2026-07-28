@@ -1,8 +1,10 @@
 import argparse
-import requests
 import json
 import sys
 from xml.etree import ElementTree as ET
+
+import requests
+
 
 def main():
     parser = argparse.ArgumentParser(description="PubMed literature search")

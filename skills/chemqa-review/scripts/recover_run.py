@@ -10,9 +10,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from bundle_common import default_runtime_dir, resolve_python_interpreter, resolve_skill_root
+from bundle_common import (
+    default_runtime_dir,
+    resolve_python_interpreter,
+    resolve_skill_root,
+)
 from chemqa_artifact_flow import resolve_answer_kind
-from control_store import FileControlStore
 from chemqa_review_artifacts import (
     CANDIDATE_OWNER,
     REVIEWER_ROLES,
@@ -24,21 +27,24 @@ from chemqa_review_artifacts import (
     current_proposal,
     pretty_json,
     proposal_filename,
+    rebuttal_filename,
+    render_placeholder_proposal,
+    render_transport_review,
     repair_candidate_submission_text,
     repair_formal_review_text,
     repair_rebuttal_text,
-    render_placeholder_proposal,
-    render_transport_review,
     review_filename,
-    rebuttal_filename,
 )
+from control_store import FileControlStore
 from spawn_registry import (
     budget_state_from_registry,
     load_registry,
     prepare_respawn_budget_state,
-    role_process_is_running as registry_role_process_is_running,
     save_registry,
     slot_from_registry_entry,
+)
+from spawn_registry import (
+    role_process_is_running as registry_role_process_is_running,
 )
 
 CANDIDATE_CAPTURE_FILENAME = "proposal.captured.yaml"

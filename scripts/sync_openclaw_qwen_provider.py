@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 OPENCLAW_HOME = Path("/Users/xutao/.openclaw")
 OPENCLAW_CONFIG_PATH = OPENCLAW_HOME / "openclaw.json"
 AGENTS_DIR = OPENCLAW_HOME / "agents"

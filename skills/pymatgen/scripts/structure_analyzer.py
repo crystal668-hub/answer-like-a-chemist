@@ -22,12 +22,11 @@ Examples:
 import argparse
 import json
 import sys
-from pathlib import Path
 
 try:
+    from pymatgen.analysis.local_env import CrystalNN
     from pymatgen.core import Structure
     from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-    from pymatgen.analysis.local_env import CrystalNN
 except ImportError:
     print("Error: pymatgen is not installed. Install with: pip install pymatgen")
     sys.exit(1)
@@ -156,7 +155,7 @@ def analyze_structure(struct: Structure, args) -> dict:
                 print(f"  Coordination number: {len(neighbors)}")
 
                 if len(neighbors) > 0 and len(neighbors) <= 12:
-                    print(f"  Neighbors:")
+                    print("  Neighbors:")
                     for j, neighbor in enumerate(neighbors):
                         neighbor_site = struct[neighbor['site_index']]
                         distance = site.distance(neighbor_site)

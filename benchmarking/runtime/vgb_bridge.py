@@ -10,7 +10,6 @@ from typing import Any
 
 from benchmarking.runtime import paths as runtime_paths
 
-
 DEFAULT_RELEASE_CONFIG = (
     runtime_paths.project_root
     / "benchmarking"

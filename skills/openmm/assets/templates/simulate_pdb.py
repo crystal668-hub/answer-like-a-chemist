@@ -1,7 +1,8 @@
-from openmm.app import *
-from openmm import *
-from openmm.unit import *
 from sys import stdout
+
+from openmm import *
+from openmm.app import *
+from openmm.unit import *
 
 pdb = PDBFile('input.pdb')
 forcefield = ForceField('amber19-all.xml', 'amber19/tip3pfb.xml')

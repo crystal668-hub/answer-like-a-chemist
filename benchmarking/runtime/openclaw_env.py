@@ -3,10 +3,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 from urllib.parse import urlsplit, urlunsplit
-
 
 PROXY_KEYS = (
     "NODE_USE_ENV_PROXY",

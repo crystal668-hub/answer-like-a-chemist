@@ -1,8 +1,8 @@
 import argparse
 import json
 import sys
+
 from rdkit import Chem
-from rdkit.Chem import AllChem
 from rdkit.Chem.rdChemReactions import ChemicalReaction
 
 REACTION_TEMPLATES = {

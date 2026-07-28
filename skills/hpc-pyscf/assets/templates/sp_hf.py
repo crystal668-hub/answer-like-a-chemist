@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PySCF DFT single point energy calculation template"""
-from pyscf import gto, dft
+from pyscf import dft, gto
 
 # Molecule definition
 mol = gto.M(

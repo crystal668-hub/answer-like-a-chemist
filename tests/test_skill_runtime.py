@@ -5,7 +5,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from benchmarking.skills.runtime import WorkspaceUvSkillRunner, classify_skill_process_failure
+from benchmarking.skills.runtime import (
+    WorkspaceUvSkillRunner,
+    classify_skill_process_failure,
+)
 
 
 def test_builds_workspace_uv_python_command() -> None:

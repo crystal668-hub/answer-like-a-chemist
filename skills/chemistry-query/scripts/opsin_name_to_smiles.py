@@ -1,8 +1,9 @@
 import argparse
 import json
+import os
 import subprocess
 import sys
-import os
+
 
 def main():
     parser = argparse.ArgumentParser(description="OPSIN IUPAC name to SMILES")

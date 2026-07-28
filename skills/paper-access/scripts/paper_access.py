@@ -8,11 +8,10 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote
 
 import requests
-
 
 DEFAULT_BROWSER_HEADERS = {
     "User-Agent": (
@@ -28,7 +27,7 @@ def _compact_text(value: Any) -> str:
     return " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split()).strip()
 
 
-def normalize_doi(value: Optional[str]) -> Optional[str]:
+def normalize_doi(value: str | None) -> str | None:
     text = _compact_text(value)
     if not text:
         return None
@@ -46,9 +45,9 @@ def _guess_extension(content_type: str) -> str:
 class FetchedDocument:
     url: str
     content_type: str
-    text: Optional[str] = None
-    binary: Optional[bytes] = None
-    final_url: Optional[str] = None
+    text: str | None = None
+    binary: bytes | None = None
+    final_url: str | None = None
     redirect_count: int = 0
 
 
@@ -80,11 +79,11 @@ class _HttpClient:
 
 
 class UnpaywallClient:
-    def __init__(self, *, email: Optional[str], timeout: float = 10.0) -> None:
+    def __init__(self, *, email: str | None, timeout: float = 10.0) -> None:
         self.email = _compact_text(email) or None
         self.http = _HttpClient(timeout=timeout)
 
-    def lookup(self, doi: Optional[str]) -> Optional[dict[str, Any]]:
+    def lookup(self, doi: str | None) -> dict[str, Any] | None:
         normalized = normalize_doi(doi)
         if not normalized or not self.email:
             return None
@@ -100,7 +99,7 @@ class HttpTextFetcher:
     def __init__(self, *, timeout: float = 15.0) -> None:
         self.http = _HttpClient(timeout=timeout)
 
-    def fetch(self, url: str, *, headers: Optional[dict[str, str]] = None) -> FetchedDocument:
+    def fetch(self, url: str, *, headers: dict[str, str] | None = None) -> FetchedDocument:
         request_headers = dict(DEFAULT_BROWSER_HEADERS)
         if headers:
             request_headers.update(headers)
@@ -145,7 +144,7 @@ class PdfUrlProbeClient:
 
 
 class AccessEngine:
-    def __init__(self, *, unpaywall_email: Optional[str] = None) -> None:
+    def __init__(self, *, unpaywall_email: str | None = None) -> None:
         self.unpaywall = UnpaywallClient(email=unpaywall_email)
         self.fetcher = HttpTextFetcher()
         self.probe = PdfUrlProbeClient()
@@ -164,7 +163,7 @@ class AccessEngine:
         (destination / "access_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         return result
 
-    def _resolve_source_url(self, *, item: dict[str, Any], request: dict[str, Any], doi: Optional[str]) -> tuple[Optional[str], str]:
+    def _resolve_source_url(self, *, item: dict[str, Any], request: dict[str, Any], doi: str | None) -> tuple[str | None, str]:
         direct_pdf_url = _compact_text(item.get("open_access_pdf_url")) or None
         if direct_pdf_url:
             return direct_pdf_url, "open_access_pdf_url"
@@ -225,14 +224,14 @@ class AccessEngine:
         }
 
 
-def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Portable paper access skill")
     parser.add_argument("--request-json", required=True, help="Path to the request JSON file")
     parser.add_argument("--output-dir", required=True, help="Directory for downloaded artifacts")
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     request = json.loads(Path(args.request_json).read_text(encoding="utf-8"))
     engine = AccessEngine(unpaywall_email=request.get("unpaywall_email"))

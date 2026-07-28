@@ -1,11 +1,11 @@
 import unittest
 
-from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.core.answer_processing import (
     AgentResponseParseError,
     extract_candidate_short_answer,
     parse_agent_json_response,
 )
+from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.scoring.errors import EvaluationError
 from benchmarking.scoring.evaluators.chembench import evaluate_chembench_open_ended
 from benchmarking.scoring.evaluators.frontierscience import (

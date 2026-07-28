@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-
 CHEMQA_RUN_LIFECYCLE_STATUSES = {"planned", "running", "done"}
 CHEMQA_TERMINAL_STATES = {"completed", "failed", "cancelled"}
 CHEMQA_ARTIFACT_FLOW_STATES = {"finalizing", "finalized", "finalization_failed"}

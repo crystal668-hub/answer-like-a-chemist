@@ -12,7 +12,7 @@ import hashlib
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -25,7 +25,6 @@ from debate_templates import (
     build_review_loop_template,
     template_name_for,
 )
-
 
 RUNTIME_HELPERS = (
     "prepare_debate.py",
@@ -92,7 +91,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def backup_path(path: Path) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%SZ")
     return path.with_suffix(path.suffix + f".bak.{timestamp}")
 
 

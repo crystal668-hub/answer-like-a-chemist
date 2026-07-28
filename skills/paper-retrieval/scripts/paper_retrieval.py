@@ -8,11 +8,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import quote
+from typing import Any
 
 import requests
-
 
 RETRYABLE_STATUS_CODES = {408, 429}
 
@@ -25,7 +23,7 @@ def _normalize_text(value: Any) -> str:
     return _compact_text(value)
 
 
-def normalize_doi(value: Optional[str]) -> Optional[str]:
+def normalize_doi(value: str | None) -> str | None:
     text = _compact_text(value)
     if not text:
         return None
@@ -33,7 +31,7 @@ def normalize_doi(value: Optional[str]) -> Optional[str]:
     return text.lower() or None
 
 
-def stable_paper_id(doi: Optional[str], title: str, year: Optional[int] = None) -> str:
+def stable_paper_id(doi: str | None, title: str, year: int | None = None) -> str:
     normalized_doi = normalize_doi(doi)
     if normalized_doi:
         token = normalized_doi
@@ -54,8 +52,8 @@ class QueryPlan:
     query_text: str
     must_terms: list[str] = field(default_factory=list)
     exclude_terms: list[str] = field(default_factory=list)
-    year_from: Optional[int] = None
-    year_to: Optional[int] = None
+    year_from: int | None = None
+    year_to: int | None = None
     preferred_sources: list[str] = field(default_factory=list)
     limit: int = 8
 
@@ -64,15 +62,15 @@ class QueryPlan:
 class PaperCandidate:
     paper_id: str
     title: str
-    doi: Optional[str] = None
-    abstract: Optional[str] = None
+    doi: str | None = None
+    abstract: str | None = None
     authors: list[str] = field(default_factory=list)
-    year: Optional[int] = None
-    venue: Optional[str] = None
+    year: int | None = None
+    venue: str | None = None
     provider_hits: list[str] = field(default_factory=list)
     retrieval_score: float = 0.0
-    oa_url: Optional[str] = None
-    open_access_pdf_url: Optional[str] = None
+    oa_url: str | None = None
+    open_access_pdf_url: str | None = None
 
 
 @dataclass
@@ -82,7 +80,7 @@ class ProviderHealthRecord:
     successes: int = 0
     skipped_calls: int = 0
     retry_exhausted_failures: int = 0
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
 
 class ProviderRequestError(RuntimeError):
@@ -95,7 +93,7 @@ class _HttpClient:
         self.retry_attempts = max(0, int(retry_attempts))
         self.health = ProviderHealthRecord()
 
-    def get(self, url: str, *, params: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None) -> Any:
+    def get(self, url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> Any:
         self.health.calls += 1
         attempts = self.retry_attempts + 1
         for attempt in range(1, attempts + 1):
@@ -120,7 +118,7 @@ class _HttpClient:
 
 
 class RetrievalEngine:
-    def __init__(self, *, openalex_mailto: Optional[str] = None, crossref_mailto: Optional[str] = None, semantic_scholar_api_key: Optional[str] = None, timeout: float = 10.0) -> None:
+    def __init__(self, *, openalex_mailto: str | None = None, crossref_mailto: str | None = None, semantic_scholar_api_key: str | None = None, timeout: float = 10.0) -> None:
         self.openalex_mailto = _compact_text(openalex_mailto) or None
         self.crossref_mailto = _compact_text(crossref_mailto) or None
         self.semantic_scholar_api_key = _compact_text(semantic_scholar_api_key) or None
@@ -194,7 +192,7 @@ class RetrievalEngine:
         response = self.http.get("https://api.crossref.org/works", params=params)
         return list(response.json().get("message", {}).get("items") or [])
 
-    def _candidate_from_provider(self, provider_name: str, raw_item: dict[str, Any]) -> Optional[PaperCandidate]:
+    def _candidate_from_provider(self, provider_name: str, raw_item: dict[str, Any]) -> PaperCandidate | None:
         if provider_name == "openalex":
             title = _normalize_text(raw_item.get("display_name") or raw_item.get("title"))
             if not title:
@@ -254,7 +252,7 @@ class RetrievalEngine:
             provider_hits=["crossref"],
         )
 
-    def _find_duplicate(self, papers: list[PaperCandidate], candidate: PaperCandidate) -> Optional[PaperCandidate]:
+    def _find_duplicate(self, papers: list[PaperCandidate], candidate: PaperCandidate) -> PaperCandidate | None:
         for existing in papers:
             if normalize_doi(existing.doi) and normalize_doi(existing.doi) == normalize_doi(candidate.doi):
                 return existing
@@ -300,7 +298,7 @@ class RetrievalEngine:
         return round(score, 4)
 
 
-def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Portable paper retrieval skill")
     parser.add_argument("--query", required=True, help="Query text")
     parser.add_argument("--output-dir", required=True, help="Directory to write search results")
@@ -313,7 +311,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

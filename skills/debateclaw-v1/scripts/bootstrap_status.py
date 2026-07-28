@@ -18,7 +18,6 @@ if str(SCRIPT_DIR) not in sys.path:
 from control_store import FileControlStore
 from openclaw_debate_common import parse_env_names
 
-
 FIXED_DEBATE_SLOTS = ['debate-coordinator', 'debate-1', 'debate-2', 'debate-3', 'debate-4']
 
 

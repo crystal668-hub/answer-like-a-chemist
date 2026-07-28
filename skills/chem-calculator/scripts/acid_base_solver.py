@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import math
 
-from chemcalc_core import ChemCalcError, WATER_ION_PRODUCT, as_float, build_result, require_text, run_cli, set_success
+from chemcalc_core import (
+    WATER_ION_PRODUCT,
+    ChemCalcError,
+    as_float,
+    build_result,
+    require_text,
+    run_cli,
+    set_success,
+)
 
 
 def handle(request: dict[str, object]) -> dict[str, object]:

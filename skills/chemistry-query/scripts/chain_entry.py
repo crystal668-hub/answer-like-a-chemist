@@ -2,10 +2,11 @@
 """Chemistry Query chain entry point - standard agent interface."""
 import argparse
 import json
-import sys
 import os
 import subprocess
-from datetime import datetime, timezone
+import sys
+from datetime import UTC, datetime
+
 from rdkit import Chem
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -107,7 +108,7 @@ def main():
         'recommend_next': ['pharmacology', 'toxicology'],
         'confidence': confidence,
         'warnings': warnings,
-        'timestamp': datetime.now(timezone.utc).isoformat()
+        'timestamp': datetime.now(UTC).isoformat()
     }, indent=2, default=str))
 
 if __name__ == '__main__':

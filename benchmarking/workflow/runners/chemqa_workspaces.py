@@ -7,7 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from benchmarking.core.contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
+from benchmarking.core.contracts import (
+    AnswerPayload,
+    FailureInfo,
+    RunnerResult,
+    RunStatus,
+)
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -15,8 +20,8 @@ from benchmarking.runtime.agent_workspace import (
     WorkspaceIsolationError,
     WorkspaceLeaseSet,
 )
-from benchmarking.runtime.workspace_policy import WorkspaceAudit, ensure_workspace_audit
 from benchmarking.runtime.session_isolation import sanitize_agent_id
+from benchmarking.runtime.workspace_policy import WorkspaceAudit, ensure_workspace_audit
 
 
 class ChemQAWorkspaceSupport:

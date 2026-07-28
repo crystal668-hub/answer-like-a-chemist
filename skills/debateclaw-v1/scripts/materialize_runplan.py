@@ -11,7 +11,6 @@ from control_store import FileControlStore
 from debate_templates import default_task_bundle
 from openclaw_debate_common import resolve_python_interpreter
 
-
 WORKFLOW_MAP = {
     "parallel@1": "parallel-judge",
     "review-loop@1": "review-loop",

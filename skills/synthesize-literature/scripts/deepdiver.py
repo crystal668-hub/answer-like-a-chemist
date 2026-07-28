@@ -6,11 +6,10 @@ import re
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 from urllib.parse import unquote
 
 import httpx
-
 from obs_manager import obs
 
 AGENT_BASE_URL = os.environ.get("AGENT_BASE_URL", "http://localhost:8000")
@@ -21,7 +20,7 @@ class PollingAgentClient:
     def __init__(self, base_url: str, poll_interval: float = 10.0):
         self.base_url = base_url.rstrip('/')
         self.poll_interval = poll_interval
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
         self.client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT)

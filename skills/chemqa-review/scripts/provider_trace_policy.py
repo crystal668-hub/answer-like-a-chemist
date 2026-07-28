@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 PROVIDER_TRACE_MODES = {"off", "audit", "enforce"}
 
 

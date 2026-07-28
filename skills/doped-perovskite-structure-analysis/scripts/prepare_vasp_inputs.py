@@ -8,8 +8,9 @@ Usage:
 
 import argparse
 import os
+
 from pymatgen.core import Structure
-from pymatgen.io.vasp import Poscar, Kpoints, Incar
+from pymatgen.io.vasp import Incar, Kpoints, Poscar
 
 
 def prepare_vasp_inputs(

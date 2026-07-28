@@ -3,13 +3,13 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from benchmarking.runtime import paths as runtime_paths
-
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 

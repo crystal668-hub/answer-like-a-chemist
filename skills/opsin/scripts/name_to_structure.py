@@ -5,12 +5,17 @@ from pathlib import Path
 
 import requests
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from _opsin_common import exit_code_for_status, finalize_payload, load_request, parse_args, run_opsin_lookup
+from _opsin_common import (
+    exit_code_for_status,
+    finalize_payload,
+    load_request,
+    parse_args,
+    run_opsin_lookup,
+)
 
 
 def main(argv: list[str] | None = None) -> int:

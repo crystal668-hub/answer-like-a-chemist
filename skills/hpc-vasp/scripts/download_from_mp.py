@@ -11,13 +11,13 @@ Usage:
  """
 
 import argparse
-import sys
 import os
 import re
+import sys
 
 try:
-    from pymatgen.ext.matproj import MPRester
     from pymatgen.core import Structure
+    from pymatgen.ext.matproj import MPRester
 except ImportError:
     print("Error: Missing required dependency pymatgen. Please run: pip install pymatgen", file=sys.stderr)
     sys.exit(1)
@@ -71,7 +71,7 @@ def download_by_material_id(api_key: str, material_id: str, output_dir: str = ".
     except Exception as e:
         error_msg = str(e).lower()
         if "api key" in error_msg or "unauthorized" in error_msg:
-            print(f"Error: API Key invalid or expired", file=sys.stderr)
+            print("Error: API Key invalid or expired", file=sys.stderr)
             print("Please visit https://materialsproject.org/dashboard to get a new API Key", file=sys.stderr)
         elif "not found" in error_msg or "no structure" in error_msg:
             print(f"Error: Material {material_id} not found", file=sys.stderr)
@@ -98,7 +98,7 @@ def download_by_formula(api_key: str, formula: str, output_dir: str = ".") -> st
     except Exception as e:
         error_msg = str(e).lower()
         if "api key" in error_msg or "unauthorized" in error_msg:
-            print(f"Error: API Key invalid or expired", file=sys.stderr)
+            print("Error: API Key invalid or expired", file=sys.stderr)
             print("Please visit https://materialsproject.org/dashboard to get a new API Key", file=sys.stderr)
         else:
             print(f"Error: Failed to download formula {formula_clean}: {e}", file=sys.stderr)

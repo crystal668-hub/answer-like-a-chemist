@@ -10,7 +10,6 @@ from typing import Any
 
 from openclaw_debate_common import resolve_python_interpreter
 
-
 DEFAULT_CLAWTEAM_TEMPLATE_DIR = Path.home() / ".clawteam" / "templates"
 
 

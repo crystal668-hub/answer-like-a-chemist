@@ -13,7 +13,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 SUPPORTED_AGENTS = ("codex", "claude", "openclaw")
 DEFAULT_TEMPLATES = ("debate-parallel-judge", "debate-review-loop")
 RUNTIME_HELPERS = (

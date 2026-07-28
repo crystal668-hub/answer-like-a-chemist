@@ -1,7 +1,8 @@
-from openmm.app import *
-from openmm import *
-from openmm.unit import *
 from sys import stdout
+
+from openmm import *
+from openmm.app import *
+from openmm.unit import *
 
 gro = GromacsGroFile('input.gro')
 top = GromacsTopFile('input.top',

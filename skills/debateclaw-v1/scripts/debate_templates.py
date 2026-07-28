@@ -8,7 +8,6 @@ import textwrap
 
 from openclaw_debate_common import resolve_python_interpreter
 
-
 DEFAULT_RUNTIME_ROOT = "~/.clawteam/debateclaw/bin"
 
 

@@ -8,9 +8,9 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 SCHEMA_VERSION = 1
 DEFAULT_CODEX_BIN = "codex"

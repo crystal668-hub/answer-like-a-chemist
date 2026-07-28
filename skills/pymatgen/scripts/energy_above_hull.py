@@ -30,12 +30,10 @@ Usage:
 import argparse
 import os
 import sys
-from pathlib import Path
-from typing import Optional
 
 try:
-    from pymatgen.core import Structure, Composition
-    from pymatgen.analysis.phase_diagram import PhaseDiagram, PDEntry
+    from pymatgen.analysis.phase_diagram import PDEntry, PhaseDiagram
+    from pymatgen.core import Composition, Structure
 except ImportError:
     print("Error: pymatgen is not installed. Install with: pip install pymatgen")
     sys.exit(1)
@@ -220,7 +218,7 @@ def mode_formula_energy(formula: str, energy_per_atom: float, api_key: str, show
         _print_mp_table(pd)
 
 
-def mode_csv(csv_path: str, api_key: str, output_csv: Optional[str]) -> None:
+def mode_csv(csv_path: str, api_key: str, output_csv: str | None) -> None:
     """Batch mode: CSV with columns formula,energy_per_atom."""
     import csv
 

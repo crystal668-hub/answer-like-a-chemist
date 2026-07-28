@@ -110,6 +110,5 @@ def test_load_public_sample_answers_rejects_incomplete_pinned_inventory() -> Non
                 }
             ]
         },
-    ):
-        with pytest.raises(bridge.VerifierGroundedRuntimeError, match="inventory"):
-            bridge.load_public_sample_answers("property_calculation")
+    ), pytest.raises(bridge.VerifierGroundedRuntimeError, match="inventory"):
+        bridge.load_public_sample_answers("property_calculation")

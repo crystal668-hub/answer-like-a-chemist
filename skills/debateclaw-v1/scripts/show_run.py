@@ -7,7 +7,6 @@ from pathlib import Path
 
 from control_store import FileControlStore
 
-
 WORKFLOW_TEMPLATE_PREFIX = {
     'parallel@1': 'debate-parallel-judge',
     'review-loop@1': 'debate-review-loop',

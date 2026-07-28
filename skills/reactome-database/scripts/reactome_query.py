@@ -19,10 +19,10 @@ Examples:
     python reactome_query.py entities R-HSA-69278
 """
 
-import sys
 import json
+import sys
+
 import requests
-from typing import List, Dict, Optional
 
 
 class ReactomeClient:
@@ -37,13 +37,13 @@ class ReactomeClient:
         response.raise_for_status()
         return response.text.strip()
 
-    def query_pathway(self, pathway_id: str) -> Dict:
+    def query_pathway(self, pathway_id: str) -> dict:
         """Query pathway information by ID"""
         response = requests.get(f"{self.CONTENT_BASE}/data/query/{pathway_id}")
         response.raise_for_status()
         return response.json()
 
-    def get_pathway_entities(self, pathway_id: str) -> List[Dict]:
+    def get_pathway_entities(self, pathway_id: str) -> list[dict]:
         """Get participating entities in a pathway"""
         response = requests.get(
             f"{self.CONTENT_BASE}/data/event/{pathway_id}/participatingPhysicalEntities"
@@ -51,7 +51,7 @@ class ReactomeClient:
         response.raise_for_status()
         return response.json()
 
-    def search_pathways(self, term: str) -> List[Dict]:
+    def search_pathways(self, term: str) -> list[dict]:
         """Search for pathways by name"""
         response = requests.get(
             f"{self.CONTENT_BASE}/data/query",
@@ -60,7 +60,7 @@ class ReactomeClient:
         response.raise_for_status()
         return response.json()
 
-    def analyze_genes(self, gene_list: List[str]) -> Dict:
+    def analyze_genes(self, gene_list: list[str]) -> dict:
         """Perform pathway enrichment analysis on gene list"""
         data = "\n".join(gene_list)
         response = requests.post(
@@ -71,7 +71,7 @@ class ReactomeClient:
         response.raise_for_status()
         return response.json()
 
-    def get_analysis_by_token(self, token: str) -> Dict:
+    def get_analysis_by_token(self, token: str) -> dict:
         """Retrieve analysis results by token"""
         response = requests.get(f"{self.ANALYSIS_BASE}/token/{token}")
         response.raise_for_status()
@@ -99,11 +99,11 @@ def command_query(pathway_id: str):
         print(f"ID: {pathway['stId']}")
         print(f"Type: {pathway['schemaClass']}")
 
-        if 'species' in pathway and pathway['species']:
+        if pathway.get('species'):
             species = pathway['species'][0]['displayName']
             print(f"Species: {species}")
 
-        if 'summation' in pathway and pathway['summation']:
+        if pathway.get('summation'):
             summation = pathway['summation'][0]['text']
             print(f"\nDescription: {summation}")
 
@@ -159,7 +159,7 @@ def command_search(term: str):
 
         for result in results[:20]:  # Show first 20
             print(f"{result['stId']}: {result['displayName']}")
-            if 'species' in result and result['species']:
+            if result.get('species'):
                 species = result['species'][0]['displayName']
                 print(f"  Species: {species}")
             print(f"  Type: {result['schemaClass']}")
@@ -179,7 +179,7 @@ def command_analyze(gene_file: str):
 
     # Read gene list
     try:
-        with open(gene_file, 'r') as f:
+        with open(gene_file) as f:
             genes = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
         print(f"Error: File '{gene_file}' not found")
@@ -219,7 +219,7 @@ def command_analyze(gene_file: str):
             token = summary['token']
             top_pathway = pathways[0]['stId']
             url = f"https://reactome.org/PathwayBrowser/#{top_pathway}&DTAB=AN&ANALYSIS={token}"
-            print(f"\nView top result in browser:")
+            print("\nView top result in browser:")
             print(url)
 
         # Save full results

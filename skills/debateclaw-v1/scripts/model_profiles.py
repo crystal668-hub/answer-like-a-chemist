@@ -9,7 +9,6 @@ from typing import Any
 
 from control_store import FileControlStore
 
-
 FIXED_DEBATE_SLOTS = [
     'debate-coordinator',
     'debate-1',

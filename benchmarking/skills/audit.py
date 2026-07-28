@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 SKIP_TRACE_RE = re.compile(r"\bskill\s+trace\s*:\s*skipped\b", re.IGNORECASE)
 
 

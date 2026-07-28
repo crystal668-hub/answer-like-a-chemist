@@ -5,15 +5,16 @@ Helper functions for common OpenAlex query patterns.
 Provides high-level functions for typical research queries.
 """
 
-from typing import List, Dict, Optional, Any
+from typing import Any
+
 from openalex_client import OpenAlexClient
 
 
 def find_author_works(
     author_name: str,
     client: OpenAlexClient,
-    limit: Optional[int] = None
-) -> List[Dict[str, Any]]:
+    limit: int | None = None
+) -> list[dict[str, Any]]:
     """
     Find all works by an author (two-step pattern).
 
@@ -58,8 +59,8 @@ def find_author_works(
 def find_institution_works(
     institution_name: str,
     client: OpenAlexClient,
-    limit: Optional[int] = None
-) -> List[Dict[str, Any]]:
+    limit: int | None = None
+) -> list[dict[str, Any]]:
     """
     Find all works from an institution (two-step pattern).
 
@@ -101,11 +102,11 @@ def find_institution_works(
 
 
 def find_highly_cited_recent_papers(
-    topic: Optional[str] = None,
+    topic: str | None = None,
     years: str = ">2020",
-    client: Optional[OpenAlexClient] = None,
+    client: OpenAlexClient | None = None,
     limit: int = 100
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Find highly cited recent papers, optionally filtered by topic.
 
@@ -142,7 +143,7 @@ def get_open_access_papers(
     client: OpenAlexClient,
     oa_status: str = "any",  # "any", "gold", "green", "hybrid", "bronze"
     limit: int = 100
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Find open access papers on a topic.
 
@@ -174,10 +175,10 @@ def get_open_access_papers(
 
 
 def get_publication_trends(
-    search_term: Optional[str] = None,
-    filter_params: Optional[Dict] = None,
-    client: Optional[OpenAlexClient] = None
-) -> List[Dict[str, Any]]:
+    search_term: str | None = None,
+    filter_params: dict | None = None,
+    client: OpenAlexClient | None = None
+) -> list[dict[str, Any]]:
     """
     Get publication counts by year.
 
@@ -210,7 +211,7 @@ def analyze_research_output(
     entity_name: str,
     client: OpenAlexClient,
     years: str = ">2020"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Analyze research output for an author or institution.
 

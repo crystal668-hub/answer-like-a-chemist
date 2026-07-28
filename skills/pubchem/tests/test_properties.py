@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def test_property_parsing_complete_response(load_module, tmp_path) -> None:
     module = load_module("cid_to_properties")
 

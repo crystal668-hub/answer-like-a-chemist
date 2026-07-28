@@ -7,7 +7,6 @@ from typing import Any
 
 from benchmarking.core.convergence import is_timeout_family_text
 
-
 SECRET_ASSIGNMENT_RE = re.compile(
     r"failed to apply resolved secret assignment at (?P<path>[A-Za-z0-9_.-]+)",
     re.I,

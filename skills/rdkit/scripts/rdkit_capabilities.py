@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from rdkit_skill_common import ProcessingError, RequestError, get_required_string, load_molecule, load_molecule_list
+from rdkit_skill_common import (
+    ProcessingError,
+    RequestError,
+    get_required_string,
+    load_molecule,
+    load_molecule_list,
+)
 
 
 def canonicalize(request: dict[str, Any], rdkit_ctx: dict[str, Any]) -> dict[str, Any]:
@@ -44,7 +50,7 @@ def descriptors(request: dict[str, Any], rdkit_ctx: dict[str, Any]) -> dict[str,
         "rotatable_bond_count": int(Lipinski.NumRotatableBonds(mol)),
         "tpsa": round(float(rdMolDescriptors.CalcTPSA(mol)), 6),
         "logp": round(float(Crippen.MolLogP(mol)), 6),
-        "ring_count": int(len(mol.GetRingInfo().AtomRings())),
+        "ring_count": len(mol.GetRingInfo().AtomRings()),
     }
     return {
         "status": "success",

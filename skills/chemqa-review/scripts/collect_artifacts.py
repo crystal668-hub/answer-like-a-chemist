@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from bundle_common import dump_json, resolve_skill_root, write_text
 from chemqa_artifact_flow import finalization_from_protocol, resolve_answer_kind
 

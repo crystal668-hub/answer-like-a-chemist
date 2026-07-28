@@ -8,9 +8,10 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 class CleanroomError(RuntimeError):

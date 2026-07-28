@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from chemcalc_core import build_result, molar_mass_for_formula, require_text, run_cli, set_success
+from chemcalc_core import (
+    build_result,
+    molar_mass_for_formula,
+    require_text,
+    run_cli,
+    set_success,
+)
 
 
 def handle(request: dict[str, object]) -> dict[str, object]:

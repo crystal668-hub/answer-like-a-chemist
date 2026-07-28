@@ -4,10 +4,8 @@ import json
 import subprocess
 import sys
 import tempfile
-import shutil
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILL_ROOT = ROOT / "skills" / "rdkit"

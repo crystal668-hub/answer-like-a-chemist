@@ -1,7 +1,9 @@
 import argparse
-import requests
 import json
 import sys
+
+import requests
+
 
 def main():
     parser = argparse.ArgumentParser(description="ChEMBL compound bioactivity")

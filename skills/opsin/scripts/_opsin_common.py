@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
-
 
 RESULT_FILENAME = "result.json"
 OPSIN_BASE_URL = "https://www.ebi.ac.uk/opsin/ws"
@@ -242,7 +242,9 @@ def run_opsin_lookup(
             )
             return payload
         except Exception as exc:  # requests exception types are resolved in wrapper scope
-            from requests import exceptions as request_exceptions  # local import keeps helper lightweight
+            from requests import (
+                exceptions as request_exceptions,  # local import keeps helper lightweight
+            )
 
             elapsed_ms = round((time.perf_counter() - started) * 1000.0, 3)
             provider_health["elapsed_ms"] = elapsed_ms

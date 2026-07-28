@@ -13,8 +13,8 @@ Usage:
  """
 
 import argparse
-import sys
 import os
+import sys
 
 try:
     from pymatgen.core import Structure

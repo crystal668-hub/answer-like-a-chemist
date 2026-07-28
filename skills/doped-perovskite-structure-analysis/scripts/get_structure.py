@@ -7,8 +7,9 @@ Usage:
 """
 
 import argparse
-from pymatgen.ext.matproj import MPRester
+
 from pymatgen.core import Structure
+from pymatgen.ext.matproj import MPRester
 
 
 def download_structure(mp_id: str, api_key: str, output: str = None) -> Structure:

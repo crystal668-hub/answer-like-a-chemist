@@ -3,15 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmarking.runtime.config import render_run_config
-from benchmarking.runtime.agent_workspace import AttemptWorkspaceManager, WorkspaceTemplate
-from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.core.experiments import ExperimentSpec
-from benchmarking.runtime.provisioning import (
-    ProvisionedAgent,
-    ProvisionedExperiment,
-    provision_slot_workspace,
+from benchmarking.runtime.agent_workspace import (
+    AttemptWorkspaceManager,
+    WorkspaceTemplate,
 )
+from benchmarking.runtime.config import render_run_config
 from benchmarking.runtime.config_pool import (
     BENCHMARK_WORKDIR_GUARD_PLUGIN_ID,
     BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT,
@@ -21,6 +18,12 @@ from benchmarking.runtime.config_pool import (
     actual_slot_ids,
     build_run_scoped_config_payload,
 )
+from benchmarking.runtime.provisioning import (
+    ProvisionedAgent,
+    ProvisionedExperiment,
+    provision_slot_workspace,
+)
+from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.skills.tree import benchmark_skill_allowlist
 
 

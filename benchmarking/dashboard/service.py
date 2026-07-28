@@ -10,7 +10,6 @@ from benchmarking.dashboard.annotations import AnnotationStore
 from benchmarking.dashboard.progress import load_progress
 from benchmarking.runtime import paths as runtime_paths
 
-
 RUN_DISCOVERY_IGNORED_DIRECTORIES = {"legacy-workspace-archives"}
 
 

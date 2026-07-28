@@ -11,15 +11,13 @@ import argparse
 import hashlib
 import json
 import sqlite3
-import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
-
 
 VALID_WORKFLOWS = ("parallel-judge", "review-loop", "chemqa-review")
 VALID_PHASES = ("propose", "review", "rebuttal", "done")
@@ -40,7 +38,7 @@ class DebateConfig:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def resolve_data_dir() -> Path:
@@ -296,9 +294,7 @@ def parse_attack_points(body: str) -> list[str]:
     points = []
     for line in body.splitlines():
         stripped = line.strip()
-        if stripped.startswith("- "):
-            points.append(stripped[2:].strip())
-        elif stripped.startswith("* "):
+        if stripped.startswith("- ") or stripped.startswith("* "):
             points.append(stripped[2:].strip())
     if points:
         return [point for point in points if point]
