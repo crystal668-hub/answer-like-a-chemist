@@ -882,7 +882,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
             with self.subTest(environment=environment):
                 audit = self._audit_tool_call(
                     tool_name="exec",
-                    arguments=lambda lease: {"command": command_factory(lease)},
+                    arguments=lambda lease, factory=command_factory: {"command": factory(lease)},
                     environment=environment,
                 )
                 self.assertEqual("contaminated", audit.status)

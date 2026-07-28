@@ -3507,7 +3507,9 @@ Points: 0.5, Item: Second criterion
                     runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
                     calls: list[list[str]] = []
 
-                    def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                    def fake_run_subprocess(
+                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
+                    ):
                         calls.append(command)
                         if len(calls) == 1:
                             return self._single_llm_completed_process(command, text=error_text)
@@ -3554,7 +3556,9 @@ Points: 0.5, Item: Second criterion
                     runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
                     calls: list[list[str]] = []
 
-                    def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                    def fake_run_subprocess(
+                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
+                    ):
                         calls.append(command)
                         return self._single_llm_completed_process(command, text=error_text)
 
