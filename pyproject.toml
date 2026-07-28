@@ -142,6 +142,7 @@ benchmark-dashboard = "benchmarking.dashboard.app:main"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ruff>=0.16.0",
 ]
 
 [tool.pytest.ini_options]
