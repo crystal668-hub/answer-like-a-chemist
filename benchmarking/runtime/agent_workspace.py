@@ -1204,7 +1204,7 @@ class AttemptWorkspaceManager:
                 if not re.fullmatch(r"[0-9a-f]{64}", existing_hash):
                     raise ValueError("existing sentinel template hash invalid")
             except Exception:
-                raise expected_error
+                raise expected_error from None
             quarantine = self._quarantine_managed_path(
                 active_workspace,
                 existing_identity,

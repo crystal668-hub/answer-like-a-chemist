@@ -541,7 +541,7 @@ def _command_audit_projection(command: str) -> AuditProjection:
             or projection.recovery_version < 1
             or not projection.text
         ):
-            raise ValueError(f"Incomplete audit recovery projection: {condition.code}")
+            raise ValueError(f"Incomplete audit recovery projection: {condition.code}") from condition
         return projection
 
 

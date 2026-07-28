@@ -70,8 +70,8 @@ def evaluate_verifier_grounded(
     raw_score = scores.get("score") if isinstance(scores, dict) else None
     try:
         score = float(raw_score)
-    except (TypeError, ValueError):
-        raise EvaluationError("Pinned verifier returned a scored result without a numeric score.")
+    except (TypeError, ValueError) as exc:
+        raise EvaluationError("Pinned verifier returned a scored result without a numeric score.") from exc
     if not math.isfinite(score):
         raise EvaluationError("Pinned verifier returned a non-finite score.")
     score = max(0.0, min(1.0, score))
