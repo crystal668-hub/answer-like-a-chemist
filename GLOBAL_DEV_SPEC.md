@@ -329,12 +329,16 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
   `scratch/tmp/cache/uv/`, which `uv` may create in a scratch-local cache. It
   also permits relative symbolic links located under `scratch/` when their
   strict resolved targets remain under the same attempt scratch tree and are
-  regular files or directories. Control-plane, absolute, escaping, broken,
-  cyclic, special-file-targeting, and other `.git` paths remain forbidden.
+  regular files or directories. A dangling relative link is permitted only when
+  its lexically normalized target is strictly inside that same scratch tree and
+  its existing target-parent components are real directories. Control-plane,
+  absolute, escaping, chained-dangling, cyclic, special-file-targeting, and
+  other `.git` paths remain forbidden.
 - Attempt archives preserve validated scratch-relative symbolic links rather
   than dereferencing them, revalidate the relocated archive tree, and record a
-  count plus deterministic link-manifest digest. Cross-filesystem copies must
-  match both regular-file statistics and the symbolic-link inventory.
+  count plus deterministic link-manifest digest, with separate count and digest
+  fields for dangling links. Cross-filesystem copies must match both regular-file
+  statistics and the symbolic-link inventory.
 - Structured file tools use workspace-relative `scratch/...` paths. Shell
   commands enter scratch through runner-provided environment variables.
 - A canonical base `AGENTS.md` plus a minimal role overlay defines the same

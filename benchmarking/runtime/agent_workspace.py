@@ -125,18 +125,28 @@ def _tree_stats(root: Path) -> tuple[int, int]:
     return file_count, total_bytes
 
 
-def _symlink_stats(root: Path) -> tuple[int, str]:
+def _symlink_stats(root: Path) -> tuple[int, str, int, str]:
     digest = hashlib.sha256()
+    dangling_digest = hashlib.sha256()
     count = 0
+    dangling_count = 0
     for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
         if not path.is_symlink():
             continue
         count += 1
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(b"\0symlink\0")
-        digest.update(os.readlink(path).encode("utf-8"))
-        digest.update(b"\0")
-    return count, digest.hexdigest()
+        entry = (
+            path.relative_to(root).as_posix().encode("utf-8")
+            + b"\0symlink\0"
+            + os.readlink(path).encode("utf-8")
+            + b"\0"
+        )
+        digest.update(entry)
+        try:
+            path.resolve(strict=True)
+        except FileNotFoundError:
+            dangling_count += 1
+            dangling_digest.update(entry)
+    return count, digest.hexdigest(), dangling_count, dangling_digest.hexdigest()
 
 
 def _is_allowed_uv_cache_git_marker(relative: PurePosixPath, mode: int) -> bool:
@@ -583,7 +593,12 @@ class AttemptWorkspaceManager:
                 managed_location = lease.active_workspace
             self._validate_runtime_tree(temporary_workspace)
             file_count, total_bytes = _tree_stats(temporary_workspace)
-            symlink_count, symlink_manifest_sha256 = _symlink_stats(temporary_workspace)
+            (
+                symlink_count,
+                symlink_manifest_sha256,
+                dangling_symlink_count,
+                dangling_symlink_manifest_sha256,
+            ) = _symlink_stats(temporary_workspace)
             sealed_at = _utc_now()
             manifest_payload = {
                 "kind": ARCHIVE_KIND,
@@ -599,6 +614,8 @@ class AttemptWorkspaceManager:
                 "total_bytes": total_bytes,
                 "symlink_count": symlink_count,
                 "symlink_manifest_sha256": symlink_manifest_sha256,
+                "dangling_symlink_count": dangling_symlink_count,
+                "dangling_symlink_manifest_sha256": dangling_symlink_manifest_sha256,
                 "sentinel_sha256": sentinel_sha256,
                 "workspace_isolation": _ensure_workspace_audit(outcome.contamination_audit).to_payload(),
                 "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
@@ -1310,14 +1327,34 @@ class AttemptWorkspaceManager:
                 },
             ) from exc
 
+        resolved_scratch = scratch_root.resolve(strict=True)
         try:
-            resolved_scratch = scratch_root.resolve(strict=True)
             resolved_target = path.resolve(strict=True)
-            resolved_target.relative_to(resolved_scratch)
-        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+        except FileNotFoundError:
+            AttemptWorkspaceManager._validate_dangling_scratch_symlink(
+                path,
+                scratch_root=lexical_scratch,
+                lexical_target=lexical_target,
+                link_target=link_target,
+            )
+            return
+        except (RuntimeError, OSError) as exc:
             raise WorkspaceIsolationError(
                 "workspace_path_unsafe",
-                "Benchmark scratch symbolic link is broken, cyclic, or resolves outside scratch.",
+                "Benchmark scratch symbolic link is cyclic or cannot be resolved safely.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "unsafe_resolved_symlink_target",
+                },
+            ) from exc
+
+        try:
+            resolved_target.relative_to(resolved_scratch)
+        except ValueError as exc:
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark scratch symbolic link resolves outside scratch.",
                 details={
                     "path": str(path),
                     "link_target": link_target,
@@ -1335,6 +1372,56 @@ class AttemptWorkspaceManager:
                     "link_target": link_target,
                     "resolved_target": str(resolved_target),
                     "reason": "symlink_target_special_file",
+                },
+            )
+
+    @staticmethod
+    def _validate_dangling_scratch_symlink(
+        path: Path,
+        *,
+        scratch_root: Path,
+        lexical_target: Path,
+        link_target: str,
+    ) -> None:
+        relative_target = lexical_target.relative_to(scratch_root)
+        if not relative_target.parts:
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark dangling symbolic link target must be strictly inside scratch.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "dangling_symlink_target_not_strictly_inside_scratch",
+                },
+            )
+
+        current = scratch_root
+        for part in relative_target.parts[:-1]:
+            current /= part
+            try:
+                mode = current.lstat().st_mode
+            except FileNotFoundError:
+                break
+            if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                raise WorkspaceIsolationError(
+                    "workspace_path_unsafe",
+                    "Benchmark dangling symbolic link target traverses an unsafe existing parent.",
+                    details={
+                        "path": str(path),
+                        "link_target": link_target,
+                        "unsafe_parent": str(current),
+                        "reason": "unsafe_dangling_symlink_parent",
+                    },
+                )
+
+        if lexical_target.is_symlink():
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark dangling symbolic link cannot target another symbolic link.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "dangling_symlink_target_is_symlink",
                 },
             )
 

@@ -525,6 +525,32 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("module", (archived_library_link / "module.txt").read_text(encoding="utf-8"))
         self.assertEqual(2, archive.payload["symlink_count"])
         self.assertRegex(archive.payload["symlink_manifest_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(0, archive.payload["dangling_symlink_count"])
+        self.assertRegex(archive.payload["dangling_symlink_manifest_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_internal_dangling_einsums_symlinks_are_preserved_in_archive(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        tests_dir = lease.scratch_dir / "tmp" / "qcenv" / "share" / "cmake" / "Einsums" / "tests"
+        tests_dir.mkdir(parents=True)
+        target = "../../cmake/tests/cxx23_static_call_operator.cpp"
+        links = (
+            tests_dir / "cxx23_static_call_operator.hip",
+            tests_dir / "cxx23_static_call_operator.cu",
+        )
+        for link in links:
+            link.symlink_to(target)
+
+        self.manager._validate_runtime_tree(lease.active_workspace)
+        archive = self.manager.seal(lease, AttemptOutcome(runner_status="completed"))
+
+        for link in links:
+            archived_link = archive.workspace / link.relative_to(lease.active_workspace)
+            self.assertTrue(archived_link.is_symlink())
+            self.assertFalse(archived_link.exists())
+            self.assertEqual(target, os.readlink(archived_link))
+        self.assertEqual(2, archive.payload["symlink_count"])
+        self.assertEqual(2, archive.payload["dangling_symlink_count"])
+        self.assertRegex(archive.payload["dangling_symlink_manifest_sha256"], r"^[0-9a-f]{64}$")
 
     def test_unsafe_workspace_symlinks_remain_rejected(self) -> None:
         lease = self.manager.prepare(self._identity())
@@ -553,12 +579,6 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                 os.path.relpath(outside, scratch_tmp),
                 "symlink_target_outside_scratch",
             ),
-            (
-                "broken",
-                scratch_tmp / "broken-link",
-                "missing.txt",
-                "unsafe_resolved_symlink_target",
-            ),
         )
         for label, link, link_target, expected_reason in cases:
             with self.subTest(label=label):
@@ -578,6 +598,37 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("unsafe_resolved_symlink_target", cycle.exception.details["reason"])
         first.unlink()
         second.unlink()
+
+        real_parent = scratch_tmp / "real-parent"
+        real_parent.mkdir()
+        parent_alias = scratch_tmp / "parent-alias"
+        parent_alias.symlink_to(real_parent.name, target_is_directory=True)
+        dangling_through_alias = scratch_tmp / "dangling-through-alias"
+        dangling_through_alias.symlink_to("parent-alias/missing.txt")
+        with self.assertRaises(WorkspaceIsolationError) as unsafe_parent:
+            self.manager._validate_runtime_tree(lease.active_workspace)
+        self.assertEqual("unsafe_dangling_symlink_parent", unsafe_parent.exception.details["reason"])
+        dangling_through_alias.unlink()
+        parent_alias.unlink()
+
+        file_parent = scratch_tmp / "file-parent"
+        file_parent.write_text("not a directory", encoding="utf-8")
+        dangling_through_file = scratch_tmp / "dangling-through-file"
+        dangling_through_file.symlink_to("file-parent/missing.txt")
+        with self.assertRaises(WorkspaceIsolationError) as nondirectory_parent:
+            self.manager._validate_runtime_tree(lease.active_workspace)
+        self.assertEqual("unsafe_resolved_symlink_target", nondirectory_parent.exception.details["reason"])
+        dangling_through_file.unlink()
+
+        dangling_chain_target = scratch_tmp / "dangling-chain-target"
+        dangling_chain_target.symlink_to("missing.txt")
+        dangling_chain = scratch_tmp / "dangling-chain"
+        dangling_chain.symlink_to(dangling_chain_target.name)
+        with self.assertRaises(WorkspaceIsolationError) as unsafe_chain:
+            self.manager._validate_runtime_tree(lease.active_workspace)
+        self.assertEqual("dangling_symlink_target_is_symlink", unsafe_chain.exception.details["reason"])
+        dangling_chain.unlink()
+        dangling_chain_target.unlink()
         self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
 
     def test_cross_filesystem_copy_validation_includes_symlink_inventory(self) -> None:
