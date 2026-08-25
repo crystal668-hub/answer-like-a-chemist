@@ -472,6 +472,45 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(execution_error, attempt_error)
         self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])
 
+    def test_stream_read_error_retries_with_fresh_attempt(self) -> None:
+        captured_commands: list[list[str]] = []
+        stderr = "\n".join(
+            (
+                "[openai-transport] [responses] error provider=openai message=stream_read_error",
+                "[agent/embedded] embedded run agent end: isError=true "
+                "error=LLM request timed out. rawError=stream_read_error",
+                "[agent/embedded] embedded run failover decision: decision=surface_error "
+                "reason=timeout rawError=stream_read_error",
+                '[diagnostic] lane task error: error="FailoverError: LLM request timed out."',
+            )
+        )
+        runner = self._runner(
+            captured_commands=captured_commands,
+            timeout_once=False,
+            failure_stderr=stderr,
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual(2, len(captured_commands))
+        session_ids = [command[command.index("--session-id") + 1] for command in captured_commands]
+        self.assertEqual(2, len(set(session_ids)))
+        retry = result.runner_meta["timeout_retry"]
+        self.assertTrue(retry["triggered"])
+        self.assertTrue(retry["exhausted"])
+        self.assertEqual(1, retry["retries_used"])
+        self.assertEqual("provider_transport_error", retry["retry_reason"])
+        self.assertEqual(
+            ["provider_transport_error", "provider_transport_error"],
+            [item["failure_code"] for item in retry["attempt_history"]],
+        )
+        archived_workspaces = [
+            Path(item["workspace_isolation"]["archive_workspace"])
+            for item in retry["attempt_history"]
+        ]
+        self.assertNotEqual(archived_workspaces[0], archived_workspaces[1])
+        self.assertTrue(all(path.is_dir() for path in archived_workspaces))
+
 
 if __name__ == "__main__":
     unittest.main()

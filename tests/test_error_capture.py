@@ -142,6 +142,65 @@ def test_captures_provider_transport_error_without_http_status() -> None:
     assert captured.to_details()["primary_error"]["raw"] == "context deadline exceeded"
 
 
+def test_stream_read_error_remains_primary_when_later_diagnostics_end_in_quotes() -> None:
+    stderr = "\n".join(
+        (
+            "[openai-transport] [responses] error provider=openai message=stream_read_error",
+            "[agent/embedded] embedded run agent end: isError=true "
+            "error=LLM request timed out. rawError=stream_read_error",
+            "[agent/embedded] embedded run failover decision: decision=surface_error "
+            "reason=timeout rawError=stream_read_error",
+            '[diagnostic] lane task error: error="FailoverError: LLM request timed out."',
+            '[diagnostic] session task error: error="FailoverError: LLM request timed out."',
+        )
+    )
+
+    captured = capture_execution_error(
+        returncode=1,
+        stdout="",
+        stderr=stderr,
+        session_id="session-1",
+    )
+    details = captured.to_details()
+
+    assert captured.code == "provider_transport_error"
+    assert captured.layer == "provider_transport"
+    assert captured.retryable is True
+    assert captured.message == "stream_read_error"
+    assert details["primary_error"]["raw"] == "stream_read_error"
+    assert all(item["message"] != '"' for item in details["observed_errors"])
+
+
+def test_structured_provider_error_outranks_later_generic_diagnostic() -> None:
+    structured = json.dumps(
+        {
+            "status": 503,
+            "error": {
+                "code": "service_unavailable",
+                "type": "upstream_error",
+                "message": "Provider temporarily unavailable",
+            },
+        },
+        separators=(",", ":"),
+    )
+    captured = capture_execution_error(
+        returncode=1,
+        stdout="",
+        stderr="\n".join(
+            (
+                f"LLM request failed. rawError={structured}",
+                "Provider request failed: generic shutdown diagnostic",
+            )
+        ),
+        session_id="session-1",
+    )
+
+    assert captured.code == "provider_service_error"
+    assert captured.retryable is True
+    assert captured.message == "Provider temporarily unavailable"
+    assert captured.to_details()["primary_error"]["error_code"] == "service_unavailable"
+
+
 def test_scans_stdout_when_stderr_contains_unrelated_diagnostics() -> None:
     captured = capture_execution_error(
         returncode=1,

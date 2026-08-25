@@ -125,6 +125,20 @@ def _tree_stats(root: Path) -> tuple[int, int]:
     return file_count, total_bytes
 
 
+def _symlink_stats(root: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    count = 0
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if not path.is_symlink():
+            continue
+        count += 1
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0symlink\0")
+        digest.update(os.readlink(path).encode("utf-8"))
+        digest.update(b"\0")
+    return count, digest.hexdigest()
+
+
 def _is_allowed_uv_cache_git_marker(relative: PurePosixPath, mode: int) -> bool:
     return (
         stat.S_ISREG(mode)
@@ -564,10 +578,12 @@ class AttemptWorkspaceManager:
                 os.replace(lease.active_workspace, temporary_workspace)
                 managed_location = temporary_archive
             else:
-                shutil.copytree(lease.active_workspace, temporary_workspace, symlinks=False)
+                shutil.copytree(lease.active_workspace, temporary_workspace, symlinks=True)
                 self._validate_copied_workspace(lease.active_workspace, temporary_workspace, sentinel_sha256)
                 managed_location = lease.active_workspace
+            self._validate_runtime_tree(temporary_workspace)
             file_count, total_bytes = _tree_stats(temporary_workspace)
+            symlink_count, symlink_manifest_sha256 = _symlink_stats(temporary_workspace)
             sealed_at = _utc_now()
             manifest_payload = {
                 "kind": ARCHIVE_KIND,
@@ -581,6 +597,8 @@ class AttemptWorkspaceManager:
                 "archive_workspace": str(final_archive / "workspace"),
                 "file_count": file_count,
                 "total_bytes": total_bytes,
+                "symlink_count": symlink_count,
+                "symlink_manifest_sha256": symlink_manifest_sha256,
                 "sentinel_sha256": sentinel_sha256,
                 "workspace_isolation": _ensure_workspace_audit(outcome.contamination_audit).to_payload(),
                 "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
@@ -1232,10 +1250,16 @@ class AttemptWorkspaceManager:
 
     @staticmethod
     def _validate_runtime_tree(root: Path) -> None:
+        scratch_root = root / "scratch"
         for path in root.rglob("*"):
             mode = path.lstat().st_mode
             relative = path.relative_to(root)
-            if path.is_symlink() or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+            if path.is_symlink():
+                AttemptWorkspaceManager._validate_scratch_symlink(
+                    path,
+                    scratch_root=scratch_root,
+                )
+            elif not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                 raise WorkspaceIsolationError(
                     "workspace_path_unsafe",
                     "Existing managed workspace contains a symlink, special file, or Git metadata.",
@@ -1247,6 +1271,72 @@ class AttemptWorkspaceManager:
                     "Existing managed workspace contains a symlink, special file, or Git metadata.",
                     details={"path": str(path)},
                 )
+
+    @staticmethod
+    def _validate_scratch_symlink(path: Path, *, scratch_root: Path) -> None:
+        try:
+            path.relative_to(scratch_root)
+        except ValueError as exc:
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark control-plane paths cannot be symbolic links.",
+                details={"path": str(path), "reason": "symlink_outside_scratch"},
+            ) from exc
+
+        link_target = os.readlink(path)
+        if os.path.isabs(link_target):
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark scratch symbolic links must use relative targets.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "absolute_symlink_target",
+                },
+            )
+
+        lexical_scratch = Path(os.path.abspath(scratch_root))
+        lexical_target = Path(os.path.abspath(path.parent / link_target))
+        try:
+            lexical_target.relative_to(lexical_scratch)
+        except ValueError as exc:
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark scratch symbolic link escapes the scratch boundary.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "symlink_target_outside_scratch",
+                },
+            ) from exc
+
+        try:
+            resolved_scratch = scratch_root.resolve(strict=True)
+            resolved_target = path.resolve(strict=True)
+            resolved_target.relative_to(resolved_scratch)
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark scratch symbolic link is broken, cyclic, or resolves outside scratch.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "reason": "unsafe_resolved_symlink_target",
+                },
+            ) from exc
+
+        target_mode = resolved_target.stat().st_mode
+        if not (stat.S_ISDIR(target_mode) or stat.S_ISREG(target_mode)):
+            raise WorkspaceIsolationError(
+                "workspace_path_unsafe",
+                "Benchmark scratch symbolic link targets a special file.",
+                details={
+                    "path": str(path),
+                    "link_target": link_target,
+                    "resolved_target": str(resolved_target),
+                    "reason": "symlink_target_special_file",
+                },
+            )
 
     def _sentinel_payload(
         self,
@@ -1409,6 +1499,8 @@ class AttemptWorkspaceManager:
     def _validate_copied_workspace(source: Path, copied: Path, sentinel_sha256: str) -> None:
         if _tree_stats(source) != _tree_stats(copied):
             raise RuntimeError("cross-filesystem workspace copy size/count mismatch")
+        if _symlink_stats(source) != _symlink_stats(copied):
+            raise RuntimeError("cross-filesystem workspace symlink inventory mismatch")
         copied_sentinel = copied / SENTINEL_FILENAME
         if _sha256_file(copied_sentinel) != sentinel_sha256:
             raise RuntimeError("cross-filesystem workspace sentinel hash mismatch")

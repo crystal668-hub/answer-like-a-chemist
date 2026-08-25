@@ -290,8 +290,12 @@ GROBID profiles, and calls an OpenAI-compatible chat-completions endpoint.
   `execution_error_kind`.
 - Structured runner execution errors retain a stable internal `code`, `layer`,
   and `retryable` decision alongside original `primary_error` and
-  `observed_errors` evidence. Retry attempt history retains the complete
-  structured execution error for each failed attempt.
+  `observed_errors` evidence. Primary provider evidence is selected by
+  structured-field and parser specificity rather than terminal log position;
+  punctuation-only diagnostic fragments are not error evidence. Provider
+  transport failures such as `stream_read_error` are retryable. Retry attempt
+  history retains the complete structured execution error for each failed
+  attempt.
 - `passed` is an evaluator quality outcome, not a runtime-health field.
   Verifier-grounded continuous scores use `passed = null`.
 - Aggregate score denominators contain only records with `scored=true`.
@@ -322,8 +326,15 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
 - Attempt workspaces use scratch contract version `2` with stable
   `scratch/requests`, `scratch/outputs`, `scratch/notes`, and `scratch/tmp`.
 - Workspace tree validation permits regular files named `.git` anywhere under
-  `scratch/tmp/cache/uv/`, which `uv` may create in a scratch-local cache.
-  Other `.git` paths, symlinks, and special files remain forbidden.
+  `scratch/tmp/cache/uv/`, which `uv` may create in a scratch-local cache. It
+  also permits relative symbolic links located under `scratch/` when their
+  strict resolved targets remain under the same attempt scratch tree and are
+  regular files or directories. Control-plane, absolute, escaping, broken,
+  cyclic, special-file-targeting, and other `.git` paths remain forbidden.
+- Attempt archives preserve validated scratch-relative symbolic links rather
+  than dereferencing them, revalidate the relocated archive tree, and record a
+  count plus deterministic link-manifest digest. Cross-filesystem copies must
+  match both regular-file statistics and the symbolic-link inventory.
 - Structured file tools use workspace-relative `scratch/...` paths. Shell
   commands enter scratch through runner-provided environment variables.
 - A canonical base `AGENTS.md` plus a minimal role overlay defines the same

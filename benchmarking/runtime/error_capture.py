@@ -48,7 +48,15 @@ DIRECT_PROVIDER_MARKERS = (
     "econnaborted",
     "etimedout",
     "esockettimedout",
+    "stream_read_error",
 )
+
+ERROR_EVIDENCE_PARSER_PRIORITY = {
+    "openclaw_raw_error": 40,
+    "provider_http_error": 30,
+    "provider_error_message": 20,
+    "provider_diagnostic": 10,
+}
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,10 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _is_meaningful_error_text(value: str) -> bool:
+    return any(character.isalnum() for character in value)
 
 
 def _optional_status(value: Any) -> int | None:
@@ -208,14 +220,14 @@ def _extract_stream_error_evidence(*, source: str, diagnostic_text: str) -> list
             continue
         provider_message_match = PROVIDER_MESSAGE_RE.search(stripped)
         if provider_message_match and not _is_tool_error_line(stripped):
-            evidence.append(
-                _parse_provider_raw_error(
-                    provider_message_match.group("raw"),
-                    source=source,
-                    line_number=line_number,
-                    parser="provider_error_message",
-                )
+            candidate = _parse_provider_raw_error(
+                provider_message_match.group("raw"),
+                source=source,
+                line_number=line_number,
+                parser="provider_error_message",
             )
+            if _is_meaningful_error_text(candidate.message or candidate.raw):
+                evidence.append(candidate)
             continue
         lowered = stripped.lower()
         if not _is_tool_error_line(stripped) and any(marker in lowered for marker in DIRECT_PROVIDER_MARKERS):
@@ -259,6 +271,8 @@ def _provider_classification(evidence: ErrorEvidence) -> tuple[str, str, bool]:
         return ("provider_timeout", "provider_timeout", True)
     if status in (500, 502, 503):
         return ("provider_service_error", "provider_service", True)
+    if "stream_read_error" in semantic_text:
+        return ("provider_transport_error", "provider_transport", True)
     if status in (400, 404, 409, 413, 422) or any(
         marker in semantic_text
         for marker in ("invalid_request_error", "role ordering", "invalid role", "response_format")
@@ -267,6 +281,18 @@ def _provider_classification(evidence: ErrorEvidence) -> tuple[str, str, bool]:
     if is_timeout_family_text(semantic_text):
         return ("provider_transport_error", "provider_transport", True)
     return ("provider_error", "provider", False)
+
+
+def _primary_error_evidence(evidence: list[ErrorEvidence]) -> ErrorEvidence:
+    return max(
+        evidence,
+        key=lambda item: (
+            bool(item.status_code or item.error_code or item.error_type),
+            ERROR_EVIDENCE_PARSER_PRIORITY.get(item.parser, 0),
+            item.source == "stderr",
+            item.line_number,
+        ),
+    )
 
 
 def _matched_error_evidence(
@@ -298,7 +324,7 @@ def _details_with_evidence(
 ) -> dict[str, Any]:
     details = dict(base_details)
     if evidence:
-        details["primary_error"] = evidence[-1].to_dict()
+        details["primary_error"] = _primary_error_evidence(evidence).to_dict()
         details["observed_errors"] = [item.to_dict() for item in evidence]
     return details
 
@@ -398,7 +424,7 @@ def capture_execution_error(
         )
     evidence = extract_error_evidence(stdout=stdout_text, stderr=stderr_text)
     if evidence:
-        primary = evidence[-1]
+        primary = _primary_error_evidence(evidence)
         code, layer, retryable = _provider_classification(primary)
         return ExecutionErrorClassification(
             code=code,

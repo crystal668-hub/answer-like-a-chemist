@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import socket
@@ -496,6 +497,106 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("workspace_path_unsafe", special.exception.code)
         fifo.unlink()
         self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
+
+    def test_relative_scratch_symlinks_are_preserved_in_archive(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        environment = lease.scratch_dir / "tmp" / "qcenv"
+        ssl_dir = environment / "ssl"
+        ssl_dir.mkdir(parents=True)
+        certificate = ssl_dir / "cacert.pem"
+        certificate.write_text("certificate", encoding="utf-8")
+        certificate_link = ssl_dir / "cert.pem"
+        certificate_link.symlink_to("cacert.pem")
+        library = environment / "lib-real"
+        library.mkdir()
+        (library / "module.txt").write_text("module", encoding="utf-8")
+        library_link = environment / "lib"
+        library_link.symlink_to("lib-real", target_is_directory=True)
+
+        self.manager._validate_runtime_tree(lease.active_workspace)
+        archive = self.manager.seal(lease, AttemptOutcome(runner_status="completed"))
+
+        archived_certificate_link = archive.workspace / certificate_link.relative_to(lease.active_workspace)
+        archived_library_link = archive.workspace / library_link.relative_to(lease.active_workspace)
+        self.assertTrue(archived_certificate_link.is_symlink())
+        self.assertEqual("cacert.pem", os.readlink(archived_certificate_link))
+        self.assertEqual("certificate", archived_certificate_link.read_text(encoding="utf-8"))
+        self.assertTrue(archived_library_link.is_symlink())
+        self.assertEqual("module", (archived_library_link / "module.txt").read_text(encoding="utf-8"))
+        self.assertEqual(2, archive.payload["symlink_count"])
+        self.assertRegex(archive.payload["symlink_manifest_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_unsafe_workspace_symlinks_remain_rejected(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        scratch_tmp = lease.scratch_dir / "tmp"
+        target = scratch_tmp / "target.txt"
+        target.write_text("target", encoding="utf-8")
+        outside = self.root / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+
+        cases = (
+            (
+                "control-plane",
+                lease.active_workspace / "linked-agents",
+                "AGENTS.md",
+                "symlink_outside_scratch",
+            ),
+            (
+                "absolute",
+                scratch_tmp / "absolute-link",
+                str(target.resolve()),
+                "absolute_symlink_target",
+            ),
+            (
+                "relative-escape",
+                scratch_tmp / "escaping-link",
+                os.path.relpath(outside, scratch_tmp),
+                "symlink_target_outside_scratch",
+            ),
+            (
+                "broken",
+                scratch_tmp / "broken-link",
+                "missing.txt",
+                "unsafe_resolved_symlink_target",
+            ),
+        )
+        for label, link, link_target, expected_reason in cases:
+            with self.subTest(label=label):
+                link.symlink_to(link_target)
+                with self.assertRaises(WorkspaceIsolationError) as raised:
+                    self.manager._validate_runtime_tree(lease.active_workspace)
+                self.assertEqual("workspace_path_unsafe", raised.exception.code)
+                self.assertEqual(expected_reason, raised.exception.details["reason"])
+                link.unlink()
+
+        first = scratch_tmp / "cycle-a"
+        second = scratch_tmp / "cycle-b"
+        first.symlink_to(second.name)
+        second.symlink_to(first.name)
+        with self.assertRaises(WorkspaceIsolationError) as cycle:
+            self.manager._validate_runtime_tree(lease.active_workspace)
+        self.assertEqual("unsafe_resolved_symlink_target", cycle.exception.details["reason"])
+        first.unlink()
+        second.unlink()
+        self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
+
+    def test_cross_filesystem_copy_validation_includes_symlink_inventory(self) -> None:
+        source = self.root / "copy-source"
+        copied = self.root / "copy-destination"
+        for root in (source, copied):
+            root.mkdir()
+            (root / SENTINEL_FILENAME).write_text("sentinel", encoding="utf-8")
+            (root / "first.txt").write_text("first", encoding="utf-8")
+            (root / "second.txt").write_text("second", encoding="utf-8")
+            (root / "linked.txt").symlink_to("first.txt")
+
+        sentinel_sha256 = hashlib.sha256(b"sentinel").hexdigest()
+        self.manager._validate_copied_workspace(source, copied, sentinel_sha256)
+        (copied / "linked.txt").unlink()
+        (copied / "linked.txt").symlink_to("second.txt")
+
+        with self.assertRaisesRegex(RuntimeError, "symlink inventory mismatch"):
+            self.manager._validate_copied_workspace(source, copied, sentinel_sha256)
 
     def test_uv_cache_git_markers_are_allowed_only_as_regular_files_under_cache(self) -> None:
         lease = self.manager.prepare(self._identity())
