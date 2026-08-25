@@ -57,7 +57,13 @@ from benchmarking.runtime.openclaw_env import (
     build_openclaw_subprocess_env,
     proxy_environment_report,
 )
+from benchmarking.runtime.vgb_bridge import load_release_config
 from benchmarking.runtime.web_search_preflight import run_web_search_preflight
+from benchmarking.scoring.evaluators.verifier_grounded import (
+    evaluate_verifier_grounded,
+    run_verifier_grounded_evaluation,
+    validate_verifier_grounded_release,
+)
 from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
 from benchmarking.scoring.results import build_execution_error_evaluation
 from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
@@ -471,6 +477,34 @@ def main() -> int:
         dataset_selection.print_selected_records(records)
         return 0
 
+    verifier_release_config = (
+        load_release_config()
+        if any(record.grading.kind == "verifier_grounded" for record in records)
+        else None
+    )
+    evaluator_overrides = None
+    if verifier_release_config is not None:
+        for record in records:
+            if record.grading.kind == "verifier_grounded":
+                validate_verifier_grounded_release(
+                    record,
+                    release_config=verifier_release_config,
+                )
+        verifier_runner = partial(
+            run_verifier_grounded_evaluation,
+            release_config=verifier_release_config,
+        )
+        evaluator_overrides = {
+            "verifier_grounded": partial(
+                evaluate_verifier_grounded,
+                verifier_runner=verifier_runner,
+            )
+        }
+    evaluate_invocation_record = partial(
+        evaluate_record,
+        evaluator_overrides=evaluator_overrides,
+    )
+
     if args.exact_output_dir:
         output_root = Path(args.exact_output_dir).expanduser().resolve()
     else:
@@ -574,7 +608,7 @@ def main() -> int:
         _orchestration.run_group,
         chemqa_slot_sets=experiments.CHEMQA_SLOT_SETS,
         build_runner_fn=runner_adapters.build_runner,
-        evaluate_answer_fn=evaluate_record,
+        evaluate_answer_fn=evaluate_invocation_record,
         build_error_group_record_result_fn=build_error_result,
         classify_subset_fn=classify_subset,
         save_json_fn=run_state.save_json,
@@ -797,7 +831,10 @@ def main() -> int:
         for group_id in group_ids:
             results.extend(group_results.get(group_id, []))
 
-    run_state.apply_verifier_grounded_reporting_references(results)
+    run_state.apply_verifier_grounded_reporting_references(
+        results,
+        release_config=verifier_release_config,
+    )
     for item in results:
         run_state.save_json(
             output_root / "per-record" / item.group_id / f"{run_state.slugify(item.record_id)}.json",
@@ -849,6 +886,9 @@ def main() -> int:
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "benchmark_root": str(Path(args.benchmark_root).expanduser().resolve()),
         "dataset_files": [str(path) for path in dataset_files],
+        "verifier_grounded_release": (
+            verifier_release_config.identity if verifier_release_config is not None else None
+        ),
         "groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
         "run_groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "skill_health_summary": skill_health_summary,
@@ -897,6 +937,9 @@ def main() -> int:
     run_state.remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
         "terminal_status": payload["status"],
+        "verifier_grounded_release": (
+            verifier_release_config.identity if verifier_release_config is not None else None
+        ),
         "execution_plan": {
             "mode": "wave-batched",
             "max_concurrent_groups": args.max_concurrent_groups,

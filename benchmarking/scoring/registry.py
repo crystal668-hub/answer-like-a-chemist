@@ -46,8 +46,11 @@ def evaluate_record(
     full_response_text: str,
     answer_text: str = "",
     judge: object,
+    evaluator_overrides: dict[str, Evaluator] | None = None,
 ) -> Any:
-    evaluator = EVALUATORS.get(record.grading.kind)
+    evaluator = (evaluator_overrides or {}).get(record.grading.kind) or EVALUATORS.get(
+        record.grading.kind
+    )
     if evaluator is None:
         evaluator = EVALUATORS.get("generic_semantic")
     if evaluator is None:

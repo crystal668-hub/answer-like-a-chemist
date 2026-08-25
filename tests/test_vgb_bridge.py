@@ -73,6 +73,31 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     assert "verifier_specs" not in payload
 
 
+def test_evaluate_answer_uses_invocation_release_after_default_changes() -> None:
+    invocation_config = bridge.load_release_config()
+    changed_default = bridge.ReleaseConfig(
+        **{
+            **invocation_config.__dict__,
+            "version": "future",
+        }
+    )
+    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
+    with (
+        patch.object(bridge, "load_release_config", return_value=changed_default),
+        patch.object(bridge, "_invoke_api", return_value=expected) as invoke,
+    ):
+        result = bridge.evaluate_answer(
+            track="rdkit",
+            task_id="rdkit_qed_max_001",
+            answer_text="FINAL ANSWER: CCO",
+            release_identity=invocation_config.identity,
+            release_config=invocation_config,
+        )
+
+    assert result == expected
+    assert invoke.call_args.args[0] is invocation_config
+
+
 def test_load_public_sample_answers_calls_public_api_runtime() -> None:
     expected = [
         {"task_id": "property_calc_001_free_energy", "answer": 0.258031679, "unit": "kJ/mol"},

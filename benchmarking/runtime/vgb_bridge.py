@@ -148,8 +148,12 @@ def describe_installed_release(
     )
 
 
-def load_public_sample_answers(track: str) -> list[dict[str, Any]]:
-    config = load_release_config()
+def load_public_sample_answers(
+    track: str,
+    *,
+    release_config: ReleaseConfig | None = None,
+) -> list[dict[str, Any]]:
+    config = release_config or load_release_config()
     track_config = config.tracks.get(track)
     if track_config is None:
         raise VerifierGroundedRuntimeError(f"Unknown pinned verifier track: {track}")
@@ -179,8 +183,9 @@ def evaluate_answer(
     task_id: str,
     answer_text: str,
     release_identity: dict[str, Any],
+    release_config: ReleaseConfig | None = None,
 ) -> dict[str, Any]:
-    config = load_release_config()
+    config = release_config or load_release_config()
     if release_identity != config.identity:
         raise VerifierGroundedRuntimeError(
             "Benchmark record release identity does not match the pinned verifier release"

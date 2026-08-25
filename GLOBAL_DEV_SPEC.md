@@ -176,8 +176,9 @@ For each invocation, the CLI:
    classify the run output root. Runner adapters materialize run-local visual
    bundles when required.
 2. Runs skill health checks, filters skills-on allowlists, prepares a unique
-   invocation identity, recovers sentinel-proven stale active workspaces, and
-   writes run-scoped OpenClaw configs.
+   invocation identity, captures the verifier-grounded release identity for the
+   lifetime of the invocation, recovers sentinel-proven stale active workspaces,
+   and writes run-scoped OpenClaw configs.
 3. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches groups in
    waves through `benchmarking.workflow.orchestration` and
    `benchmarking.workflow.runner_adapters`. Each record runs through either the

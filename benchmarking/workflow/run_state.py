@@ -11,6 +11,7 @@ from benchmarking.analysis.launcher import analysis_paths
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.runtime.vgb_bridge import (
+    ReleaseConfig,
     VerifierGroundedRuntimeError,
     load_public_sample_answers,
 )
@@ -162,13 +163,21 @@ def load_results_from_output_root(output_root: Path, *, group_ids: list[str]) ->
 
 def apply_verifier_grounded_reporting_references(
     results: list[GroupRecordResult],
+    *,
+    release_config: ReleaseConfig | None = None,
 ) -> list[GroupRecordResult]:
     dataset = "verifier_grounded_property_calculation"
     property_results = [item for item in results if str(getattr(item, "dataset", "")) == dataset]
     if not property_results:
         return results
     try:
-        samples = load_public_sample_answers("property_calculation")
+        if release_config is None:
+            samples = load_public_sample_answers("property_calculation")
+        else:
+            samples = load_public_sample_answers(
+                "property_calculation",
+                release_config=release_config,
+            )
     except VerifierGroundedRuntimeError as exc:
         raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
 

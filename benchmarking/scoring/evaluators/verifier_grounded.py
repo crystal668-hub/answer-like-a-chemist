@@ -6,6 +6,7 @@ from typing import Any
 from benchmarking.core.answer_processing import resolve_candidate_answer_text
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.vgb_bridge import (
+    ReleaseConfig,
     VerifierGroundedRuntimeError,
     evaluate_answer,
 )
@@ -22,7 +23,24 @@ def _verifier_grounded_config(record: BenchmarkRecord) -> dict[str, Any]:
     return value
 
 
-def run_verifier_grounded_evaluation(*, record: BenchmarkRecord, answer_text: str) -> dict[str, Any]:
+def validate_verifier_grounded_release(
+    record: BenchmarkRecord,
+    *,
+    release_config: ReleaseConfig,
+) -> None:
+    config = _verifier_grounded_config(record)
+    if config.get("release") != release_config.identity:
+        raise EvaluationError(
+            "Benchmark record release identity does not match the invocation verifier release"
+        )
+
+
+def run_verifier_grounded_evaluation(
+    *,
+    record: BenchmarkRecord,
+    answer_text: str,
+    release_config: ReleaseConfig | None = None,
+) -> dict[str, Any]:
     config = _verifier_grounded_config(record)
     release = config.get("release")
     track = str(config.get("track") or "").strip()
@@ -39,6 +57,7 @@ def run_verifier_grounded_evaluation(*, record: BenchmarkRecord, answer_text: st
             task_id=task_id,
             answer_text=answer_text,
             release_identity=release,
+            release_config=release_config,
         )
     except VerifierGroundedRuntimeError as exc:
         raise EvaluationError(str(exc)) from exc

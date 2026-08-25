@@ -6,6 +6,7 @@ from benchmarking.core.answer_processing import (
     parse_agent_json_response,
 )
 from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.runtime.vgb_bridge import load_release_config
 from benchmarking.scoring.errors import EvaluationError
 from benchmarking.scoring.evaluators.chembench import evaluate_chembench_open_ended
 from benchmarking.scoring.evaluators.frontierscience import (
@@ -19,6 +20,7 @@ from benchmarking.scoring.evaluators.superchem import parse_superchem_option_ans
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
+    validate_verifier_grounded_release,
 )
 
 
@@ -387,6 +389,33 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(EvaluationError, "does not match record_id"):
             run_verifier_grounded_evaluation(record=record, answer_text="FINAL ANSWER: CCO")
+
+    def test_verifier_grounded_rejects_release_mismatch_at_invocation_start(self) -> None:
+        record = BenchmarkRecord(
+            record_id="rdkit_qed_max_001",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Q",
+            reference_answer="No reference answer is exposed.",
+            payload={
+                "verifier_grounded": {
+                    "release": {
+                        "package": "verifier-grounded-benchmark",
+                        "version": "stale",
+                        "wheel_sha256": "stale",
+                    },
+                    "track": "rdkit",
+                    "task_id": "rdkit_qed_max_001",
+                }
+            },
+        )
+
+        with self.assertRaisesRegex(EvaluationError, "invocation verifier release"):
+            validate_verifier_grounded_release(
+                record,
+                release_config=load_release_config(),
+            )
 
     def test_hle_uses_official_judge_shape_and_preserves_confidence(self) -> None:
         judge = JudgeStub(
