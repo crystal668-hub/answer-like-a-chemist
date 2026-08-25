@@ -1,19 +1,19 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "0a9523176efb84e9d37163caf99bf7509789e823",
-  "source_tag": "v0.5.0",
+  "source_commit": "275f7c79fae5f815f43185fd4969a7bee32dc322",
+  "source_tag": "v0.6.0",
   "sdist": {
-    "filename": "verifier_grounded_benchmark-0.5.0.tar.gz",
-    "sha256": "8b43eb3d8c1eab8343d15e4a6ebf5f088ec77f0ddc804a7ba6e027559d9fe634"
+    "filename": "verifier_grounded_benchmark-0.6.0.tar.gz",
+    "sha256": "1311f54e4a99a15c46ad15fd552a0706709905e524ffc3bc05f745662b0c0779"
   },
   "tracks": {
     "property_calculation": {
       "dataset": "verifier_grounded_property_calculation",
-      "task_count": 14,
+      "task_count": 20,
       "task_ids": [
-        "property_calc_free_energy_001",
-        "property_calc_crystal_phase_002",
+        "property_calc_001_free_energy",
+        "property_calc_002_crystal_phase",
         "property_calc_003_hbond_count",
         "property_calc_004_ir_top3_frequencies",
         "property_calc_005_crystal_density",
@@ -25,7 +25,13 @@
         "property_calc_011_accessible_pore_volume_ratio",
         "property_calc_012_carboxyl_hydrogen_distance",
         "property_calc_013_halogen_bond_energy",
-        "property_calc_014_bay069_pka"
+        "property_calc_014_bay069_pka",
+        "property_calc_015_formaldehyde_socme",
+        "property_calc_016_anthracene_isc_rate",
+        "property_calc_017_biacetyl_phosphorescence_rate",
+        "property_calc_018_anthracene_ht_contribution",
+        "property_calc_019_acetophenone_isc_rate",
+        "property_calc_020_azulene_internal_conversion_rate"
       ],
       "timeout_seconds": 180.0
     },
@@ -78,10 +84,10 @@
       "timeout_seconds": 1800.0
     }
   },
-  "version": "0.5.0",
+  "version": "0.6.0",
   "wheel": {
-    "filename": "verifier_grounded_benchmark-0.5.0-py3-none-any.whl",
-    "sha256": "fb99d63fef0fd45a43ed8a074be93c7963c947ec2e371fe27b84a52fc5bdb98e",
-    "size": 175381
+    "filename": "verifier_grounded_benchmark-0.6.0-py3-none-any.whl",
+    "sha256": "ea355bf4c8202a1fead01a2600f5597443daf8075cca6fe8d3f91a3cedf49509",
+    "size": 176645
   }
 }

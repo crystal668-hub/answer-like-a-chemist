@@ -10,13 +10,13 @@ from benchmarking.runtime import vgb_bridge as bridge
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = bridge.load_release_config()
 
-    assert config.version == "0.5.0"
-    assert config.source_tag == "v0.5.0"
-    assert config.source_commit == "0a9523176efb84e9d37163caf99bf7509789e823"
-    assert config.wheel_sha256 == "fb99d63fef0fd45a43ed8a074be93c7963c947ec2e371fe27b84a52fc5bdb98e"
-    assert config.wheel_size == 175381
+    assert config.version == "0.6.0"
+    assert config.source_tag == "v0.6.0"
+    assert config.source_commit == "275f7c79fae5f815f43185fd4969a7bee32dc322"
+    assert config.wheel_sha256 == "ea355bf4c8202a1fead01a2600f5597443daf8075cca6fe8d3f91a3cedf49509"
+    assert config.wheel_size == 176645
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
-        "property_calculation": 14,
+        "property_calculation": 20,
         "rdkit": 14,
         "xtb": 20,
     }
@@ -37,14 +37,16 @@ def test_runtime_environment_does_not_inherit_agent_python_paths(monkeypatch) ->
 
 
 def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
-    with patch.object(bridge, "_invoke_api") as invoke:
-        with pytest.raises(bridge.VerifierGroundedRuntimeError, match="does not match"):
-            bridge.evaluate_answer(
-                track="rdkit",
-                task_id="rdkit_qed_max_001",
-                answer_text="FINAL ANSWER: CCO",
-                release_identity={"package": "wrong", "version": "0", "wheel_sha256": "0"},
-            )
+    with (
+        patch.object(bridge, "_invoke_api") as invoke,
+        pytest.raises(bridge.VerifierGroundedRuntimeError, match="does not match"),
+    ):
+        bridge.evaluate_answer(
+            track="rdkit",
+            task_id="rdkit_qed_max_001",
+            answer_text="FINAL ANSWER: CCO",
+            release_identity={"package": "wrong", "version": "0", "wheel_sha256": "0"},
+        )
     invoke.assert_not_called()
 
 
@@ -73,8 +75,8 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
 
 def test_load_public_sample_answers_calls_public_api_runtime() -> None:
     expected = [
-        {"task_id": "property_calc_free_energy_001", "answer": 0.258031679, "unit": "kJ/mol"},
-        {"task_id": "property_calc_crystal_phase_002", "answers": [{"property": "potential_energy_difference", "value": 0.079, "unit": "eV"}, {"property": "ambient_pressure_phase", "value": "alpha"}, {"property": "high_pressure_phase", "value": "beta"}]},
+        {"task_id": "property_calc_001_free_energy", "answer": 0.258031679, "unit": "kJ/mol"},
+        {"task_id": "property_calc_002_crystal_phase", "answers": [{"property": "potential_energy_difference", "value": 0.079, "unit": "eV"}, {"property": "ambient_pressure_phase", "value": "alpha"}, {"property": "high_pressure_phase", "value": "beta"}]},
         {"task_id": "property_calc_003_hbond_count", "answer": 12, "unit": "count"},
         {"task_id": "property_calc_004_ir_top3_frequencies", "answers": [{"property": "frequency_1", "value": 1685.5562, "unit": "cm^-1"}, {"property": "frequency_2", "value": 1208.1036, "unit": "cm^-1"}, {"property": "frequency_3", "value": 1674.0688, "unit": "cm^-1"}]},
         {"task_id": "property_calc_005_crystal_density", "answer": 1.44728, "unit": "g/cm^3"},
@@ -87,6 +89,12 @@ def test_load_public_sample_answers_calls_public_api_runtime() -> None:
         {"task_id": "property_calc_012_carboxyl_hydrogen_distance", "answer": 2.521, "unit": "angstrom"},
         {"task_id": "property_calc_013_halogen_bond_energy", "answer": -17.11, "unit": "kcal/mol"},
         {"task_id": "property_calc_014_bay069_pka", "answer": 5.7, "unit": "pKa"},
+        {"task_id": "property_calc_015_formaldehyde_socme", "answer": 0.00734, "unit": "eV"},
+        {"task_id": "property_calc_016_anthracene_isc_rate", "answer": 117000000.0, "unit": "s^-1"},
+        {"task_id": "property_calc_017_biacetyl_phosphorescence_rate", "answer": 98.0, "unit": "s^-1"},
+        {"task_id": "property_calc_018_anthracene_ht_contribution", "answer": 100.0, "unit": "percent"},
+        {"task_id": "property_calc_019_acetophenone_isc_rate", "answer": 28400000000.0, "unit": "s^-1"},
+        {"task_id": "property_calc_020_azulene_internal_conversion_rate", "answer": 382000000.0, "unit": "s^-1"},
     ]
     with patch.object(bridge, "_invoke_api", return_value={"sample_answers": expected}) as invoke:
         result = bridge.load_public_sample_answers("property_calculation")
@@ -105,7 +113,7 @@ def test_load_public_sample_answers_rejects_incomplete_pinned_inventory() -> Non
         return_value={
             "sample_answers": [
                 {
-                    "task_id": "property_calc_free_energy_001",
+                    "task_id": "property_calc_001_free_energy",
                     "answer": 0.258031679,
                     "unit": "kJ/mol",
                 }
