@@ -134,6 +134,83 @@ process.stdout.write(JSON.stringify(result ?? null));
 
             self.assertIsNone(self._run_hook(workspace=workspace, workdir=None))
 
+    def test_process_write_data_outside_workspace_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            workspace.mkdir()
+            outside.mkdir()
+
+            result = self._run_hook(
+                workspace=workspace,
+                tool_name="process",
+                params={"action": "write", "data": f"cat {outside / 'secret.txt'}"},
+            )
+
+            self.assertIs(result["block"], True)
+            self.assertIn("benchmark_workspace_guard_blocked", str(result["blockReason"]))
+            self.assertIn("access=unknown", str(result["blockReason"]))
+
+    def test_process_write_data_inside_workspace_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir) / "workspace"
+            (workspace / "scratch").mkdir(parents=True)
+
+            self.assertIsNone(
+                self._run_hook(
+                    workspace=workspace,
+                    tool_name="process",
+                    params={"action": "write", "data": "echo ok > scratch/output.txt"},
+                )
+            )
+
+    def test_save_alias_uses_write_scope_instead_of_read_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            (workspace / "scratch").mkdir(parents=True)
+
+            result = self._run_hook(
+                workspace=workspace,
+                tool_name="save",
+                params={"path": "notes.txt", "content": "no"},
+            )
+
+            self.assertIs(result["block"], True)
+            self.assertIn("access=write", str(result["blockReason"]))
+
+    def test_execute_file_alias_uses_exec_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            workspace.mkdir()
+            outside.mkdir()
+
+            result = self._run_hook(
+                workspace=workspace,
+                tool_name="run_file",
+                params={"path": str(outside / "script.py")},
+            )
+
+            self.assertIs(result["block"], True)
+            self.assertIn("outside the policy scope", str(result["blockReason"]))
+
+    def test_unknown_path_bearing_tool_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir) / "workspace"
+            workspace.mkdir()
+
+            result = self._run_hook(
+                workspace=workspace,
+                tool_name="custom_save_alias",
+                params={"path": "scratch/output.txt"},
+            )
+
+            self.assertIs(result["block"], True)
+            self.assertIn("no registered access semantics", str(result["blockReason"]))
+
     def test_structured_write_inside_scratch_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir) / "workspace"

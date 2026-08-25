@@ -380,6 +380,11 @@ _HEREDOC_BODY_END = "\x00OPENCLAW_AUDIT_HEREDOC_BODY_END\x00"
 _HEREDOC_BODY_UNSAFE = re.compile(r"[^A-Za-z0-9_./~${}=:+@%!-]+")
 _COMMAND_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
 _SHELL_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_INLINE_SCRIPT_INTERPRETERS = frozenset(
+    {"bash", "node", "nodejs", "perl", "php", "python", "python3", "ruby", "sh", "zsh"}
+)
+_EMBEDDED_QUOTED_LITERAL = re.compile(r"([\"'])(.*?)(?<!\\)\1", re.DOTALL)
+_EMBEDDED_BARE_PATH = re.compile(r"(?<![A-Za-z0-9_])((?:/|\.{1,2}/|~/)[^\s'\"`;|&()<>]+)")
 _UNTERMINATED_HEREDOC_CODE = "exec_unterminated_heredoc_eof"
 _UNTERMINATED_HEREDOC_RECOVERY_VERSION = 1
 
@@ -545,10 +550,58 @@ def _command_audit_projection(command: str) -> AuditProjection:
         return projection
 
 
+def _preserve_shell_newlines(text: str) -> str:
+    result: list[str] = []
+    quote = ""
+    escaped = False
+    in_heredoc = False
+    index = 0
+    while index < len(text):
+        if text.startswith(_HEREDOC_BODY_START, index):
+            in_heredoc = True
+            result.append(_HEREDOC_BODY_START)
+            index += len(_HEREDOC_BODY_START)
+            continue
+        if text.startswith(_HEREDOC_BODY_END, index):
+            in_heredoc = False
+            result.append(_HEREDOC_BODY_END)
+            index += len(_HEREDOC_BODY_END)
+            continue
+        char = text[index]
+        if in_heredoc:
+            result.append(char)
+            index += 1
+            continue
+        if escaped:
+            result.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            result.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+            result.append(char)
+            index += 1
+            continue
+        if char == "\n" and not quote:
+            result.extend((" ", ";", " "))
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
+
+
 def _exec_tokens(command: str) -> tuple[list[str], AuditProjection]:
     projection = _command_audit_projection(command)
     lexer = shlex.shlex(
-        _without_dynamic_command_substitutions(projection.text),
+        _preserve_shell_newlines(_without_dynamic_command_substitutions(projection.text)),
         posix=True,
         punctuation_chars="|&;()<>",
     )
@@ -557,11 +610,39 @@ def _exec_tokens(command: str) -> tuple[list[str], AuditProjection]:
     return list(lexer), projection
 
 
+def _embedded_script_candidates(
+    script: str,
+    *,
+    base_dir: Path | None,
+    environment: Mapping[str, str],
+    source_prefix: str = "exec",
+) -> list[PathCandidate]:
+    candidates: list[PathCandidate] = []
+    seen: set[str] = set()
+    literals = [match.group(2) for match in _EMBEDDED_QUOTED_LITERAL.finditer(script)]
+    literals.extend(match.group(1) for match in _EMBEDDED_BARE_PATH.finditer(script))
+    for literal in literals:
+        token = literal.rstrip(",;:)]}")
+        candidate = _resolve_candidate(
+            token,
+            source=f"{source_prefix}.inline_script",
+            base_dir=base_dir,
+            environment=environment,
+            require_path_syntax=True,
+        )
+        if candidate is None or str(candidate.resolved_path) in seen:
+            continue
+        seen.add(str(candidate.resolved_path))
+        candidates.append(candidate)
+    return candidates
+
+
 def _exec_command_candidates(
     command: str,
     *,
     workspace: Path,
     environment: Mapping[str, str],
+    source_prefix: str = "exec",
 ) -> tuple[list[PathCandidate], AuditProjection]:
     candidates: list[PathCandidate] = []
     current_dir: Path | None = workspace
@@ -569,6 +650,7 @@ def _exec_command_candidates(
     pending_cd: Path | None = None
     cd_target_seen = False
     in_heredoc = False
+    inline_script_pending = False
 
     tokens, projection = _exec_tokens(command)
     for raw_token in tokens:
@@ -594,16 +676,18 @@ def _exec_command_candidates(
             command_name = ""
             pending_cd = None
             cd_target_seen = False
+            inline_script_pending = False
             continue
         if not in_heredoc and token in {"(", ")"}:
             current_dir = None
             command_name = ""
             pending_cd = None
             cd_target_seen = False
+            inline_script_pending = False
             continue
 
         path_token = token.rsplit("=", 1)[1] if "=" in token else token
-        source = "exec.heredoc" if in_heredoc else "exec.command"
+        source = f"{source_prefix}.heredoc" if in_heredoc else f"{source_prefix}.command"
         candidate = _resolve_candidate(
             path_token,
             source=source,
@@ -616,10 +700,27 @@ def _exec_command_candidates(
 
         if in_heredoc:
             continue
+        if inline_script_pending:
+            candidates.extend(
+                _embedded_script_candidates(
+                    token,
+                    base_dir=current_dir,
+                    environment=environment,
+                    source_prefix=source_prefix,
+                )
+            )
+            inline_script_pending = False
+            continue
         if not command_name:
             if _SHELL_ASSIGNMENT.match(token):
                 continue
             command_name = token
+            continue
+        if (
+            token in {"-c", "-e"}
+            and Path(command_name).name.lower() in _INLINE_SCRIPT_INTERPRETERS
+        ):
+            inline_script_pending = True
             continue
         if command_name != "cd" or cd_target_seen or token == "--":
             continue
@@ -629,7 +730,7 @@ def _exec_command_candidates(
             continue
         cd_candidate = _resolve_candidate(
             token,
-            source="exec.command",
+            source=f"{source_prefix}.command",
             base_dir=current_dir,
             environment=environment,
             require_path_syntax=False,
@@ -658,9 +759,23 @@ def _candidate_paths(
             explicit_arguments = arguments
         else:
             return [], None
+        command_base = workspace
+        for key in ("workdir", "cwd"):
+            value = explicit_arguments.get(key)
+            if isinstance(value, (str, os.PathLike)):
+                workdir_candidate = _resolve_candidate(
+                    str(value),
+                    source=f"exec.{key}",
+                    base_dir=workspace,
+                    environment=environment,
+                    require_path_syntax=False,
+                )
+                if workdir_candidate is not None:
+                    command_base = workdir_candidate.resolved_path
+                    break
         command_candidates, projection = _exec_command_candidates(
             command,
-            workspace=workspace,
+            workspace=command_base,
             environment=environment,
         )
         candidates.extend(command_candidates)
@@ -677,6 +792,17 @@ def _candidate_paths(
                 if candidate is not None:
                     candidates.append(candidate)
         return candidates, projection
+
+    if normalized_tool == "process" and isinstance(arguments, Mapping):
+        data = arguments.get("data")
+        if isinstance(data, str) and data:
+            return _exec_command_candidates(
+                data,
+                workspace=workspace,
+                environment=environment,
+                source_prefix="process",
+            )
+        return [], None
 
     if not isinstance(arguments, Mapping):
         return [], None
@@ -704,6 +830,8 @@ def _command_excerpt(tool_name: str, arguments: Any) -> str:
         return ""
     if normalized_tool in _EXEC_TOOLS:
         payload = {key: arguments[key] for key in ("command", "workdir", "cwd") if key in arguments}
+    elif normalized_tool == "process":
+        payload = {key: arguments[key] for key in ("action", "sessionId", "data") if key in arguments}
     else:
         payload = {key: value for key, value in arguments.items() if str(key).strip().lower() in _PATH_ARGUMENT_KEYS}
     return _redact_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
@@ -769,16 +897,24 @@ def _failed_result_contains_external_content(message: Mapping[str, Any] | None) 
     lowered = text.lower()
     if "benchmark_workspace_guard_blocked" in lowered or "benchmark_workdir_invalid" in lowered:
         return False
-    error_markers = (
-        "enoent",
-        "no such file",
-        "permission denied",
-        "access denied",
-        "not found",
-        '"status": "error"',
-        "command exited with code",
+    diagnostic_patterns = (
+        r"enoent(?::.*)?",
+        r"no such file(?: or directory)?(?::.*)?",
+        r"permission denied(?::.*)?",
+        r"access denied(?::.*)?",
+        r"not found(?::.*)?",
+        r'\{?\s*"status"\s*:\s*"error"\s*\}?',
+        r"command exited with code\s+-?\d+",
+        r"(?:warning|error|failed):\s*(?:enoent|no such file|permission denied|access denied|not found)(?::.*)?",
     )
-    return not any(marker in lowered for marker in error_markers)
+    for line in text.splitlines():
+        normalized = line.strip().lower()
+        if not normalized:
+            continue
+        if any(re.fullmatch(pattern, normalized) for pattern in diagnostic_patterns):
+            continue
+        return True
+    return False
 
 
 def _information_exposure(
