@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -728,6 +729,59 @@ def _transcript_audit_failure(
     if line_number is not None:
         finding["transcript_line"] = line_number
     return finding
+
+
+def _parser_error_whitelist_finding(
+    exc: Exception,
+    *,
+    event: ToolEvent,
+    policy: WorkspaceAccessPolicy,
+) -> dict[str, Any] | None:
+    if not isinstance(exc, ValueError) or str(exc) != "No closing quotation":
+        return None
+    if str(event.tool_name or "").strip().lower() not in _EXEC_TOOLS:
+        return None
+    if _operation_outcome(event.result) != "succeeded":
+        return None
+    arguments = event.arguments if isinstance(event.arguments, Mapping) else {}
+    command = str(arguments.get("command") or "")
+    if not re.search(r"(?m)(?<!<)<<-?\s*['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?(?:\s|$)", command):
+        return None
+    if any(str(root.path) in command for root in policy.protected_roots):
+        return None
+    try:
+        syntax_check = subprocess.run(
+            ["/bin/bash", "-n"],
+            input=command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if syntax_check.returncode != 0:
+        return None
+    return {
+        "rule_id": "parser_error_whitelisted",
+        "tool_call_id": event.tool_call_id,
+        "tool_name": str(event.tool_name or "").strip().lower(),
+        "candidate_source": "transcript.tool_call",
+        "access_mode": "unknown",
+        "operation_outcome": "succeeded",
+        "resource_provenance": "unknown",
+        "information_exposure": "none",
+        "boundary_effect": "warning",
+        "command_excerpt": _command_excerpt(event.tool_name, event.arguments),
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "evidence": {
+            "call_line": event.call_line,
+            "result_line": event.result_line,
+            "result_is_error": bool(event.result and event.result.get("isError") is True),
+            "shell_syntax": "valid",
+        },
+    }
 
 
 _READ_TOOLS = frozenset({"read", "read_file", "image", "open_file"})

@@ -20,6 +20,7 @@ from benchmarking.runtime.workspace_audit import (
     _audit_recovery_candidates,
     _forbidden_access_findings,
     _operation_outcome,
+    _parser_error_whitelist_finding,
     _redact_text,
     _select_audit_transcript,
     _tool_events_from_transcript,
@@ -961,6 +962,14 @@ class AttemptWorkspaceManager:
                         )
                     )
                 except Exception as exc:
+                    whitelisted = _parser_error_whitelist_finding(
+                        exc,
+                        event=event,
+                        policy=active_policy,
+                    )
+                    if whitelisted is not None:
+                        findings.append(whitelisted)
+                        continue
                     recovered = self._retry_audit_from_archive(
                         lease=lease,
                         runner_meta=runner_meta,

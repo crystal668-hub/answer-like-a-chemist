@@ -218,7 +218,14 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - The transcript is audited under the attempt access policy before the complete
   workspace is archived. A `non_evaluable` adjudication or archive failure
   rejects an otherwise complete answer; `scoreable_degraded` preserves it with
-  degraded-execution metadata.
+  degraded-execution metadata. A narrow parser-error allowlist preserves a
+  successful `exec` result when the exact `No closing quotation` lexer error
+  occurs in a heredoc command, `/bin/bash -n` validates the original command,
+  the paired tool result is successful, and the command contains no protected
+  root path. The allowlist records a warning finding with clear contamination;
+  malformed commands, missing results, syntax failures, or protected-root
+  references remain non-evaluable or contaminated according to the normal
+  audit rules.
 
 ### ChemQA runner
 

@@ -1315,6 +1315,72 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertIn("/unterminated", finding["command_excerpt"])
         self.assertNotIn("resolved_path", finding)
 
+    def test_valid_heredoc_command_with_parser_quote_error_is_whitelisted(self) -> None:
+        lease = self.manager.prepare(self._identity(attempt_index=901, session_id="parser-whitelist"))
+        command = (
+            "curl -s --max-time 60 \"https://api.openalex.org/works?filter=title.search:formaldehyde&per_page=200&cursor=*&select=doi,title,publication_year\" -o /tmp/fah1.json\n"
+            "CURSOR=$(python3 -c \"import json; print(json.load(open('/tmp/fah1.json'))['meta']['next_cursor'])\")\n"
+            "curl -s --max-time 60 \"https://api.openalex.org/works?filter=title.search:formaldehyde&per_page=200&cursor=$CURSOR&select=doi,title,publication_year\" -o /tmp/fah2.json\n"
+            "python3 - << 'EOF'\n"
+            "import json\n"
+            "allres=[]\n"
+            "for f in ['/tmp/fah1.json','/tmp/fah2.json']:\n"
+            "    d=json.load(open(f))\n"
+            "    allres+=d.get('results',[])\n"
+            "print('total:',len(allres))\n"
+            "for w in allres:\n"
+            "    t=(w.get('title') or '').lower()\n"
+            "    if any(k in t for k in ['spin','triplet','phosphor','intersystem','orbit']):\n"
+            "        print(w.get('publication_year'),'|',w.get('doi'),'|',w.get('title'))\n"
+            "EOF"
+        )
+        transcript = self.root / "parser-whitelist-transcript.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "toolCall",
+                            "id": "exec-whitelisted",
+                            "name": "exec",
+                            "arguments": {"command": command},
+                        }],
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": "exec-whitelisted",
+                        "toolName": "exec",
+                        "content": [{"type": "text", "text": "total: 400"}],
+                        "details": {"status": "completed", "exitCode": 0},
+                        "isError": False,
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        audit = self.manager.audit_attempt(
+            lease,
+            {"session_isolation": {"postflight_entry_session_file": str(transcript)}},
+        )
+
+        self.assertEqual("complete", audit.audit_execution_status)
+        self.assertEqual("warning", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable", audit.adjudication)
+        self.assertEqual("parser_error_whitelisted", audit.findings[0]["rule_id"])
+        self.assertEqual("valid", audit.findings[0]["evidence"]["shell_syntax"])
+        self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
+
     def test_heredoc_bodies_with_quotes_and_multiple_delimiters_audit_clean(self) -> None:
         audit = self._audit_tool_call(
             tool_name="exec",
