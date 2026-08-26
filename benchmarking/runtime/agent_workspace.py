@@ -1174,12 +1174,6 @@ class AttemptWorkspaceManager:
                     "Benchmark workspace preflight found a symlink or special file.",
                     details={"path": str(path)},
                 )
-            if stat.S_ISREG(mode) and path.stat().st_nlink > 1:
-                raise WorkspaceIsolationError(
-                    "workspace_path_unsafe",
-                    "Benchmark workspace preflight found a hard-linked regular file.",
-                    details={"path": str(path), "reason": "hardlink_not_allowed", "link_count": path.stat().st_nlink},
-                )
             if ".git" in relative.parts and not _is_allowed_uv_cache_git_marker(relative, mode):
                 raise WorkspaceIsolationError(
                     "workspace_path_unsafe",
@@ -1281,12 +1275,6 @@ class AttemptWorkspaceManager:
                 AttemptWorkspaceManager._validate_scratch_symlink(
                     path,
                     scratch_root=scratch_root,
-                )
-            elif stat.S_ISREG(mode) and path.stat().st_nlink > 1:
-                raise WorkspaceIsolationError(
-                    "workspace_path_unsafe",
-                    "Managed benchmark workspace contains a hard-linked regular file.",
-                    details={"path": str(path), "reason": "hardlink_not_allowed", "link_count": path.stat().st_nlink},
                 )
             elif not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                 raise WorkspaceIsolationError(

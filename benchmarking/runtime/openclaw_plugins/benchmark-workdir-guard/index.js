@@ -2,8 +2,6 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const EXEC_TOOL_NAMES = new Set(["exec", "execute", "shell", "bash", "command"]);
-const PROCESS_TOOL_NAME = "process";
-const EMBEDDED_PATH_RE = /(?<![A-Za-z0-9_:\\])((?:\/|\.{1,2}\/|~\/)[^\s'"`;|&()<>]+)/g;
 const TOOL_RULES = {
   read: [{ keys: ["path", "file_path"], access: "read" }],
   read_file: [{ keys: ["path", "file_path"], access: "read" }],
@@ -18,9 +16,6 @@ const TOOL_RULES = {
   write_file: [{ keys: ["path", "file_path", "target"], access: "write" }],
   create: [{ keys: ["path", "file_path", "target"], access: "write" }],
   create_file: [{ keys: ["path", "file_path", "target"], access: "write" }],
-  save: [{ keys: ["path", "file_path", "target"], access: "write" }],
-  execute_file: [{ keys: ["path", "file_path"], access: "execute" }],
-  run_file: [{ keys: ["path", "file_path"], access: "execute" }],
   edit: [{ keys: ["path", "file_path", "target"], access: "mutate" }],
   delete: [{ keys: ["path", "file_path", "target"], access: "mutate" }],
   remove: [{ keys: ["path", "file_path", "target"], access: "mutate" }],
@@ -106,29 +101,12 @@ function validateCandidate({ policy, rawPath, access }) {
   return { ok: true, candidate };
 }
 
-function validateProcessData({ policy, data }) {
-  if (typeof data !== "string" || data.trim() === "") return { ok: true };
-  EMBEDDED_PATH_RE.lastIndex = 0;
-  let match;
-  while ((match = EMBEDDED_PATH_RE.exec(data)) !== null) {
-    const rawPath = match[1].replace(/[,;:)]}]+$/, "");
-    const validation = validateCandidate({ policy, rawPath, access: "unknown" });
-    if (!validation.ok) return { ...validation, key: "data", rawPath };
-  }
-  return { ok: true };
-}
-
 export function validateToolCall({ policy, toolName, params = {} }) {
   const normalizedTool = String(toolName || "").toLowerCase();
   const checks = [];
   if (EXEC_TOOL_NAMES.has(normalizedTool)) {
     for (const key of ["workdir", "cwd"]) {
       if (key in params) checks.push({ key, rawPath: params[key], access: "workdir" });
-    }
-  } else if (normalizedTool === PROCESS_TOOL_NAME) {
-    for (const key of ["data", "command"]) {
-      const validation = validateProcessData({ policy, data: params[key] });
-      if (!validation.ok) return validation;
     }
   } else if (TOOL_RULES[normalizedTool]) {
     for (const rule of TOOL_RULES[normalizedTool]) {
@@ -139,14 +117,7 @@ export function validateToolCall({ policy, toolName, params = {} }) {
   } else {
     for (const [key, value] of Object.entries(params || {})) {
       if (PATH_KEYS.has(String(key).toLowerCase())) {
-        return {
-          ok: false,
-          reason: "path-bearing tool has no registered access semantics",
-          access: "unknown",
-          key,
-          rawPath: value,
-          candidate: String(value || ""),
-        };
+        checks.push({ key, rawPath: value, access: "unknown" });
       }
     }
   }

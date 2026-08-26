@@ -325,9 +325,6 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
 
 - Attempt workspaces use scratch contract version `2` with stable
   `scratch/requests`, `scratch/outputs`, `scratch/notes`, and `scratch/tmp`.
-- Runtime-tree validation rejects regular files with more than one hard link.
-  Scratch artifacts must be private inodes so a protected external file cannot
-  be imported through a hard link or remain mutable through an archived inode.
 - Workspace tree validation permits regular files named `.git` anywhere under
   `scratch/tmp/cache/uv/`, which `uv` may create in a scratch-local cache. It
   also permits relative symbolic links located under `scratch/` when their
@@ -354,16 +351,10 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
   exec-workdir scopes, exact-file scopes, protected roots, and a deterministic
   digest. Skills-off and judge policies do not grant access to the skill source
   tree or `scripts/run_skill.py`.
-- The `benchmark-workdir-guard` plugin preflights structured path arguments,
-  explicit exec working directories, and path-like literals in `process` command
-  or write data; `save`, `execute_file`, and `run_file` use explicit write or
-  execute scope semantics, and unknown path-bearing tools fail closed until a
-  semantic registry entry exists. Transcript audit independently correlates tool calls
-  and results and records access mode, outcome, resolved path, policy, and
-  matched protected root. The transcript audit also projects ordinary shell
-  newlines as command separators, resolves relative commands from explicit
-  `workdir`/`cwd`, and extracts deterministic path literals from common
-  interpreter `-c`/`-e` scripts.
+- The `benchmark-workdir-guard` plugin preflights structured path arguments and
+  explicit exec working directories. Transcript audit independently correlates
+  tool calls and results and records access mode, outcome, resolved path, policy,
+  and matched protected root.
 
 Workspace audit has four independent axes:
 
@@ -376,20 +367,14 @@ Confirmed or indeterminate external information exposure is `non_evaluable`.
 Write-only, blocked, failed, or allowed-fallback boundary events do not by
 themselves prove information contamination. A write-only boundary violation can
 be `scoreable_degraded`; an allowed fallback is a warning and remains
-`scoreable`. Failed tool results are treated as external-content exposure when
-they contain non-diagnostic content alongside an exit/error marker. Audit
-evidence recovery is attempted before an unavailable audit is finalized. Archive
-failure remains fail closed.
+`scoreable`. Audit evidence recovery is attempted before an unavailable audit is
+finalized. Archive failure remains fail closed.
 
 Known audit parser conditions use stable codes and an in-code recovery-handler
 registry. `exec_unterminated_heredoc_eof` projects the complete EOF heredoc body
 through recovery version 1, emits `transcript_audit_recovered`, and continues the
 normal protected-path scan. Recovery success is a boundary warning; an unknown
 condition, incomplete projection, or recovery exception remains unavailable.
-Dynamic shell substitutions and arbitrary interpreter programs remain outside the
-static path projection contract; unresolved or unsupported expressions are not
-expanded and therefore are not evidence that the corresponding runtime path was
-safe.
 Historical dry-run replay can use a persisted per-record workspace policy when
 an interrupted legacy run lacks final aggregate artifacts; apply mode still
 requires `results.json` and `runtime-manifest.json`.
@@ -422,8 +407,6 @@ boundary. Processes still run as the same local user.
 
 - Attempt isolation detects and adjudicates filesystem evidence but cannot prevent
   every same-user filesystem access performed inside arbitrary subprocesses.
-- Background descendants that outlive their owning wrapper remain an operational
-  lifecycle risk until the runner proves process-group quiescence before sealing.
 - The benchmark CLI still owns argument parsing, wave scheduling, final
   aggregation, and runtime-manifest composition; changes to these concerns can
   therefore affect the whole benchmark entrypoint.

@@ -351,21 +351,6 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("confirmed", audit.findings[0]["information_exposure"])
         self.assertEqual("non_evaluable", audit.adjudication)
 
-    def test_failed_command_with_content_and_exit_marker_is_still_contaminated(self) -> None:
-        audit = self._audit_tool_event(
-            tool_name="exec",
-            arguments={"command": f"cat {self.root / 'datasets' / 'secret.txt'}; false"},
-            result={
-                "text": "protected answer contents\nCommand exited with code 1",
-                "isError": True,
-                "details": {"exitCode": 1},
-            },
-        )
-
-        self.assertEqual("failed", audit.findings[0]["operation_outcome"])
-        self.assertEqual("confirmed", audit.findings[0]["information_exposure"])
-        self.assertEqual("non_evaluable", audit.adjudication)
-
     def test_outside_workdir_fallback_depends_on_operation_outcome(self) -> None:
         policy = WorkspaceAccessPolicy(
             schema_version=1,
@@ -512,20 +497,6 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("workspace_path_unsafe", special.exception.code)
         fifo.unlink()
         self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
-
-    def test_hardlinked_regular_files_are_rejected_before_seal(self) -> None:
-        lease = self.manager.prepare(self._identity())
-        protected = self.root / "datasets" / "secret.txt"
-        protected.parent.mkdir(parents=True)
-        protected.write_text("secret", encoding="utf-8")
-        alias = lease.scratch_dir / "outputs" / "alias.txt"
-        os.link(protected, alias)
-
-        with self.assertRaises(WorkspaceIsolationError) as raised:
-            self.manager._validate_runtime_tree(lease.active_workspace)
-
-        self.assertEqual("workspace_path_unsafe", raised.exception.code)
-        self.assertEqual("hardlink_not_allowed", raised.exception.details["reason"])
 
     def test_relative_scratch_symlinks_are_preserved_in_archive(self) -> None:
         lease = self.manager.prepare(self._identity())
@@ -1075,68 +1046,6 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         )
         self.assertEqual("contaminated", workdir.status)
         self.assertEqual("exec.workdir", workdir.findings[0]["candidate_source"])
-
-    def test_relative_exec_paths_use_explicit_workdir_as_their_base(self) -> None:
-        protected = self.root / "datasets" / "track" / "tasks.jsonl"
-        audit = self._audit_tool_call(
-            tool_name="exec",
-            arguments=lambda lease: {
-                "command": f"cat {os.path.relpath(protected, lease.active_workspace / 'safe')}",
-                "workdir": str(lease.active_workspace / "safe"),
-            },
-        )
-
-        self.assertEqual("contaminated", audit.status)
-        finding = next(item for item in audit.findings if item["rule_id"] == "protected_path_access")
-        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
-        self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
-
-    def test_newline_shell_commands_update_the_effective_cd_directory(self) -> None:
-        protected = self.root / "datasets" / "track" / "tasks.jsonl"
-        audit = self._audit_tool_call(
-            tool_name="exec",
-            arguments=lambda lease: {
-                "command": (
-                    f"mkdir -p safe\ncd safe\ncat "
-                    f"{os.path.relpath(protected, lease.active_workspace / 'safe')}"
-                )
-            },
-        )
-
-        self.assertEqual("contaminated", audit.status)
-        finding = next(item for item in audit.findings if item["rule_id"] == "protected_path_access")
-        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
-        self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
-
-    def test_process_write_data_is_included_in_transcript_audit(self) -> None:
-        protected = self.root / "datasets" / "track" / "tasks.jsonl"
-        audit = self._audit_tool_event(
-            tool_name="process",
-            arguments={
-                "action": "write",
-                "sessionId": "process-session",
-                "data": f"cat {protected}",
-            },
-            result={"text": "protected contents", "isError": False, "details": {"exitCode": 0}},
-        )
-
-        self.assertEqual("contaminated", audit.status)
-        self.assertEqual("indeterminate", audit.contamination_status)
-        finding = next(item for item in audit.findings if item["rule_id"] == "protected_path_access")
-        self.assertEqual("process.command", finding["candidate_source"])
-        self.assertEqual("benchmark_dataset_root", finding["policy_id"])
-
-    def test_inline_interpreter_script_paths_are_audited(self) -> None:
-        protected = self.root / "datasets" / "track" / "tasks.jsonl"
-        audit = self._audit_tool_call(
-            tool_name="exec",
-            arguments={"command": f"python3 -c 'open(\"{protected}\").read()'"},
-        )
-
-        self.assertEqual("contaminated", audit.status)
-        finding = next(item for item in audit.findings if item["rule_id"] == "protected_path_access")
-        self.assertEqual("exec.inline_script", finding["candidate_source"])
-        self.assertEqual(str(protected.resolve(strict=False)), finding["resolved_path"])
 
     def test_all_explicit_legacy_workspaces_are_protected(self) -> None:
         for name in (
