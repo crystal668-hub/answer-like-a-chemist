@@ -11,6 +11,7 @@ from benchmarking.dashboard.progress import load_progress
 from benchmarking.runtime import paths as runtime_paths
 
 RUN_DISCOVERY_IGNORED_DIRECTORIES = {"legacy-workspace-archives"}
+REFERENCE_PLACEHOLDER_PREFIX = "No reference answer is exposed"
 
 
 class DashboardError(RuntimeError):
@@ -120,6 +121,47 @@ def _verifier_payload(result: dict[str, Any]) -> dict[str, Any] | None:
         "constraint_scores": details.get("constraint_scores") or [],
         "versions": details.get("versions") or {},
     }
+
+
+def _is_reference_placeholder(value: Any) -> bool:
+    return str(value or "").strip().startswith(REFERENCE_PLACEHOLDER_PREFIX)
+
+
+def _verifier_gold_reference(result: dict[str, Any]) -> str:
+    evaluation = result.get("evaluation") if isinstance(result.get("evaluation"), dict) else {}
+    details = evaluation.get("details") if isinstance(evaluation.get("details"), dict) else {}
+    properties = details.get("properties") if isinstance(details.get("properties"), dict) else {}
+    gold_answers = properties.get("gold_answers")
+    if not isinstance(gold_answers, dict) or not gold_answers:
+        return ""
+
+    answers: list[dict[str, Any]] = []
+    for property_name, raw_answer in gold_answers.items():
+        if not isinstance(raw_answer, dict) or "value" not in raw_answer:
+            return json.dumps(gold_answers, ensure_ascii=False, separators=(",", ":"))
+        answer = {"property": property_name, "value": raw_answer["value"]}
+        if "unit" in raw_answer:
+            answer["unit"] = raw_answer["unit"]
+        answers.append(answer)
+
+    if len(answers) == 1:
+        answer = {"answer": answers[0]["value"]}
+        if "unit" in answers[0]:
+            answer["unit"] = answers[0]["unit"]
+        return json.dumps(answer, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps({"answers": answers}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _resolved_reference_answer(results: list[dict[str, Any]]) -> str:
+    for result in results:
+        answer = str(result.get("reference_answer") or "")
+        if answer and not _is_reference_placeholder(answer):
+            return answer
+    for result in results:
+        answer = _verifier_gold_reference(result)
+        if answer:
+            return answer
+    return str(results[0].get("reference_answer") or "") if results else ""
 
 
 def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
@@ -246,6 +288,14 @@ class BenchmarkDashboard:
             group_id = str(result.get("group_id") or fallback_group_id)
             record_id = str(result.get("record_id") or "")
             if group_id and record_id:
+                existing = results.get((group_id, record_id))
+                if (
+                    existing
+                    and _is_reference_placeholder(result.get("reference_answer"))
+                    and existing.get("reference_answer")
+                    and not _is_reference_placeholder(existing.get("reference_answer"))
+                ):
+                    result = {**result, "reference_answer": existing["reference_answer"]}
                 results[(group_id, record_id)] = result
             else:
                 unkeyed_results.append(result)
@@ -437,6 +487,7 @@ class BenchmarkDashboard:
             raise RecordNotFoundError(f"Unknown record `{record_id}` in run `{run_id}`")
         results = sorted(results, key=_group_sort_key)
         first = results[0]
+        reference_answer = _resolved_reference_answer(results)
         dataset, subset = _dashboard_dataset_subset(first)
         question_markdown, question_source = self._question_markdown(run_root, results)
         groups: list[dict[str, Any]] = []
@@ -486,24 +537,29 @@ class BenchmarkDashboard:
             "prompt": first.get("prompt", ""),
             "question_markdown": question_markdown,
             "question_source": question_source,
-            "reference_answer": first.get("reference_answer", ""),
-            "reference": self._reference_payload(first),
+            "reference_answer": reference_answer,
+            "reference": self._reference_payload(results, reference_answer=reference_answer),
             "assets": self._assets(run_root, results),
             "groups": groups,
             "annotations": self.annotation_store.list_annotations(run_id=run_id, record_id=str(first.get("record_id") or record_id)),
         }
 
     @staticmethod
-    def _reference_payload(result: dict[str, Any]) -> dict[str, Any]:
+    def _reference_payload(
+        results: list[dict[str, Any]],
+        *,
+        reference_answer: str,
+    ) -> dict[str, Any]:
+        result = results[0]
         evaluation = result.get("evaluation") if isinstance(result.get("evaluation"), dict) else {}
         details = evaluation.get("details") if isinstance(evaluation.get("details"), dict) else {}
         checkpoints = details.get("checkpoint_matches") or details.get("items") or []
         return {
-            "answer": result.get("reference_answer", ""),
+            "answer": reference_answer,
             "reasoning": details.get("reference_reasoning") or "",
             "checkpoints": checkpoints,
             "judge": details.get("judge") or {},
-            "available": bool(result.get("reference_answer") or details.get("reference_reasoning") or checkpoints),
+            "available": bool(reference_answer or details.get("reference_reasoning") or checkpoints),
         }
 
     @staticmethod

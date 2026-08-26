@@ -255,7 +255,9 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - Verifier-grounded tasks use `benchmarking.runtime.vgb_bridge` to call the
   pinned package through a hash-addressed, non-agent virtual environment and
   `python -I`; agent-visible datasets contain public prompts and answer schemas,
-  not hidden verifier material.
+  not hidden verifier material. Final reporting references for every
+  release-declared property-calculation track come from that pinned release's
+  public sample-answer inventory.
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.
@@ -268,7 +270,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   or launch benchmark processes. When an aggregate `results.json` is present,
   per-record outputs are merged into the dashboard view and take precedence for
   duplicate group/record keys so active or resumed runs expose results written
-  after the last aggregate snapshot. Dataset facets use the canonical
+  after the last aggregate snapshot, while an unenriched verifier placeholder
+  cannot replace an aggregate reporting reference. For active verifier-grounded
+  property-calculation runs, the detail view derives the standard answer from
+  the scored result's release-specific `properties.gold_answers` when the
+  per-record reporting reference is still the public-data placeholder. Dataset
+  facets use the canonical
   `source_file` dataset segment when it follows the standard
   `<dataset>/data/<file>.jsonl` layout, correcting inconsistent persisted result
   labels without rewriting run artifacts. Manual dashboard refreshes expose

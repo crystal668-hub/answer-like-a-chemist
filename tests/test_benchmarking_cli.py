@@ -211,10 +211,31 @@ def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None
         record_id="rdkit_qed_max_001",
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
-    monkeypatch.setattr(
-        run_state,
-        "load_public_sample_answers",
-        lambda track: [
+    easy_property_result = SimpleNamespace(
+        dataset="verifier_grounded_property_calculation_easy",
+        record_id="property_calc_easy_001_toluene_aqueous_solvation_free_energy",
+        reference_answer="No reference answer is exposed; score with the pinned verifier release.",
+    )
+    release_config = SimpleNamespace(
+        tracks={
+            "property_calculation": {"dataset": "verifier_grounded_property_calculation"},
+            "property_calculation_easy": {
+                "dataset": "verifier_grounded_property_calculation_easy"
+            },
+            "rdkit": {"dataset": "verifier_grounded_rdkit"},
+        }
+    )
+
+    def sample_answers(track, *, release_config):
+        if track == "property_calculation_easy":
+            return [
+                {
+                    "task_id": "property_calc_easy_001_toluene_aqueous_solvation_free_energy",
+                    "answer": -0.82,
+                    "unit": "kcal/mol",
+                }
+            ]
+        return [
             {
                 "task_id": "property_calc_free_energy_001",
                 "answer": 0.258031679,
@@ -228,12 +249,21 @@ def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None
                     {"property": "high_pressure_phase", "value": "beta"},
                 ],
             },
-        ],
+        ]
+
+    monkeypatch.setattr(
+        run_state,
+        "load_public_sample_answers",
+        sample_answers,
     )
 
-    run_state.apply_verifier_grounded_reporting_references([property_result, rdkit_result])
+    run_state.apply_verifier_grounded_reporting_references(
+        [property_result, easy_property_result, rdkit_result],
+        release_config=release_config,
+    )
 
     assert property_result.reference_answer == '{"answer":0.258031679,"unit":"kJ/mol"}'
+    assert easy_property_result.reference_answer == '{"answer":-0.82,"unit":"kcal/mol"}'
     assert rdkit_result.reference_answer.startswith("No reference answer is exposed")
 
 
@@ -243,10 +273,20 @@ def test_reporting_references_require_every_selected_property_gold(monkeypatch) 
         record_id="property_calc_crystal_phase_002",
         reference_answer="placeholder",
     )
-    monkeypatch.setattr(run_state, "load_public_sample_answers", lambda track: [])
+    release_config = SimpleNamespace(
+        tracks={"property_calculation": {"dataset": "verifier_grounded_property_calculation"}}
+    )
+    monkeypatch.setattr(
+        run_state,
+        "load_public_sample_answers",
+        lambda track, *, release_config: [],
+    )
 
     with pytest.raises(BenchmarkError, match="missing public gold"):
-        run_state.apply_verifier_grounded_reporting_references([result])
+        run_state.apply_verifier_grounded_reporting_references(
+            [result],
+            release_config=release_config,
+        )
 
 
 def test_parse_args_accepts_no_timeout_flag(monkeypatch) -> None:

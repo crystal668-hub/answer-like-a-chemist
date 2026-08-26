@@ -14,6 +14,7 @@ from benchmarking.runtime.vgb_bridge import (
     ReleaseConfig,
     VerifierGroundedRuntimeError,
     load_public_sample_answers,
+    load_release_config,
 )
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import EXPERIMENT_GROUPS
@@ -166,45 +167,73 @@ def apply_verifier_grounded_reporting_references(
     *,
     release_config: ReleaseConfig | None = None,
 ) -> list[GroupRecordResult]:
-    dataset = "verifier_grounded_property_calculation"
-    property_results = [item for item in results if str(getattr(item, "dataset", "")) == dataset]
+    property_results = [
+        item
+        for item in results
+        if str(getattr(item, "dataset", "")).startswith("verifier_grounded_property_calculation")
+    ]
     if not property_results:
         return results
     try:
-        if release_config is None:
-            samples = load_public_sample_answers("property_calculation")
-        else:
-            samples = load_public_sample_answers(
-                "property_calculation",
-                release_config=release_config,
-            )
+        config = release_config or load_release_config()
     except VerifierGroundedRuntimeError as exc:
         raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
-
-    references: dict[str, str] = {}
-    for sample in samples:
-        task_id = str(sample.get("task_id") or "").strip()
-        answer = {key: value for key, value in sample.items() if key != "task_id"}
-        if task_id and answer:
-            references[task_id] = json.dumps(
-                answer,
-                ensure_ascii=False,
-                separators=(",", ":"),
+    dataset_tracks = {
+        str(track_config.get("dataset") or ""): track
+        for track, track_config in config.tracks.items()
+        if track.startswith("property_calculation") and isinstance(track_config, dict)
+    }
+    for dataset, track in dataset_tracks.items():
+        track_results = [
+            item for item in property_results if str(getattr(item, "dataset", "")) == dataset
+        ]
+        if not track_results:
+            continue
+        try:
+            samples = load_public_sample_answers(
+                track,
+                release_config=config,
             )
-    missing = sorted(
+        except VerifierGroundedRuntimeError as exc:
+            raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
+
+        references: dict[str, str] = {}
+        for sample in samples:
+            task_id = str(sample.get("task_id") or "").strip()
+            answer = {key: value for key, value in sample.items() if key != "task_id"}
+            if task_id and answer:
+                references[task_id] = json.dumps(
+                    answer,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+        missing = sorted(
+            {
+                str(getattr(item, "record_id", "") or "")
+                for item in track_results
+                if str(getattr(item, "record_id", "") or "") not in references
+            }
+        )
+        if missing:
+            raise BenchmarkError(
+                "Verifier-grounded property-calculation results are missing public gold for: "
+                + ", ".join(missing)
+            )
+        for item in track_results:
+            item.reference_answer = references[str(getattr(item, "record_id", "") or "")]
+
+    unmatched_datasets = sorted(
         {
-            str(getattr(item, "record_id", "") or "")
+            str(getattr(item, "dataset", "") or "")
             for item in property_results
-            if str(getattr(item, "record_id", "") or "") not in references
+            if str(getattr(item, "dataset", "") or "") not in dataset_tracks
         }
     )
-    if missing:
+    if unmatched_datasets:
         raise BenchmarkError(
-            "Verifier-grounded property-calculation results are missing public gold for: "
-            + ", ".join(missing)
+            "Verifier-grounded property-calculation datasets are missing pinned track metadata: "
+            + ", ".join(unmatched_datasets)
         )
-    for item in property_results:
-        item.reference_answer = references[str(getattr(item, "record_id", "") or "")]
     return results
 
 

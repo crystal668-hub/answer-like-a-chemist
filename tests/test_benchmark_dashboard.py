@@ -364,6 +364,61 @@ def test_dashboard_merges_newer_per_record_outputs_into_partial_aggregate(tmp_pa
     assert dashboard.get_record(run_root.name, "r2")["groups"][0]["evaluation"]["score"] == 0.5
 
 
+def test_dashboard_preserves_aggregate_reference_when_per_record_still_has_placeholder(tmp_path: Path) -> None:
+    run_root = tmp_path / "property-reference-run"
+    aggregate = result_payload(group_id="single_llm_skills_on", record_id="property-calc-1")
+    aggregate["reference_answer"] = '{"answer":3.85,"unit":"Debye"}'
+    newer = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="property-calc-1",
+        score=0.9,
+    )
+    newer["reference_answer"] = (
+        "No reference answer is exposed; score with the pinned verifier release."
+    )
+    write_json(run_root / "results.json", {"schema_version": 3, "results": [aggregate]})
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "property-calc-1.json", newer)
+
+    record = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).get_record(
+        run_root.name,
+        "property-calc-1",
+    )
+
+    assert record["reference"]["answer"] == '{"answer":3.85,"unit":"Debye"}'
+    assert record["groups"][0]["evaluation"]["score"] == 0.9
+
+
+def test_dashboard_uses_verifier_gold_when_reporting_reference_is_placeholder(tmp_path: Path) -> None:
+    run_root = tmp_path / "active-property-run"
+    payload = result_payload(
+        group_id="single_llm_skills_on",
+        record_id="property-calc-easy-1",
+        dataset="verifier_grounded_property_calculation_easy",
+        eval_kind="verifier_grounded",
+        primary_metric="verifier_score",
+        details={
+            "properties": {
+                "gold_answers": {
+                    "dipole_moment": {"value": 3.85, "unit": "Debye"},
+                }
+            }
+        },
+    )
+    payload["reference_answer"] = (
+        "No reference answer is exposed; score with the pinned verifier release."
+    )
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "property-calc-easy-1.json", payload)
+
+    record = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).get_record(
+        run_root.name,
+        "property-calc-easy-1",
+    )
+
+    assert json.loads(record["reference_answer"]) == {"answer": 3.85, "unit": "Debye"}
+    assert json.loads(record["reference"]["answer"]) == {"answer": 3.85, "unit": "Debye"}
+    assert record["reference"]["available"] is True
+
+
 def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Path) -> None:
     verifier_details = {
         "status": "ok",
