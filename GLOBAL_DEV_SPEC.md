@@ -130,6 +130,9 @@ stable `EvaluationResult` shape and execution-error construction;
 
 ### Project scripts and resources
 
+- `scripts/` is an importable project package containing the maintenance
+  entrypoints below; its modules can be reused by tests without resolving to an
+  unrelated installed package with the same name.
 - `scripts/run_skill.py` is the fixed entrypoint for benchmark-agent execution
   of local skill scripts through the workspace `uv` environment.
 - `scripts/sync_verifier_grounded_datasets.py` validates a pinned release and
