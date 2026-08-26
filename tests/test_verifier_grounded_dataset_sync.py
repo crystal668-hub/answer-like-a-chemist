@@ -43,6 +43,11 @@ def _description() -> dict[str, Any]:
             "final_answer_prefix": "FINAL ANSWER:",
             "value_type": "json",
         },
+        "property_calculation_easy": {
+            "format": "final_answer_line",
+            "final_answer_prefix": "FINAL ANSWER:",
+            "value_type": "json",
+        },
     }
     return {
         "package_version": config.version,
@@ -105,7 +110,7 @@ def test_sync_datasets_writes_tracked_and_runtime_copies(tmp_path: Path) -> None
         benchmarks_root=benchmarks_root,
     )
 
-    assert len(written) == 6
+    assert len(written) == 8
     for track in config.tracks.values():
         dataset = track["dataset"]
         resource_path = resource_root / f"{dataset}.jsonl"

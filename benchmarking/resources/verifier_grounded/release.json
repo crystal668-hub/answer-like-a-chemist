@@ -1,11 +1,11 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "275f7c79fae5f815f43185fd4969a7bee32dc322",
-  "source_tag": "v0.6.0",
+  "source_commit": "40c309cdd68e22ec984783f2cbe222da0dc9fdf5",
+  "source_tag": "v0.7.0",
   "sdist": {
-    "filename": "verifier_grounded_benchmark-0.6.0.tar.gz",
-    "sha256": "1311f54e4a99a15c46ad15fd552a0706709905e524ffc3bc05f745662b0c0779"
+    "filename": "verifier_grounded_benchmark-0.7.0.tar.gz",
+    "sha256": "e5996b6370d0c8cf58de36604ad0e39e85fca706d911a3ff4c79065f6f58fc61"
   },
   "tracks": {
     "property_calculation": {
@@ -32,6 +32,64 @@
         "property_calc_018_anthracene_ht_contribution",
         "property_calc_019_acetophenone_isc_rate",
         "property_calc_020_azulene_internal_conversion_rate"
+      ],
+      "timeout_seconds": 180.0
+    },
+    "property_calculation_easy": {
+      "dataset": "verifier_grounded_property_calculation_easy",
+      "task_count": 51,
+      "task_ids": [
+        "property_calc_easy_001_toluene_aqueous_solvation_free_energy",
+        "property_calc_easy_002_ethanol_aqueous_solvation_free_energy",
+        "property_calc_easy_003_diethyl_ether_aqueous_solvation_free_energy",
+        "property_calc_easy_004_anisole_aqueous_solvation_free_energy",
+        "property_calc_easy_005_nitrobenzene_reduction_potential",
+        "property_calc_easy_006_tetracyanoethylene_reduction_potential",
+        "property_calc_easy_007_dimethylaniline_oxidation_potential",
+        "property_calc_easy_008_triphenylamine_oxidation_potential",
+        "property_calc_easy_009_thianthrene_oxidation_potential",
+        "property_calc_easy_010_water_dimer_binding_energy",
+        "property_calc_easy_011_ammonia_dimer_binding_energy",
+        "property_calc_easy_012_benzene_t_dimer_binding_energy",
+        "property_calc_easy_013_adenine_thymine_wc_pair_binding_energy",
+        "property_calc_easy_014_water_methanol_complex_binding_energy",
+        "property_calc_easy_015_ethene_ethyne_t_complex_binding_energy",
+        "property_calc_easy_016_thiophene_polarizability",
+        "property_calc_easy_017_benzene_polarizability",
+        "property_calc_easy_018_octatetraene_polarizability",
+        "property_calc_easy_019_dimethyl_sulfoxide_water_dipole_moment",
+        "property_calc_easy_020_cis_dichloroethene_dipole_moment",
+        "property_calc_easy_021_acetonitrile_dipole_moment",
+        "property_calc_easy_022_naphthalene_bridge_bond_order",
+        "property_calc_easy_023_dimethyl_sulfone_so_bond_order",
+        "property_calc_easy_024_methyl_nitrate_no_bond_order",
+        "property_calc_easy_025_phenol_surface_esp_minimum",
+        "property_calc_easy_026_nitrobenzene_vdw_surface_area",
+        "property_calc_easy_027_pyrrole_surface_esp_variance",
+        "property_calc_easy_028_urea_crystal_density",
+        "property_calc_easy_029_tnt_crystal_density",
+        "property_calc_easy_030_picric_acid_crystal_density",
+        "property_calc_easy_031_allyl_radical_c1_spin_density",
+        "property_calc_easy_032_benzyl_radical_para_c_spin_density",
+        "property_calc_easy_033_phenoxy_radical_o_spin_density",
+        "property_calc_easy_034_indole_c3_fukui_minus",
+        "property_calc_easy_035_chloronitrobenzene_c_fukui_plus",
+        "property_calc_easy_036_furfural_carbonyl_c_fukui_plus",
+        "property_calc_easy_037_benzene_standard_entropy",
+        "property_calc_easy_038_acetonitrile_standard_entropy",
+        "property_calc_easy_039_neopentane_standard_entropy",
+        "property_calc_easy_040_methane_standard_entropy",
+        "property_calc_easy_041_ammonia_standard_entropy",
+        "property_calc_easy_042_carbon_dioxide_standard_entropy",
+        "property_calc_easy_043_acetic_acid_dimerization_enthalpy",
+        "property_calc_easy_044_caffeine_most_negative_mulliken_atom",
+        "property_calc_easy_045_trifluoroacetic_acid_hydrogen_charge",
+        "property_calc_easy_046_methyl_azide_most_negative_mulliken_atom",
+        "property_calc_easy_047_formaldehyde_s1_vertical_excitation_energy",
+        "property_calc_easy_048_acetaldehyde_s1_vertical_excitation_energy",
+        "property_calc_easy_049_acetone_s1_vertical_excitation_energy",
+        "property_calc_easy_050_pyrazine_s1_vertical_excitation_energy",
+        "property_calc_easy_051_formaldehyde_t1_vertical_excitation_energy"
       ],
       "timeout_seconds": 180.0
     },
@@ -84,10 +142,10 @@
       "timeout_seconds": 1800.0
     }
   },
-  "version": "0.6.0",
+  "version": "0.7.0",
   "wheel": {
-    "filename": "verifier_grounded_benchmark-0.6.0-py3-none-any.whl",
-    "sha256": "ea355bf4c8202a1fead01a2600f5597443daf8075cca6fe8d3f91a3cedf49509",
-    "size": 176645
+    "filename": "verifier_grounded_benchmark-0.7.0-py3-none-any.whl",
+    "sha256": "2cae374f7d5f3b5a2b4724a4360ebb9b1ccbb8eb1040baca590984b84caa8711",
+    "size": 185456
   }
 }

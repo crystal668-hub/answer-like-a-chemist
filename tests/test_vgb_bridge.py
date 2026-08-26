@@ -10,13 +10,14 @@ from benchmarking.runtime import vgb_bridge as bridge
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = bridge.load_release_config()
 
-    assert config.version == "0.6.0"
-    assert config.source_tag == "v0.6.0"
-    assert config.source_commit == "275f7c79fae5f815f43185fd4969a7bee32dc322"
-    assert config.wheel_sha256 == "ea355bf4c8202a1fead01a2600f5597443daf8075cca6fe8d3f91a3cedf49509"
-    assert config.wheel_size == 176645
+    assert config.version == "0.7.0"
+    assert config.source_tag == "v0.7.0"
+    assert config.source_commit == "40c309cdd68e22ec984783f2cbe222da0dc9fdf5"
+    assert config.wheel_sha256 == "2cae374f7d5f3b5a2b4724a4360ebb9b1ccbb8eb1040baca590984b84caa8711"
+    assert config.wheel_size == 185456
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation": 20,
+        "property_calculation_easy": 51,
         "rdkit": 14,
         "xtb": 20,
     }
