@@ -135,8 +135,10 @@ stable `EvaluationResult` shape and execution-error construction;
 - `scripts/sync_verifier_grounded_datasets.py` validates a pinned release and
   synchronizes public prompt datasets and isolated scoring runtime metadata.
 - `scripts/replay_workspace_adjudication.py` replays stored transcript evidence
-  without a model call and can apply explicitly approved record-selective
-  recovery.
+  without a model call, recovers archived final answers from per-record data,
+  runner metadata, or the session transcript, reconstructs a missing
+  `results.json` from per-record payloads, and can apply record-selective
+  recovery only after writing a snapshot.
 - `scripts/archive_legacy_benchmark_workspaces.py` copies complete fixed legacy
   workspaces into an independent evidence archive, records a path/metadata/SHA-256
   inventory, verifies every archive and unchanged source, and deletes sources

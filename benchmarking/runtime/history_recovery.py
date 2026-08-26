@@ -13,6 +13,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from benchmarking.core.answer_processing import (
+    extract_candidate_short_answer,
+    normalize_answer_tracks,
+)
 from benchmarking.core.datasets import load_records
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results
 from benchmarking.runtime.agent_workspace import (
@@ -131,6 +135,72 @@ def _record_path(run_root: Path, group_id: str, record_id: str) -> Path:
     raise FileNotFoundError(f"No per-record payload for {group_id}/{record_id}")
 
 
+def _transcript_answer_text(path: Path) -> str:
+    candidates: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw_line in lines:
+        try:
+            payload = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        message = payload.get("message") if isinstance(payload, dict) else None
+        if not isinstance(message, dict) or str(message.get("role") or "").lower() != "assistant":
+            continue
+        text = "\n".join(
+            str(item.get("text") or "")
+            for item in message.get("content") or []
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+        if "FINAL ANSWER:" in text:
+            candidates.append(text)
+    return candidates[-1] if candidates else ""
+
+
+def _historical_answer_tracks(payload: dict[str, Any]) -> tuple[str, str, str]:
+    short_text, full_text = normalize_answer_tracks(
+        short_answer_text=str(payload.get("short_answer_text") or ""),
+        full_response_text=str(payload.get("full_response_text") or payload.get("answer_text") or ""),
+    )
+    if short_text or full_text:
+        return short_text, full_text, "record"
+
+    runner_meta = payload.get("runner_meta")
+    runner_meta = runner_meta if isinstance(runner_meta, dict) else {}
+    for key in ("finalAssistantVisibleText", "finalAssistantRawText"):
+        candidate = str(runner_meta.get(key) or "").strip()
+        if candidate:
+            short_text, full_text = normalize_answer_tracks(full_response_text=candidate)
+            if short_text:
+                return short_text, full_text, f"runner_meta.{key}"
+
+    session_isolation = runner_meta.get("session_isolation")
+    session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
+    transcript_path = Path(str(session_isolation.get("postflight_entry_session_file") or "")).expanduser()
+    transcript_text = _transcript_answer_text(transcript_path) if transcript_path.is_file() else ""
+    if transcript_text:
+        short_text = extract_candidate_short_answer(transcript_text)
+        return short_text, transcript_text, "session_transcript"
+    return "", "", "none"
+
+
+def _all_per_record_payloads(run_root: Path) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for path in sorted((run_root / "per-record").glob("*/*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or not payload.get("record_id"):
+            continue
+        if not payload.get("group_id"):
+            payload = {**payload, "group_id": path.parent.name}
+        payloads.append(payload)
+    return payloads
+
+
 def _historical_review(audit_payload: dict[str, Any]) -> dict[str, Any]:
     findings = audit_payload.get("findings") or []
     path_findings = [item for item in findings if item.get("rule_id") == "protected_path_access"]
@@ -209,8 +279,8 @@ def replay_workspace_adjudication(
     runtime_manifest_path = run_root / "runtime-manifest.json"
     results_path = run_root / "results.json"
     progress_path = run_root / "progress" / "state.json"
-    if apply and (not runtime_manifest_path.is_file() or not results_path.is_file()):
-        raise FileNotFoundError("Historical apply requires runtime-manifest.json and results.json.")
+    if apply and not runtime_manifest_path.is_file():
+        raise FileNotFoundError("Historical apply requires runtime-manifest.json.")
     first_record_path = _record_path(run_root, group_id, str(record_ids[0]))
     first_record_payload = json.loads(first_record_path.read_text(encoding="utf-8"))
     runtime_manifest = (
@@ -218,10 +288,11 @@ def replay_workspace_adjudication(
         if runtime_manifest_path.is_file()
         else _dry_run_manifest_from_record(run_root, first_record_payload)
     )
+    results_reconstructed = not results_path.is_file()
     results_payload = (
         json.loads(results_path.read_text(encoding="utf-8"))
         if results_path.is_file()
-        else {"schema_version": 3, "results": [], "summary": {}}
+        else {"schema_version": 3, "results": _all_per_record_payloads(run_root), "summary": {}}
     )
     isolation_manifest = runtime_manifest.get("workspace_isolation") or {}
     protected_roots = _protected_roots(runtime_manifest)
@@ -242,12 +313,23 @@ def replay_workspace_adjudication(
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "git_commit": _git_commit(project_root),
         "model_calls": 0,
+        "results_reconstructed": results_reconstructed,
         "records": [],
     }
     replacements: dict[str, dict[str, Any]] = {}
     for record_id in record_ids:
         record_path = _record_path(run_root, group_id, record_id)
         payload = json.loads(record_path.read_text(encoding="utf-8"))
+        recovered_short_text, recovered_full_text, answer_source = _historical_answer_tracks(payload)
+        scoring_payload = dict(payload)
+        if recovered_short_text or recovered_full_text:
+            scoring_payload.update(
+                {
+                    "answer_text": recovered_full_text,
+                    "short_answer_text": recovered_short_text,
+                    "full_response_text": recovered_full_text,
+                }
+            )
         runner_meta = payload.get("runner_meta")
         runner_meta = runner_meta if isinstance(runner_meta, dict) else {}
         old_isolation = runner_meta.get("workspace_isolation")
@@ -296,7 +378,9 @@ def replay_workspace_adjudication(
         scorer_identity: dict[str, Any] = {}
         new_evaluation = payload.get("evaluation") or {}
         if rescore and audit.adjudication in {"scoreable", "scoreable_degraded"}:
-            new_evaluation, scorer_identity = _score_record(payload, evaluator=evaluator)
+            if not recovered_short_text and not recovered_full_text:
+                raise RuntimeError(f"Record `{record_id}` has no recoverable historical answer.")
+            new_evaluation, scorer_identity = _score_record(scoring_payload, evaluator=evaluator)
         eligible = audit.adjudication in {"scoreable", "scoreable_degraded"}
         if audit.adjudication == "scoreable_degraded":
             eligible = eligible and review["apply_eligible_with_explicit_approval"]
@@ -306,6 +390,11 @@ def replay_workspace_adjudication(
             "policy_digest": policy.digest,
             "audit": audit_payload,
             "historical_review": review,
+            "answer_recovery": {
+                "source": answer_source,
+                "available": bool(recovered_short_text or recovered_full_text),
+                "short_answer_text": recovered_short_text,
+            },
             "apply_eligible": eligible,
             "scorer_identity": scorer_identity,
         }
@@ -319,6 +408,14 @@ def replay_workspace_adjudication(
                 )
             updated = dict(payload)
             updated["schema_version"] = 3
+            if recovered_short_text or recovered_full_text:
+                updated["answer_text"] = recovered_full_text
+                updated["short_answer_text"] = recovered_short_text
+                updated["full_response_text"] = recovered_full_text
+                if answer_source != "record":
+                    updated["answer_availability"] = "recovered_candidate"
+                    updated["answer_reliability"] = "high_confidence_recovered"
+                    updated["recovery_mode"] = "archived_final_answer"
             updated["evaluation"] = new_evaluation
             updated["evaluable"] = True
             updated["scored"] = True
@@ -347,7 +444,10 @@ def replay_workspace_adjudication(
         stamp = operation_stamp
         snapshot = run_root / "recovery" / f"workspace-adjudication-snapshot-{stamp}"
         snapshot.mkdir(parents=True, exist_ok=False)
-        shutil.copy2(results_path, snapshot / "results.json")
+        if results_path.is_file():
+            shutil.copy2(results_path, snapshot / "results.json")
+        else:
+            _atomic_json(snapshot / "results.json", results_payload)
         shutil.copy2(runtime_manifest_path, snapshot / "runtime-manifest.json")
         if progress_path.is_file():
             (snapshot / "progress").mkdir()
@@ -368,6 +468,15 @@ def replay_workspace_adjudication(
                 result_entries.append(replacements[str(item["record_id"])])
             else:
                 result_entries.append(item)
+        existing_result_keys = {
+            (str(item.get("group_id") or ""), str(item.get("record_id") or ""))
+            for item in result_entries
+            if isinstance(item, dict)
+        }
+        for record_id, replacement in replacements.items():
+            result_key = (group_id, record_id)
+            if result_key not in existing_result_keys:
+                result_entries.append(replacement)
         results_payload["schema_version"] = 3
         results_payload["results"] = result_entries
         results_payload["errors"] = [
@@ -387,6 +496,7 @@ def replay_workspace_adjudication(
             "report": str(report_path.relative_to(run_root)),
             "snapshot": str(snapshot.relative_to(run_root)),
             "model_calls": 0,
+            "results_reconstructed": results_reconstructed,
         }
         _atomic_json(results_path, results_payload)
         if progress_path.is_file():

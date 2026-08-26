@@ -196,8 +196,33 @@ def test_history_dry_run_uses_persisted_record_policy_when_final_artifacts_are_m
     )
     record = {
         "record_id": "record_one",
+        "group_id": "single_llm_skills_off",
+        "group_label": "skills off",
+        "runner": "single_llm",
+        "websearch": False,
+        "subset": "demo",
+        "dataset": "demo",
+        "source_file": str(tmp_path / "demo.jsonl"),
+        "eval_kind": "verifier_grounded",
+        "prompt": "Q",
+        "reference_answer": "",
         "skills_enabled": False,
+        "evaluation": {"score": 0.0, "normalized_score": 0.0, "passed": None, "details": {}},
+        "raw": {},
+        "elapsed_seconds": 1.0,
+        "run_lifecycle_status": "failed",
+        "protocol_completion_status": "missing",
+        "protocol_acceptance_status": None,
+        "answer_availability": "none",
+        "answer_reliability": "none",
+        "evaluable": False,
+        "scored": False,
+        "recovery_mode": "none",
+        "degraded_execution": True,
+        "execution_error_kind": "execution_error",
+        "error": "legacy workspace failure",
         "runner_meta": {
+            "finalAssistantVisibleText": "FINAL ANSWER: X",
             "session_isolation": {"postflight_entry_session_file": str(transcript)},
             "workspace_scratch": {"workspace_dir": str(workspace), "scratch_dir": str(scratch)},
             "workspace_isolation": {
@@ -225,3 +250,49 @@ def test_history_dry_run_uses_persisted_record_policy_when_final_artifacts_are_m
     assert audit["boundary_status"] == "warning"
     assert audit["adjudication"] == "scoreable"
     assert audit["findings"][0]["audit_error_code"] == "exec_unterminated_heredoc_eof"
+    assert report["records"][0]["answer_recovery"] == {
+        "source": "runner_meta.finalAssistantVisibleText",
+        "available": True,
+        "short_answer_text": "X",
+    }
+    write_json(
+        run_root / "runtime-manifest.json",
+        {
+            "workspace_isolation": {
+                "run_id": run_root.name,
+                "invocation_id": "invocation",
+                "runtime_runs_root": str(tmp_path / "runtime"),
+                "forbidden_path_policy": {
+                    "protected_roots": [
+                        {"policy_id": "benchmark_dataset_root", "path": str(protected), "source": "test"}
+                    ]
+                },
+            }
+        },
+    )
+
+    applied = replay_workspace_adjudication(
+        run_root=run_root,
+        group_id="single_llm_skills_off",
+        record_ids=["record_one"],
+        apply=True,
+        rescore=True,
+        evaluator=lambda _payload: {
+            "eval_kind": "verifier_grounded",
+            "score": 1.0,
+            "max_score": 1.0,
+            "normalized_score": 1.0,
+            "passed": True,
+            "primary_metric": "verifier_score",
+            "primary_metric_direction": "higher_is_better",
+            "details": {"method": "test"},
+        },
+    )
+    updated = json.loads(record_path.read_text(encoding="utf-8"))
+    assert applied["mode"] == "apply"
+    assert applied["results_reconstructed"] is True
+    assert updated["short_answer_text"] == "X"
+    assert updated["answer_availability"] == "recovered_candidate"
+    assert updated["recovery_mode"] == "archived_final_answer"
+    results = json.loads((run_root / "results.json").read_text(encoding="utf-8"))
+    assert results["results"][0]["short_answer_text"] == "X"
