@@ -239,20 +239,35 @@ class BenchmarkDashboard:
         raise RunNotFoundError(f"Unknown benchmark run: {run_id}")
 
     def _load_results(self, run_root: Path) -> list[dict[str, Any]]:
+        results: dict[tuple[str, str], dict[str, Any]] = {}
+        unkeyed_results: list[dict[str, Any]] = []
+
+        def merge_result(result: dict[str, Any], *, fallback_group_id: str = "") -> None:
+            group_id = str(result.get("group_id") or fallback_group_id)
+            record_id = str(result.get("record_id") or "")
+            if group_id and record_id:
+                results[(group_id, record_id)] = result
+            else:
+                unkeyed_results.append(result)
+
         results_path = run_root / "results.json"
         if results_path.is_file():
             payload = _safe_load_json(results_path)
-            results = payload.get("results") if isinstance(payload, dict) else []
-            if isinstance(results, list):
-                return [item for item in results if isinstance(item, dict)]
+            aggregate_results = payload.get("results") if isinstance(payload, dict) else []
+            if isinstance(aggregate_results, list):
+                for item in aggregate_results:
+                    if isinstance(item, dict):
+                        merge_result(item)
+
         per_record_root = run_root / "per-record"
-        results: list[dict[str, Any]] = []
         if per_record_root.is_dir():
             for path in sorted(per_record_root.glob("*/*.json")):
                 loaded = _safe_load_json(path)
                 if isinstance(loaded, dict):
-                    results.append(loaded)
-        return results
+                    # Per-record files are written immediately and can be newer
+                    # than the aggregate snapshot while a run is still active.
+                    merge_result(loaded, fallback_group_id=path.parent.name)
+        return [*results.values(), *unkeyed_results]
 
     def _run_payload(self, run_root: Path) -> dict[str, Any]:
         payload = _safe_load_json(run_root / "results.json") if (run_root / "results.json").is_file() else {}

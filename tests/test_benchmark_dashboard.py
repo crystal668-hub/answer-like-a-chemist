@@ -338,6 +338,32 @@ def test_list_runs_reconciles_stale_progress_state_with_per_record_outputs(tmp_p
     assert run["progress"]["groups"]["single_llm_skills_off"]["completed_count"] == 2
 
 
+def test_dashboard_merges_newer_per_record_outputs_into_partial_aggregate(tmp_path: Path) -> None:
+    run_root = tmp_path / "partial-aggregate-run"
+    aggregate = result_payload(group_id="single_llm_skills_on", record_id="r1")
+    newer = result_payload(group_id="single_llm_skills_on", record_id="r2", score=0.5)
+    write_json(
+        run_root / "results.json",
+        {
+            "schema_version": 3,
+            "results": [aggregate],
+            "summary": {},
+        },
+    )
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "r1.json", aggregate)
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "r2.json", newer)
+
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+
+    run = dashboard.list_runs()[0]
+    records = dashboard.list_records(run_root.name)
+
+    assert run["record_count"] == 2
+    assert run["progress"]["completed"] == 2
+    assert [item["record_id"] for item in records] == ["r1", "r2"]
+    assert dashboard.get_record(run_root.name, "r2")["groups"][0]["evaluation"]["score"] == 0.5
+
+
 def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Path) -> None:
     verifier_details = {
         "status": "ok",
