@@ -2,6 +2,17 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const EXEC_TOOL_NAMES = new Set(["exec", "execute", "shell", "bash", "command"]);
+const ABSOLUTE_PATH_RE = /(?<![A-Za-z0-9_$])\/(?:[^\s"'`;&|()<>\n\\]+)/g;
+const RELATIVE_ESCAPE_RE = /(?<![A-Za-z0-9_$])(?:\.\/)*\.\.\/(?:[^\s"'`;&|()<>\n\\]+)/g;
+const HOME_PATH_RE = /(?<![A-Za-z0-9_$])~(?:\/[^\s"'`;&|()<>\n\\]*)?/;
+const SYSTEM_PATH_PREFIXES = [
+  "/bin/",
+  "/sbin/",
+  "/usr/bin/",
+  "/usr/sbin/",
+  "/usr/local/bin/",
+  "/opt/homebrew/bin/",
+];
 const TOOL_RULES = {
   read: [{ keys: ["path", "file_path"], access: "read" }],
   read_file: [{ keys: ["path", "file_path"], access: "read" }],
@@ -63,6 +74,21 @@ function scopesFor(policy, access) {
   return policy?.read_scopes || [];
 }
 
+function protectedRoots(policy) {
+  return Array.isArray(policy?.protected_roots)
+    ? policy.protected_roots
+        .map((item) => {
+          if (typeof item?.path !== "string") return null;
+          try {
+            return resolveWithExistingPrefix(resolve(item.path));
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+    : [];
+}
+
 function scopeAllows(scope, candidate) {
   const configured = resolveWithExistingPrefix(scope.path);
   return scope.kind === "file" ? candidate === configured : isContained(configured, candidate);
@@ -101,10 +127,74 @@ function validateCandidate({ policy, rawPath, access }) {
   return { ok: true, candidate };
 }
 
+function trimPathPunctuation(value) {
+  return value.replace(/[.,;:!?\]})>]+$/g, "");
+}
+
+function isSystemPath(candidate) {
+  return SYSTEM_PATH_PREFIXES.some((prefix) => candidate.startsWith(prefix)) || candidate.startsWith("/dev/");
+}
+
+function validateExecCommand({ policy, command }) {
+  if (typeof command !== "string" || command.trim() === "") return { ok: true };
+
+  const workspace = workspaceRoot(policy);
+  const roots = protectedRoots(policy);
+  if (HOME_PATH_RE.test(command)) {
+    return {
+      ok: false,
+      access: "exec",
+      reason: "exec command references a home-relative path outside the policy scope",
+      candidate: "~",
+    };
+  }
+  const candidates = new Set();
+  for (const match of command.matchAll(ABSOLUTE_PATH_RE)) {
+    const raw = trimPathPunctuation(match[0]);
+    if (!raw) continue;
+    try {
+      candidates.add(resolveWithExistingPrefix(raw));
+    } catch {
+      return { ok: false, access: "exec", reason: "exec command contains a path that cannot be resolved safely", candidate: raw };
+    }
+  }
+
+  for (const candidate of candidates) {
+    const protectedRoot = roots.find((root) => isContained(root, candidate));
+    if (protectedRoot) {
+      return {
+        ok: false,
+        access: "exec",
+        reason: "exec command references a protected path",
+        candidate,
+      };
+    }
+    if (!isSystemPath(candidate) && !isContained(workspace, candidate)) {
+      return {
+        ok: false,
+        access: "exec",
+        reason: "exec command references a path outside the policy scope",
+        candidate,
+      };
+    }
+  }
+  for (const match of command.matchAll(RELATIVE_ESCAPE_RE)) {
+    const raw = trimPathPunctuation(match[0]);
+    try {
+      candidates.add(resolveWithExistingPrefix(resolve(workspace, raw)));
+    } catch {
+      return { ok: false, access: "exec", reason: "exec command contains a path that cannot be resolved safely", candidate: raw };
+    }
+  }
+  return { ok: true };
+}
+
 export function validateToolCall({ policy, toolName, params = {} }) {
   const normalizedTool = String(toolName || "").toLowerCase();
   const checks = [];
   if (EXEC_TOOL_NAMES.has(normalizedTool)) {
+    const commandValidation = validateExecCommand({ policy, command: params.command });
+    if (!commandValidation.ok) return commandValidation;
     for (const key of ["workdir", "cwd"]) {
       if (key in params) checks.push({ key, rawPath: params[key], access: "workdir" });
     }

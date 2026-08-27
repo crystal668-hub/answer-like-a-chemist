@@ -320,6 +320,21 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
                 self.assertIn("call_line", finding["evidence"])
                 self.assertIn("result_line", finding["evidence"])
 
+    def test_blocked_exec_path_is_scoreable_without_contamination(self) -> None:
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        audit = self._audit_tool_event(
+            tool_name="exec",
+            arguments={"command": f"ls -la {protected}"},
+            result={"text": "benchmark_workspace_guard_blocked", "isError": True},
+        )
+
+        finding = audit.findings[0]
+        self.assertEqual("blocked", finding["operation_outcome"])
+        self.assertEqual("none", finding["information_exposure"])
+        self.assertEqual("violated", audit.boundary_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual("scoreable_degraded", audit.adjudication)
+
     def test_tool_semantics_registry_covers_all_access_modes(self) -> None:
         protected = self.root / "datasets" / "track" / "resource"
         cases = (

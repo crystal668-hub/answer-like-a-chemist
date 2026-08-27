@@ -377,10 +377,13 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
   exec-workdir scopes, exact-file scopes, protected roots, and a deterministic
   digest. Skills-off and judge policies do not grant access to the skill source
   tree or `scripts/run_skill.py`.
-- The `benchmark-workdir-guard` plugin preflights structured path arguments and
-  explicit exec working directories. Transcript audit independently correlates
-  tool calls and results and records access mode, outcome, resolved path, policy,
-  and matched protected root.
+- The `benchmark-workdir-guard` plugin preflights structured path arguments,
+  explicit exec working directories, and absolute paths embedded in exec
+  commands. Exec command paths inside the active workspace are allowed, known
+  system executable/device paths are allowed, and other absolute paths or
+  protected roots are blocked before execution. Transcript audit independently
+  correlates tool calls and results and records access mode, outcome, resolved
+  path, policy, and matched protected root.
 
 Workspace audit has four independent axes:
 
@@ -390,7 +393,10 @@ Workspace audit has four independent axes:
 - `adjudication`: `scoreable`, `scoreable_degraded`, or `non_evaluable`.
 
 Confirmed or indeterminate external information exposure is `non_evaluable`.
-Write-only, blocked, failed, or allowed-fallback boundary events do not by
+Guard-blocked operations are recorded as boundary violations with
+`operation_outcome=blocked` and `information_exposure=none`; they do not by
+themselves prove contamination and remain scoreable as degraded execution.
+Write-only, other failed, or allowed-fallback boundary events do not by
 themselves prove information contamination. A write-only boundary violation can
 be `scoreable_degraded`; an allowed fallback is a warning and remains
 `scoreable`. Audit evidence recovery is attempted before an unavailable audit is

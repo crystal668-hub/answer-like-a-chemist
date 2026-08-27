@@ -26,6 +26,7 @@ class BenchmarkWorkdirGuardTests(unittest.TestCase):
         workdir: str | None = None,
         tool_name: str = "exec",
         params: dict[str, object] | None = None,
+        protected_roots: list[dict[str, str]] | None = None,
     ) -> dict[str, object] | None:
         policy = {
             "policy_digest": "test-policy",
@@ -38,6 +39,7 @@ class BenchmarkWorkdirGuardTests(unittest.TestCase):
             "exec_workdir_scopes": [
                 {"scope_id": "active_workspace", "path": str(workspace), "kind": "directory"}
             ],
+            "protected_roots": protected_roots or [],
         }
         event_params = params if params is not None else ({} if workdir is None else {"workdir": workdir})
         script = """
@@ -133,6 +135,64 @@ process.stdout.write(JSON.stringify(result ?? null));
             workspace.mkdir()
 
             self.assertIsNone(self._run_hook(workspace=workspace, workdir=None))
+
+    def test_exec_command_referencing_protected_root_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            protected = root / "runtime" / "runs"
+            (workspace / "scratch").mkdir(parents=True)
+            protected.mkdir(parents=True)
+            policy_path = protected / "other-attempt" / "secret.txt"
+
+            result = self._run_hook(
+                workspace=workspace,
+                params={"command": f"ls -la {policy_path}"},
+                protected_roots=[
+                    {"policy_id": "benchmark_runtime_root", "path": str(root / "runtime"), "source": "test"}
+                ],
+            )
+
+            self.assertIs(result["block"], True)
+            self.assertIn("exec command references a protected path", str(result["blockReason"]))
+
+    def test_exec_command_outside_workspace_is_blocked_and_system_binary_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = root / "workspace"
+            outside = root / "outside"
+            (workspace / "scratch").mkdir(parents=True)
+            outside.mkdir()
+
+            blocked = self._run_hook(
+                workspace=workspace,
+                params={"command": f"cat {outside / 'secret.txt'}"},
+            )
+            self.assertIs(blocked["block"], True)
+
+            self.assertIsNone(
+                self._run_hook(
+                    workspace=workspace,
+                    params={"command": "/usr/bin/printf ok"},
+                )
+            )
+
+            for command in ("cat ../outside/secret.txt", "cat ~/secret.txt"):
+                with self.subTest(command=command):
+                    result = self._run_hook(workspace=workspace, params={"command": command})
+                    self.assertIs(result["block"], True)
+
+    def test_exec_command_inside_workspace_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir) / "workspace"
+            (workspace / "scratch").mkdir(parents=True)
+
+            self.assertIsNone(
+                self._run_hook(
+                    workspace=workspace,
+                    params={"command": "cat scratch/notes.txt"},
+                )
+            )
 
     def test_structured_write_inside_scratch_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
