@@ -318,6 +318,10 @@ GROBID profiles, and calls an OpenAI-compatible chat-completions endpoint.
   transport failures such as `stream_read_error` are retryable. Retry attempt
   history retains the complete structured execution error for each failed
   attempt.
+- `benchmarking.runtime.subprocess_utils.summarize_payloads` excludes payloads
+  marked `isError=true` and the OpenClaw fallback warning shape
+  `⚠️ 🛠️ \`...\` failed` from formal answer text. Raw provider payloads,
+  transcripts, and tool-failure audit counts remain unchanged.
 - `passed` is an evaluator quality outcome, not a runtime-health field.
   Verifier-grounded continuous scores use `passed = null`.
 - Aggregate score denominators contain only records with `scored=true`.

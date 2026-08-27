@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -15,6 +16,19 @@ from benchmarking.runtime.cancellation import CancellationToken, OwnedProcessReg
 
 class SubprocessOutputError(RuntimeError):
     pass
+
+
+_OPENCLAW_AUTO_TOOL_ERROR_PAYLOAD_RE = re.compile(
+    r"^⚠️\s+🛠️(?:\s+`.*`)?\s+failed(?:\s*:.*)?$",
+    re.DOTALL,
+)
+
+
+def _is_error_payload(payload: dict[str, Any]) -> bool:
+    if payload.get("isError") is True:
+        return True
+    text = str(payload.get("text") or "").strip()
+    return bool(_OPENCLAW_AUTO_TOOL_ERROR_PAYLOAD_RE.fullmatch(text))
 
 
 def current_python() -> str:
@@ -143,5 +157,9 @@ def unwrap_agent_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_payloads(payloads: list[dict[str, Any]]) -> str:
-    texts = [str(item.get("text") or "").strip() for item in payloads if str(item.get("text") or "").strip()]
+    texts = [
+        str(item.get("text") or "").strip()
+        for item in payloads
+        if str(item.get("text") or "").strip() and not _is_error_payload(item)
+    ]
     return "\n\n".join(texts).strip()
