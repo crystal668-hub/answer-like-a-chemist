@@ -288,7 +288,9 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   `<dataset>/data/<file>.jsonl` layout, correcting inconsistent persisted result
   labels without rewriting run artifacts. Manual dashboard refreshes expose
   their pending state through the refresh control and restore the control after
-  either success or failure.
+  either success or failure. Favorited runs are pinned to the top of the run
+  list; within favorited and non-favorited groups, discovery keeps the existing
+  newest-first ordering.
 
 ### Paper pipeline
 

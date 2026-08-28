@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,36 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert "average_normalized_score" not in runs[0]
     assert runs[0]["progress"]["completed"] == 1
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
+
+
+def test_list_runs_pins_favorited_runs_and_preserves_newest_first_order(tmp_path: Path) -> None:
+    older_favorite = write_demo_run(tmp_path, run_id="favorite-old")
+    newer_favorite = write_demo_run(tmp_path, run_id="favorite-new")
+    newest_unfavorited = write_demo_run(tmp_path, run_id="plain-new")
+    oldest_unfavorited = write_demo_run(tmp_path, run_id="plain-old")
+
+    # Make the expected discovery order deterministic instead of relying on
+    # filesystem timestamp resolution.
+    for path, mtime in (
+        (older_favorite, 100),
+        (newer_favorite, 200),
+        (newest_unfavorited, 300),
+        (oldest_unfavorited, 400),
+    ):
+        os.utime(path, (mtime, mtime))
+
+    store = dashboard_annotations.AnnotationStore(tmp_path / "dashboard.sqlite")
+    store.upsert_run_metadata(run_id=older_favorite.name, favorite=True)
+    store.upsert_run_metadata(run_id=newer_favorite.name, favorite=True)
+
+    runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store).list_runs()
+
+    assert [run["run_id"] for run in runs] == [
+        newer_favorite.name,
+        older_favorite.name,
+        oldest_unfavorited.name,
+        newest_unfavorited.name,
+    ]
 
 
 def test_dashboard_uses_source_dataset_when_persisted_result_dataset_is_run_id(tmp_path: Path) -> None:

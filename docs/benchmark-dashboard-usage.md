@@ -111,7 +111,7 @@ verifier-grounded benchmark 的三个 track 在 dashboard 中会归为同一个 
 常用操作：
 
 - 点击 run 卡片进入该 run 的逐题审查页面。
-- 点击星标按钮收藏或取消收藏当前 run。
+- 点击星标按钮收藏或取消收藏当前 run。被收藏的 run 会自动置顶；同一组内仍按最近更新时间排序。
 - 点击隐藏按钮隐藏当前 run。隐藏只写入 dashboard 元数据，不删除 run 目录。
 - 打开“显示隐藏 run”后，可以看到并恢复已隐藏的 run。
 

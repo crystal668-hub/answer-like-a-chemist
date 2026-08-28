@@ -370,6 +370,9 @@ class BenchmarkDashboard:
                     "summary": summary,
                 }
             )
+        # Keep discovery's newest-first order within each group while pinning
+        # favorited runs ahead of all other runs.
+        runs.sort(key=lambda run: not run["favorite"])
         return runs
 
     def get_run(self, run_id: str) -> dict[str, Any]:
