@@ -266,9 +266,22 @@ def replay_workspace_adjudication(
     apply: bool = False,
     rescore: bool = False,
     approve_historical_ownership: bool = False,
+    manual_approve_record_ids: tuple[str, ...] | list[str] = (),
+    manual_approval_reason: str = "",
     evaluator: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     run_root = run_root.expanduser().resolve()
+    requested_record_ids = {str(record_id) for record_id in record_ids}
+    manual_approval_ids = {str(record_id) for record_id in manual_approve_record_ids}
+    unknown_manual_ids = manual_approval_ids - requested_record_ids
+    if unknown_manual_ids:
+        raise ValueError(
+            "Manual approval record IDs must also be selected for replay: "
+            + ", ".join(sorted(unknown_manual_ids))
+        )
+    manual_approval_reason = manual_approval_reason.strip()
+    if manual_approval_ids and not manual_approval_reason:
+        raise ValueError("Manual approval requires a non-empty reason.")
     operation_stamp = _timestamp()
     report_path = (
         run_root
@@ -314,6 +327,7 @@ def replay_workspace_adjudication(
         "git_commit": _git_commit(project_root),
         "model_calls": 0,
         "results_reconstructed": results_reconstructed,
+        "manual_approval_record_ids": sorted(manual_approval_ids),
         "records": [],
     }
     replacements: dict[str, dict[str, Any]] = {}
@@ -377,13 +391,32 @@ def replay_workspace_adjudication(
             hashes["transcript"] = _sha256(transcript_path)
         scorer_identity: dict[str, Any] = {}
         new_evaluation = payload.get("evaluation") or {}
-        if rescore and audit.adjudication in {"scoreable", "scoreable_degraded"}:
+        manual_approval_requested = record_id in manual_approval_ids
+        manual_approval_eligible = bool(
+            manual_approval_requested
+            and audit.contamination_status != "confirmed"
+            and (recovered_short_text or recovered_full_text)
+        )
+        effective_scoreable = audit.adjudication in {"scoreable", "scoreable_degraded"} or manual_approval_eligible
+        if rescore and effective_scoreable:
             if not recovered_short_text and not recovered_full_text:
                 raise RuntimeError(f"Record `{record_id}` has no recoverable historical answer.")
             new_evaluation, scorer_identity = _score_record(scoring_payload, evaluator=evaluator)
         eligible = audit.adjudication in {"scoreable", "scoreable_degraded"}
         if audit.adjudication == "scoreable_degraded":
             eligible = eligible and review["apply_eligible_with_explicit_approval"]
+        eligible = eligible or manual_approval_eligible
+        manual_adjudication = {
+            "requested": manual_approval_requested,
+            "eligible": manual_approval_eligible,
+            "approved_by": "user_explicit_instruction" if manual_approval_requested else None,
+            "reason": manual_approval_reason if manual_approval_requested else None,
+            "original_audit_execution_status": audit.audit_execution_status,
+            "original_contamination_status": audit.contamination_status,
+            "original_adjudication": audit.adjudication,
+            "original_error": payload.get("error"),
+            "original_execution_error_kind": payload.get("execution_error_kind"),
+        }
         record_report = {
             "record_id": record_id,
             "source_hashes": hashes,
@@ -396,6 +429,7 @@ def replay_workspace_adjudication(
                 "short_answer_text": recovered_short_text,
             },
             "apply_eligible": eligible,
+            "manual_adjudication": manual_adjudication,
             "scorer_identity": scorer_identity,
         }
         report["records"].append(record_report)
@@ -419,9 +453,11 @@ def replay_workspace_adjudication(
             updated["evaluation"] = new_evaluation
             updated["evaluable"] = True
             updated["scored"] = True
-            updated["degraded_execution"] = audit.adjudication == "scoreable_degraded"
+            updated["degraded_execution"] = audit.adjudication == "scoreable_degraded" or manual_approval_eligible
             updated["execution_error_kind"] = None
             updated["error"] = None
+            if manual_approval_requested:
+                updated["manual_adjudication"] = manual_adjudication
             updated_runner_meta = dict(runner_meta)
             updated_runner_meta["workspace_isolation"] = {
                 **old_isolation,
@@ -436,6 +472,8 @@ def replay_workspace_adjudication(
                 },
                 "historical_review": review,
             }
+            if manual_approval_requested:
+                updated_runner_meta["workspace_isolation"]["manual_adjudication"] = manual_adjudication
             updated_runner_meta["degraded_execution"] = updated["degraded_execution"]
             updated["runner_meta"] = updated_runner_meta
             replacements[record_id] = updated

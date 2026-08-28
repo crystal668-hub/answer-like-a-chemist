@@ -469,6 +469,10 @@ ChemQA overlay：
 - on/off 的 base contract 完全相同，只有 skills permission overlay 不同；
 - isolation suffix 在 official task prompt 之后出现时只描述文件边界，不增加解题要求；
 - prompt snapshot tests 必须证明 skills-off official VGB prompt 除 isolation contract 外不被改写；
+
+历史结果的人工裁决必须逐条指定 record ID 和非空理由，保留原始 audit/error 证据并标记为
+degraded execution。人工裁决只允许恢复存在最终答案且 contamination 未被确认的记录；不得覆盖
+`contamination_status=confirmed`。
 - 行为契约的 token 长度应受控，避免长篇 policy 改变模型推理预算。
 
 ## 12. Runtime Prevention

@@ -20,6 +20,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--apply", action="store_true", help="Apply eligible replacements; default is dry-run.")
     parser.add_argument("--rescore", action="store_true", help="Run the original registered evaluator.")
     parser.add_argument("--approve-historical-ownership", action="store_true")
+    parser.add_argument(
+        "--manual-approve-record-id",
+        action="append",
+        default=[],
+        dest="manual_approve_record_ids",
+        help="Explicitly allow a selected non-confirmed-contamination record with a recovered answer.",
+    )
+    parser.add_argument("--manual-approval-reason", default="")
     return parser.parse_args()
 
 
@@ -32,6 +40,8 @@ def main() -> int:
         apply=args.apply,
         rescore=args.rescore,
         approve_historical_ownership=args.approve_historical_ownership,
+        manual_approve_record_ids=args.manual_approve_record_ids,
+        manual_approval_reason=args.manual_approval_reason,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
     return 0

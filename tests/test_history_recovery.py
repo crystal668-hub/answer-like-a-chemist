@@ -169,6 +169,132 @@ def test_history_replay_script_is_directly_executable() -> None:
     assert "Replay benchmark workspace audit" in completed.stdout
 
 
+def test_history_replay_manual_approval_preserves_unavailable_audit(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    runtime_root = tmp_path / "runtime"
+    workspace = runtime_root / "run" / "active" / "workspace"
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call-malformed",
+                            "name": "exec",
+                            "arguments": {"command": "cat '/unterminated"},
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-malformed",
+                    "toolName": "exec",
+                    "content": [{"type": "text", "text": "Command exited with code 1"}],
+                    "isError": True,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record = {
+        "schema_version": 2,
+        "group_id": "single_llm_skills_off",
+        "group_label": "skills off",
+        "runner": "single_llm",
+        "websearch": False,
+        "skills_enabled": False,
+        "record_id": "record_one",
+        "subset": "demo",
+        "dataset": "demo",
+        "source_file": str(tmp_path / "demo.jsonl"),
+        "eval_kind": "verifier_grounded",
+        "prompt": "Q",
+        "reference_answer": "",
+        "evaluation": {"score": 0.0, "normalized_score": 0.0, "passed": None, "details": {}},
+        "runner_meta": {
+            "finalAssistantVisibleText": "FINAL ANSWER: X",
+            "session_isolation": {"postflight_entry_session_file": str(transcript)},
+            "workspace_scratch": {"workspace_dir": str(workspace), "scratch_dir": str(workspace / "scratch")},
+            "workspace_isolation": {"active_workspace": str(workspace), "archive_ok": True},
+        },
+        "raw": {},
+        "elapsed_seconds": 1.0,
+        "run_lifecycle_status": "failed",
+        "protocol_completion_status": "missing",
+        "protocol_acceptance_status": None,
+        "answer_availability": "none",
+        "answer_reliability": "none",
+        "evaluable": False,
+        "scored": False,
+        "recovery_mode": "none",
+        "degraded_execution": True,
+        "execution_error_kind": "execution_error",
+        "error": "audit unavailable",
+    }
+    record_path = run_root / "per-record" / "single_llm_skills_off" / "record-one.json"
+    write_json(record_path, record)
+    write_json(run_root / "results.json", {"schema_version": 2, "results": [record], "summary": {}})
+    write_json(
+        run_root / "runtime-manifest.json",
+        {
+            "workspace_isolation": {
+                "run_id": "run",
+                "invocation_id": "invocation",
+                "runtime_runs_root": str(runtime_root),
+                "forbidden_path_policy": {"protected_roots": []},
+            }
+        },
+    )
+
+    dry_run = replay_workspace_adjudication(
+        run_root=run_root,
+        group_id="single_llm_skills_off",
+        record_ids=["record_one"],
+        manual_approve_record_ids=["record_one"],
+        manual_approval_reason="Reviewed malformed command and found no external information exposure.",
+    )
+
+    assert dry_run["records"][0]["audit"]["adjudication"] == "non_evaluable"
+    assert dry_run["records"][0]["manual_adjudication"]["eligible"] is True
+
+    applied = replay_workspace_adjudication(
+        run_root=run_root,
+        group_id="single_llm_skills_off",
+        record_ids=["record_one"],
+        apply=True,
+        rescore=True,
+        manual_approve_record_ids=["record_one"],
+        manual_approval_reason="Reviewed malformed command and found no external information exposure.",
+        evaluator=lambda _payload: {
+            "eval_kind": "verifier_grounded",
+            "score": 1.0,
+            "max_score": 1.0,
+            "normalized_score": 1.0,
+            "passed": True,
+            "primary_metric": "verifier_score",
+            "primary_metric_direction": "higher_is_better",
+            "details": {"method": "test"},
+        },
+    )
+
+    updated = json.loads(record_path.read_text(encoding="utf-8"))
+    assert applied["mode"] == "apply"
+    assert updated["scored"] is True
+    assert updated["degraded_execution"] is True
+    assert updated["manual_adjudication"]["original_adjudication"] == "non_evaluable"
+    assert updated["manual_adjudication"]["original_error"] == "audit unavailable"
+    assert updated["runner_meta"]["workspace_isolation"]["audit_execution_status"] == "unavailable"
+
+
 def test_history_dry_run_uses_persisted_record_policy_when_final_artifacts_are_missing(tmp_path: Path) -> None:
     run_root = tmp_path / "interrupted-run"
     workspace = tmp_path / "runtime" / "active" / "workspace"

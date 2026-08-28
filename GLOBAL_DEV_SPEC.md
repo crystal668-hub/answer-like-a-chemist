@@ -141,7 +141,9 @@ stable `EvaluationResult` shape and execution-error construction;
   without a model call, recovers archived final answers from per-record data,
   runner metadata, or the session transcript, reconstructs a missing
   `results.json` from per-record payloads, and can apply record-selective
-  recovery only after writing a snapshot.
+  recovery only after writing a snapshot. Explicit manual adjudication requires
+  selected record IDs and a reason, preserves the original audit and error, and
+  cannot override confirmed contamination.
 - `scripts/archive_legacy_benchmark_workspaces.py` copies complete fixed legacy
   workspaces into an independent evidence archive, records a path/metadata/SHA-256
   inventory, verifies every archive and unchanged source, and deletes sources
