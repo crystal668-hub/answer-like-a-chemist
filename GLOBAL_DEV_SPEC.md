@@ -228,7 +228,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - The transcript is audited under the attempt access policy before the complete
   workspace is archived. A `non_evaluable` adjudication or archive failure
   rejects an otherwise complete answer; `scoreable_degraded` preserves it with
-  degraded-execution metadata. A narrow parser-error allowlist preserves a
+  degraded-execution metadata. If the runner already has a terminal execution
+  failure and the audit is unavailable with indeterminate contamination, the
+  audit remains attached as diagnostic workspace-isolation metadata and does
+  not replace the original failure. Confirmed contamination and archive
+  failures retain precedence. A narrow parser-error allowlist preserves a
   successful `exec` result when the exact `No closing quotation` lexer error
   occurs in a heredoc command, `/bin/bash -n` validates the original command,
   the paired tool result is successful, and the command contains no protected
@@ -324,7 +328,8 @@ GROBID profiles, and calls an OpenAI-compatible chat-completions endpoint.
   punctuation-only diagnostic fragments are not error evidence. Provider
   transport failures such as `stream_read_error` are retryable. Retry attempt
   history retains the complete structured execution error for each failed
-  attempt.
+  attempt. Unsupported OpenClaw thinking levels are classified as explicit,
+  non-retryable configuration failures and retain the original diagnostic.
 - `benchmarking.runtime.subprocess_utils.summarize_payloads` excludes payloads
   marked `isError=true` and the OpenClaw fallback warning shape
   `⚠️ 🛠️ \`...\` failed` from formal answer text. Raw provider payloads,

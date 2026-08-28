@@ -128,6 +128,27 @@ def test_does_not_treat_tool_http_403_as_provider_error() -> None:
     assert "observed_errors" not in captured.to_details()
 
 
+def test_captures_unsupported_thinking_level_as_openclaw_config_error() -> None:
+    stderr = 'Error: Thinking level "high" is not supported for minimax/MiniMax-M3. Use one of: off, adaptive.\n'
+
+    captured = capture_execution_error(
+        returncode=1,
+        stdout="",
+        stderr=stderr,
+        session_id="session-1",
+    )
+    details = captured.to_details()
+
+    assert captured.code == "openclaw_thinking_level_unsupported"
+    assert captured.message == stderr.strip()
+    assert captured.layer == "openclaw_config"
+    assert captured.retryable is False
+    assert details["thinking_level"] == "high"
+    assert details["model"] == "minimax/MiniMax-M3"
+    assert details["supported_thinking_levels"] == ["off", "adaptive"]
+    assert details["primary_error"]["raw"] == stderr.strip()
+
+
 def test_captures_provider_transport_error_without_http_status() -> None:
     captured = capture_execution_error(
         returncode=1,

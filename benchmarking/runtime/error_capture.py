@@ -17,6 +17,11 @@ MISSING_PATH_SEGMENT_RE = re.compile(
 )
 CONFIG_LOAD_RE = re.compile(r"failed to load config|config parse|invalid config", re.I)
 EXECUTABLE_MISSING_RE = re.compile(r"missing openclaw executable|command not found", re.I)
+UNSUPPORTED_THINKING_LEVEL_RE = re.compile(
+    r'^Error: Thinking level "(?P<level>[^"]+)" is not supported for (?P<model>[^.]+)\.'
+    r"(?: Use one of: (?P<supported>[^.]+)\.)?",
+    re.I | re.M,
+)
 RAW_ERROR_RE = re.compile(r"\brawError=(?P<raw>.+)$", re.I)
 HTTP_ERROR_RE = re.compile(
     r"^(?:HTTP(?:\s+status)?\s*)?(?P<status>[1-5]\d{2})(?:\s*[:;-]?\s*)(?P<message>.*)$",
@@ -404,6 +409,35 @@ def capture_execution_error(
             retryable=False,
             source=source,
             details=_details_with_evidence(base_details, [evidence]),
+        )
+    unsupported_thinking_match = UNSUPPORTED_THINKING_LEVEL_RE.search(diagnostic_text)
+    if unsupported_thinking_match:
+        evidence = _matched_error_evidence(
+            diagnostic_text=diagnostic_text,
+            source=source,
+            match=unsupported_thinking_match,
+            event_kind="openclaw_config_error",
+            parser="unsupported_thinking_level",
+        )
+        details = dict(base_details)
+        details.update(
+            {
+                "thinking_level": unsupported_thinking_match.group("level"),
+                "model": unsupported_thinking_match.group("model"),
+                "supported_thinking_levels": [
+                    item.strip()
+                    for item in str(unsupported_thinking_match.group("supported") or "").split(",")
+                    if item.strip()
+                ],
+            }
+        )
+        return ExecutionErrorClassification(
+            code="openclaw_thinking_level_unsupported",
+            message=evidence.message,
+            layer="openclaw_config",
+            retryable=False,
+            source=source,
+            details=_details_with_evidence(details, [evidence]),
         )
     executable_match = EXECUTABLE_MISSING_RE.search(diagnostic_text)
     if executable_match:

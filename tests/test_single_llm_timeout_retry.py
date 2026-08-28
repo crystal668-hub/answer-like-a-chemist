@@ -18,6 +18,7 @@ from benchmarking.runtime.agent_workspace import (
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     ProtectedRoot,
+    WorkspaceAudit,
     adjudicate_workspace_findings,
 )
 from benchmarking.workflow.prompts import build_single_llm_prompt
@@ -444,6 +445,65 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         transcript_path = result.runner_meta["session_isolation"]["postflight_entry_session_file"]
         self.assertTrue(Path(transcript_path).is_file())
         self.assertEqual("provider_rate_limit_error", result.raw["execution_error"]["code"])
+
+    def test_unavailable_audit_does_not_mask_preexisting_subprocess_failure(self) -> None:
+        stderr = 'Error: Thinking level "high" is not supported for minimax/MiniMax-M3. Use one of: off, adaptive.\n'
+        runner = self._runner(
+            captured_commands=[],
+            timeout_once=False,
+            failure_stderr=stderr,
+            contamination_auditor=lambda **_kwargs: WorkspaceAudit(
+                audit_execution_status="unavailable",
+                boundary_status="unknown",
+                contamination_status="indeterminate",
+                adjudication="non_evaluable",
+                findings=(
+                    {
+                        "rule_id": "transcript_unavailable",
+                        "candidate_source": "session_isolation.postflight_entry_session_file",
+                    },
+                ),
+            ),
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertIsNotNone(result.failure)
+        self.assertEqual("openclaw_thinking_level_unsupported", result.failure.code)
+        self.assertEqual(stderr.strip(), result.failure.message)
+        self.assertEqual(stderr, result.raw["execution_error"]["stderr_excerpt"])
+        self.assertNotIn("discarded_runner_raw", result.raw)
+        isolation = result.runner_meta["workspace_isolation"]
+        self.assertEqual("unavailable", isolation["audit_execution_status"])
+        self.assertEqual("indeterminate", isolation["contamination_status"])
+        self.assertEqual("non_evaluable", isolation["adjudication"])
+
+    def test_confirmed_contamination_still_overrides_preexisting_subprocess_failure(self) -> None:
+        runner = self._runner(
+            captured_commands=[],
+            timeout_once=False,
+            failure_stderr="OpenClaw startup failed\n",
+            contamination_auditor=lambda **_kwargs: WorkspaceAudit(
+                audit_execution_status="complete",
+                boundary_status="violated",
+                contamination_status="confirmed",
+                adjudication="non_evaluable",
+                findings=(
+                    {
+                        "rule_id": "protected_path_access",
+                        "information_exposure": "possible",
+                        "boundary_effect": "violated",
+                    },
+                ),
+            ),
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertIsNotNone(result.failure)
+        self.assertEqual("benchmark_workspace_contamination", result.failure.code)
+        self.assertEqual("confirmed", result.runner_meta["workspace_isolation"]["contamination_status"])
+        self.assertEqual("openclaw_subprocess_failed", result.raw["discarded_runner_raw"]["execution_error"]["code"])
 
     def test_provider_access_denied_preserves_primary_error_and_attempt_history(self) -> None:
         raw_error = "403 Access to model denied. Please make sure you are eligible for using the model."

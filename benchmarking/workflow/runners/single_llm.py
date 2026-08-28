@@ -952,7 +952,11 @@ class SingleLLMRunner:
         isolation_meta.update(
             {"policy_digest": policy.digest, "policy": policy.to_payload(), "cleanup": cleanup}
         )
-        if audit.adjudication == "non_evaluable":
+        if audit.adjudication == "non_evaluable" and not (
+            result.failure is not None
+            and audit.audit_execution_status == "unavailable"
+            and audit.contamination_status == "indeterminate"
+        ):
             message = (
                 "Benchmark workspace information contamination was detected."
                 if audit.contamination_status == "confirmed"
