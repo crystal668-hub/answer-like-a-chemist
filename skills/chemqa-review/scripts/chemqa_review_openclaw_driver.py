@@ -199,7 +199,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lease-dir", help="Optional benchmark cleanroom lease directory")
     parser.add_argument("-p", "--prompt", help="Initial ClawTeam task prompt")
     parser.add_argument("-m", "--message", help="Initial OpenClaw-compatible message")
-    parser.add_argument("--thinking", choices=("off", "minimal", "low", "medium", "high", "xhigh"))
+    parser.add_argument(
+        "--thinking",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "adaptive"),
+    )
     parser.add_argument("--poll-seconds", type=int, default=POLL_SECONDS_DEFAULT)
     parser.add_argument("--stale-timeout-seconds", type=int, default=STALE_TIMEOUT_SECONDS_DEFAULT)
     parser.add_argument("--max-model-attempts", type=int, default=MODEL_ATTEMPTS_DEFAULT)

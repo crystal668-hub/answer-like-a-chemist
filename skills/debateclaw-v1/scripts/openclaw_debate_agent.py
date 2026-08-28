@@ -40,7 +40,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("-p", "--prompt", help="ClawTeam-compatible prompt argument.")
     parser.add_argument("-m", "--message", help="OpenClaw-compatible message argument.")
-    parser.add_argument("--thinking", choices=("off", "minimal", "low", "medium", "high", "xhigh"))
+    parser.add_argument(
+        "--thinking",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "adaptive"),
+    )
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw agent timeout override (seconds).")
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output.")
     parser.add_argument("--turn-result-file", help="Optional JSON sidecar path for structured turn diagnostics.")

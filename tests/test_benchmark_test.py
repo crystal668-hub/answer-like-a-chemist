@@ -312,6 +312,21 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertEqual("medium", args.single_agent_thinking)
         self.assertEqual("minimal", args.judge_agent_thinking)
 
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "benchmarking.workflow.cli",
+                "--single-agent-thinking",
+                "adaptive",
+                "--judge-agent-thinking",
+                "adaptive",
+            ],
+        ):
+            args = benchmark_test.parse_args()
+        self.assertEqual("adaptive", args.single_agent_thinking)
+        self.assertEqual("adaptive", args.judge_agent_thinking)
+
         with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--single-agent-thinking", "extreme"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args()

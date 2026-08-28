@@ -160,6 +160,9 @@ stable `EvaluationResult` shape and execution-error construction;
   service-worker registration and main bundle URL so stale cache-first assets
   cannot keep serving the old picker. The installed bundle remains runtime
   state rather than canonical project source.
+- The benchmark CLI and fixed-lane OpenClaw drivers accept the `adaptive`
+  thinking level required by MiniMax-M3; the Benchmark Orchestrator validates
+  the model-specific level before launching a run.
 - `scripts/docker_services.sh` and `scripts/mineru_service.sh` manage the local
   GROBID and MinerU services used by the paper pipeline.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical

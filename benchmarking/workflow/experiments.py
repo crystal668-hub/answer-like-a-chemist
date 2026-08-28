@@ -13,7 +13,15 @@ DEFAULT_JUDGE_AGENT = "benchmark-judge"
 DEFAULT_JUDGE_MODEL = "openai/gpt-5.5"
 DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
 DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
-THINKING_LEVEL_CHOICES = ("off", "minimal", "low", "medium", "high", "xhigh")
+THINKING_LEVEL_CHOICES = (
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "adaptive",
+)
 DEFAULT_SINGLE_AGENT_THINKING = "high"
 DEFAULT_JUDGE_AGENT_THINKING = "high"
 BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
