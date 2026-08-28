@@ -20,6 +20,12 @@ PATCH_MARKER = "function isMiniMaxM3ModelRef"
 PATCH_COMPLETE_MARKER = "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{}"
 SERVICE_WORKER_BUILD_ID = "2026.6.9-c645ec4555c0"
 SERVICE_WORKER_PATCHED_BUILD_ID = f"{SERVICE_WORKER_BUILD_ID}-minimax-m3-ui1"
+REGISTRATION_VERSION_OLD = (
+    f"e.searchParams.set(`v`,`{SERVICE_WORKER_BUILD_ID}`)"
+)
+REGISTRATION_VERSION_NEW = (
+    f"e.searchParams.set(`v`,`{SERVICE_WORKER_PATCHED_BUILD_ID}`)"
+)
 
 HELPER = (
     "function isMiniMaxM3ModelRef(e,t){let n=typeof e==`string`?e.trim().toLowerCase():``,"
@@ -89,12 +95,18 @@ LEGACY_MODEL_REQUESTS = (
 def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
     """Return a patched bundle and whether any replacement was made."""
 
+    def patch_registration_version(value: str) -> str:
+        if REGISTRATION_VERSION_OLD in value:
+            return value.replace(REGISTRATION_VERSION_OLD, REGISTRATION_VERSION_NEW, 1)
+        return value
+
     if PATCH_COMPLETE_MARKER in source:
         patched = source.replace(LEGACY_HELPER, HELPER, 1)
         for legacy_request in LEGACY_MODEL_REQUESTS:
             if legacy_request in patched:
                 patched = patched.replace(legacy_request, MODEL_REQUEST_NEW, 1)
                 break
+        patched = patch_registration_version(patched)
         return patched, patched != source
 
     # Upgrade the first local patch revision, which only handled entering M3.
@@ -105,6 +117,7 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
         for legacy_request in LEGACY_MODEL_REQUESTS:
             if legacy_request in patched:
                 patched = patched.replace(legacy_request, MODEL_REQUEST_NEW, 1)
+                patched = patch_registration_version(patched)
                 return patched, True
         raise ValueError("recognized MiniMax-M3 patch marker but legacy model request was not found")
 
@@ -120,7 +133,23 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
         if count != expected_count:
             raise ValueError(f"expected {expected_count} occurrence(s), found {count}: {old[:80]}")
         patched = patched.replace(old, new, expected_count)
+    patched = patch_registration_version(patched)
     return patched, True
+
+
+def patch_index_html(path: Path, bundle_name: str) -> bool:
+    """Add a query version so stale service-worker caches miss the bundle."""
+
+    original = path.read_text(encoding="utf-8")
+    asset = f'./assets/{bundle_name}'
+    patched_asset = f"{asset}?v={SERVICE_WORKER_PATCHED_BUILD_ID}"
+    if patched_asset in original:
+        return False
+    if original.count(asset) != 1:
+        raise ValueError(f"expected one Control UI bundle reference in: {path}")
+    patched = original.replace(asset, patched_asset, 1)
+    path.write_text(patched, encoding="utf-8")
+    return True
 
 
 def patch_bundle(path: Path) -> bool:
@@ -152,6 +181,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, default=DEFAULT_BUNDLE)
     parser.add_argument("--service-worker", type=Path, default=None)
+    parser.add_argument("--index-html", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -160,8 +190,11 @@ def main() -> int:
     bundle_changed = patch_bundle(args.bundle)
     service_worker = args.service_worker or args.bundle.parent.parent / "sw.js"
     worker_changed = patch_service_worker(service_worker)
+    index_html = args.index_html or args.bundle.parent.parent / "index.html"
+    index_changed = patch_index_html(index_html, args.bundle.name)
     print(f"{'Patched' if bundle_changed else 'Already patched'}: {args.bundle}")
     print(f"{'Patched' if worker_changed else 'Already patched'}: {service_worker}")
+    print(f"{'Patched' if index_changed else 'Already patched'}: {index_html}")
     return 0
 
 

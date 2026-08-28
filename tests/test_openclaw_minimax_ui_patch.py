@@ -9,15 +9,18 @@ from scripts.patch_openclaw_minimax_ui import (
     PATCH_MARKER,
     QV_NEW,
     QV_OLD,
+    REGISTRATION_VERSION_NEW,
+    REGISTRATION_VERSION_OLD,
     SERVICE_WORKER_BUILD_ID,
     SERVICE_WORKER_PATCHED_BUILD_ID,
     patch_control_ui_bundle,
+    patch_index_html,
     patch_service_worker,
 )
 
 
 def test_patch_updates_model_switch_and_thinking_picker() -> None:
-    source = f"{QV_OLD}{DOLLAR_V_OLD}{MODEL_REQUEST_OLD}"
+    source = f"{QV_OLD}{DOLLAR_V_OLD}{MODEL_REQUEST_OLD}{REGISTRATION_VERSION_OLD}"
 
     patched, changed = patch_control_ui_bundle(source)
 
@@ -27,6 +30,7 @@ def test_patch_updates_model_switch_and_thinking_picker() -> None:
     assert "l=isMiniMaxM3ModelRef(a,o)?`adaptive`" in patched
     assert "isMiniMaxM3ModelRef(t||UB(e))?{thinkingLevel:`adaptive`}:" in patched
     assert "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{}" in patched
+    assert REGISTRATION_VERSION_NEW in patched
 
 
 def test_patch_is_idempotent() -> None:
@@ -60,3 +64,17 @@ def test_service_worker_cache_namespace_is_bumped(tmp_path) -> None:
     assert patch_service_worker(worker) is True
     assert SERVICE_WORKER_PATCHED_BUILD_ID in worker.read_text(encoding="utf-8")
     assert patch_service_worker(worker) is False
+
+
+def test_index_html_cache_busts_the_main_bundle(tmp_path) -> None:
+    index = tmp_path / "index.html"
+    index.write_text(
+        '<script type="module" src="./assets/index.js"></script>\n',
+        encoding="utf-8",
+    )
+
+    assert patch_index_html(index, "index.js") is True
+    assert f"./assets/index.js?v={SERVICE_WORKER_PATCHED_BUILD_ID}" in index.read_text(
+        encoding="utf-8"
+    )
+    assert patch_index_html(index, "index.js") is False

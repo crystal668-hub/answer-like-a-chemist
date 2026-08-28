@@ -153,8 +153,10 @@ stable `EvaluationResult` shape and execution-error construction;
 - `scripts/patch_openclaw_minimax_ui.py` applies the local OpenClaw 2026.6.9
   Control UI runtime patch: the model picker exposes only `off`/`adaptive` for
   MiniMax-M3, selects `adaptive` when entering M3, and clears stale thinking
-  overrides when leaving M3. The installed bundle remains runtime state rather
-  than canonical project source.
+  overrides when leaving M3. It also versions the service-worker registration
+  and main bundle URL so stale cache-first assets cannot keep serving the old
+  picker. The installed bundle remains runtime state rather than canonical
+  project source.
 - `scripts/docker_services.sh` and `scripts/mineru_service.sh` manage the local
   GROBID and MinerU services used by the paper pipeline.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
