@@ -8,6 +8,7 @@ This workspace belongs only to the current attempt.
 - Do not modify absolute paths, guess run identifiers, or search the filesystem to locate resources.
 - For `exec`, omit `workdir` and enter the runner-provided scratch environment inside the command.
 - Use native `exec` for normal single-line shell commands and local tools.
+- When creating a Python virtual environment under `scratch/`, use `python3 -m venv --copies venv` so its interpreter entries do not point outside the attempt workspace.
 - Do not use heredocs, here-strings, or inline multiline `python -c` or `node -e` scripts.
 - For a multiline script, use a structured file tool to write `scratch/tmp/<name>.<ext>`, then run that file with native `exec` from the runner-provided scratch environment.
 - For structured file tools, use only workspace-relative `scratch/...` paths.

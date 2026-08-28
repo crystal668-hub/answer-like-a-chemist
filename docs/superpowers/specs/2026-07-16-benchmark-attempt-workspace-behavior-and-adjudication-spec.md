@@ -424,7 +424,8 @@ materialization，也必须有测试证明各模板基础条款字节级或结�
 9. 被 guard 阻断或工具失败后纠正当前操作并继续，不把它当作任务失败；
 10. 外部文件即使可见也不得作为 benchmark evidence；
 11. 不运行 Git，不创建 `.git`；
-12. 返回 prompt 要求的最终答案格式。
+12. 在 `scratch/` 下创建 Python venv 时使用 `python3 -m venv --copies venv`，避免解释器入口指向 workspace 外部；
+13. 返回 prompt 要求的最终答案格式。
 
 ### 11.3 Role overlays
 

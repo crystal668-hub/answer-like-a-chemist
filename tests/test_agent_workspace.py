@@ -291,6 +291,7 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         base_rule = "structured file tools, use only workspace-relative `scratch/...` paths."
         self.assertTrue(all(base_rule in contract for contract in contracts.values()))
         self.assertTrue(all("Use native `exec` for normal single-line shell commands" in contract for contract in contracts.values()))
+        self.assertTrue(all("python3 -m venv --copies venv" in contract for contract in contracts.values()))
         self.assertTrue(all("Do not use heredocs, here-strings" in contract for contract in contracts.values()))
         self.assertTrue(all("write `scratch/tmp/<name>.<ext>`" in contract for contract in contracts.values()))
         self.assertTrue(all("then run that file with native `exec`" in contract for contract in contracts.values()))

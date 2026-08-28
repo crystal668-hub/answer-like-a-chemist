@@ -212,6 +212,9 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - The runner materializes the role contract, attaches current scratch paths,
   invokes `benchmarking.runtime.single_llm_openclaw_wrapper`, validates OpenClaw
   JSON stdout, and enforces the eval-aware candidate-answer contract.
+- The canonical workspace contract requires Python virtual environments created
+  under `scratch/` to use `python3 -m venv --copies venv`, keeping interpreter
+  entries inside the attempt workspace for safe archival.
 - Nonzero OpenClaw subprocess results are classified from structured error
   evidence before diagnostic excerpts are truncated. Provider failures retain
   a terminal `primary_error` plus ordered `observed_errors`; internal error
