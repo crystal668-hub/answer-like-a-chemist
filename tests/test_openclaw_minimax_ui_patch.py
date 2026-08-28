@@ -9,7 +9,10 @@ from scripts.patch_openclaw_minimax_ui import (
     PATCH_MARKER,
     QV_NEW,
     QV_OLD,
+    SERVICE_WORKER_BUILD_ID,
+    SERVICE_WORKER_PATCHED_BUILD_ID,
     patch_control_ui_bundle,
+    patch_service_worker,
 )
 
 
@@ -45,3 +48,15 @@ def test_patch_upgrades_the_initial_local_patch_revision() -> None:
 
     assert changed is True
     assert "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{} )}" in patched
+
+
+def test_service_worker_cache_namespace_is_bumped(tmp_path) -> None:
+    worker = tmp_path / "sw.js"
+    worker.write_text(
+        f'const EMBEDDED_CACHE_VERSION = "{SERVICE_WORKER_BUILD_ID}";\n',
+        encoding="utf-8",
+    )
+
+    assert patch_service_worker(worker) is True
+    assert SERVICE_WORKER_PATCHED_BUILD_ID in worker.read_text(encoding="utf-8")
+    assert patch_service_worker(worker) is False

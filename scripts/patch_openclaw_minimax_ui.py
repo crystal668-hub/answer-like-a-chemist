@@ -18,6 +18,8 @@ DEFAULT_BUNDLE = Path(
 )
 PATCH_MARKER = "function isMiniMaxM3ModelRef"
 PATCH_COMPLETE_MARKER = "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{}"
+SERVICE_WORKER_BUILD_ID = "2026.6.9-c645ec4555c0"
+SERVICE_WORKER_PATCHED_BUILD_ID = f"{SERVICE_WORKER_BUILD_ID}-minimax-m3-ui1"
 
 HELPER = (
     "function isMiniMaxM3ModelRef(e,t){let n=typeof e==`string`?e.trim().toLowerCase():``,"
@@ -127,16 +129,37 @@ def patch_bundle(path: Path) -> bool:
     return changed
 
 
+def patch_service_worker(path: Path) -> bool:
+    """Bump the Control UI cache namespace after changing a hashed asset."""
+
+    original = path.read_text(encoding="utf-8")
+    patched = original.replace(
+        f'const EMBEDDED_CACHE_VERSION = "{SERVICE_WORKER_BUILD_ID}";',
+        f'const EMBEDDED_CACHE_VERSION = "{SERVICE_WORKER_PATCHED_BUILD_ID}";',
+        1,
+    )
+    if patched != original:
+        path.write_text(patched, encoding="utf-8")
+        return True
+    if f'const EMBEDDED_CACHE_VERSION = "{SERVICE_WORKER_PATCHED_BUILD_ID}";' in original:
+        return False
+    raise ValueError(f"unsupported Control UI service worker: {path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, default=DEFAULT_BUNDLE)
+    parser.add_argument("--service-worker", type=Path, default=None)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    changed = patch_bundle(args.bundle)
-    print(f"{'Patched' if changed else 'Already patched'}: {args.bundle}")
+    bundle_changed = patch_bundle(args.bundle)
+    service_worker = args.service_worker or args.bundle.parent.parent / "sw.js"
+    worker_changed = patch_service_worker(service_worker)
+    print(f"{'Patched' if bundle_changed else 'Already patched'}: {args.bundle}")
+    print(f"{'Patched' if worker_changed else 'Already patched'}: {service_worker}")
     return 0
 
 
