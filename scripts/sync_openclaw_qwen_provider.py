@@ -14,7 +14,13 @@ OPENCLAW_HOME = Path("/Users/xutao/.openclaw")
 OPENCLAW_CONFIG_PATH = OPENCLAW_HOME / "openclaw.json"
 AGENTS_DIR = OPENCLAW_HOME / "agents"
 TOKEN_PLAN_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-QWEN_MODEL_IDS = ("qwen3.6-plus", "deepseek-v4-pro", "qwen3.7-max", "qwen3.7-plus")
+QWEN_MODEL_IDS = (
+    "qwen3.6-plus",
+    "deepseek-v4-pro",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.8-flash",
+)
 QWEN_BASE_URL_REF = "${QWEN_BASE_URL}"
 QWEN_API_KEY_REF = {
     "source": "env",

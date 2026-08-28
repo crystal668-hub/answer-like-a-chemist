@@ -149,7 +149,9 @@ stable `EvaluationResult` shape and execution-error construction;
   inventory, verifies every archive and unchanged source, and deletes sources
   only when all requested archives pass those checks.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
-  provider configuration and removes applicable stale agent provider caches.
+  provider configuration for `qwen3.6-plus`, `deepseek-v4-pro`,
+  `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash`, and removes applicable
+  stale agent provider caches.
 - `scripts/patch_openclaw_minimax_ui.py` applies the local OpenClaw 2026.6.9
   Control UI runtime patch: the model picker exposes only `off`/`adaptive` for
   MiniMax-M3, selects `adaptive` when entering M3, and clears stale thinking
