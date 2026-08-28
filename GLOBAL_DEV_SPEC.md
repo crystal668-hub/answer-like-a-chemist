@@ -150,15 +150,16 @@ stable `EvaluationResult` shape and execution-error construction;
   only when all requested archives pass those checks.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
   provider configuration for `qwen3.6-plus`, `deepseek-v4-pro`,
-  `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash`, and removes applicable
-  stale agent provider caches.
+  `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash` using the
+  `openai-responses` API, and removes applicable stale agent provider caches.
 - `scripts/patch_openclaw_minimax_ui.py` applies the local OpenClaw 2026.6.9
   Control UI runtime patch: the model picker exposes only `off`/`adaptive` for
-  MiniMax-M3, selects `adaptive` when entering M3, and clears stale thinking
-  overrides when leaving M3. It also versions the service-worker registration
-  and main bundle URL so stale cache-first assets cannot keep serving the old
-  picker. The installed bundle remains runtime state rather than canonical
-  project source.
+  MiniMax-M3, derives that picker from the current per-session model override
+  (including the `minimax-m3` alias), selects `adaptive` when entering M3, and
+  clears stale thinking overrides when leaving M3. It also versions the
+  service-worker registration and main bundle URL so stale cache-first assets
+  cannot keep serving the old picker. The installed bundle remains runtime
+  state rather than canonical project source.
 - `scripts/docker_services.sh` and `scripts/mineru_service.sh` manage the local
   GROBID and MinerU services used by the paper pipeline.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical

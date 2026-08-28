@@ -36,7 +36,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
                                 },
                                 "contextWindow": 1000000,
                                 "maxTokens": 65536,
-                                "api": "openai-completions",
+                                "api": "openai-responses",
                                 "compat": {"thinkingFormat": "qwen"},
                             }
                         ],
@@ -67,10 +67,11 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
                 self.assertEqual(["text"], models[model_id]["input"])
                 self.assertEqual(1000000, models[model_id]["contextWindow"])
                 self.assertEqual(65536, models[model_id]["maxTokens"])
-                self.assertEqual("openai-completions", models[model_id]["api"])
+                self.assertEqual("openai-responses", models[model_id]["api"])
                 self.assertEqual({"thinkingFormat": "qwen"}, models[model_id]["compat"])
                 self.assertEqual({"alias": model_id}, payload["agents"]["defaults"]["models"][f"qwen/{model_id}"])
 
+        self.assertEqual("openai-responses", qwen["api"])
         self.assertFalse(sync_config_payload(payload))
 
     def test_sync_config_payload_reports_change_when_provider_metadata_is_missing(self) -> None:
@@ -78,7 +79,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
             "models": {
                 "providers": {
                     "qwen": {
-                        "api": "openai-completions",
+                        "api": "openai-responses",
                         "models": [
                             {
                                 "id": model_id,
@@ -93,7 +94,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
                                 },
                                 "contextWindow": 1000000,
                                 "maxTokens": 65536,
-                                "api": "openai-completions",
+                                "api": "openai-responses",
                                 "compat": {"thinkingFormat": "qwen"},
                             }
                             for model_id in QWEN_MODEL_IDS
@@ -113,7 +114,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
             {"source": "env", "provider": "default", "id": "QWEN_API_KEY"},
             qwen["apiKey"],
         )
-        self.assertEqual("openai-completions", qwen["api"])
+        self.assertEqual("openai-responses", qwen["api"])
 
     def test_sync_config_payload_replaces_literal_provider_credentials_with_env_refs(self) -> None:
         payload = {
@@ -139,6 +140,7 @@ class OpenClawQwenProviderConfigTests(unittest.TestCase):
             {"source": "env", "provider": "default", "id": "QWEN_API_KEY"},
             qwen["apiKey"],
         )
+        self.assertEqual("openai-responses", qwen["api"])
 
     def test_sync_models_payload_clears_token_plan_qwen_provider_cache(self) -> None:
         payload = {

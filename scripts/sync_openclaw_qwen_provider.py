@@ -43,7 +43,7 @@ def qwen_model_payload(model_id: str) -> dict[str, Any]:
         },
         "contextWindow": 1000000,
         "maxTokens": 65536,
-        "api": "openai-completions",
+        "api": "openai-responses",
         "compat": {
             "thinkingFormat": "qwen",
         },
@@ -68,8 +68,8 @@ def sync_config_payload(payload: dict[str, Any]) -> bool:
     if qwen_provider.get("apiKey") != QWEN_API_KEY_REF:
         qwen_provider["apiKey"] = copy.deepcopy(QWEN_API_KEY_REF)
         changed = True
-    if qwen_provider.get("api") != "openai-completions":
-        qwen_provider["api"] = "openai-completions"
+    if qwen_provider.get("api") != "openai-responses":
+        qwen_provider["api"] = "openai-responses"
         changed = True
     changed = ensure_qwen_models(qwen_provider) or changed
 
