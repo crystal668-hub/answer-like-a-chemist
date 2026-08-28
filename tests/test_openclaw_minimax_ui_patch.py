@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from scripts.patch_openclaw_minimax_ui import (
+    DOLLAR_V_CURRENT_NEW,
     DOLLAR_V_NEW,
     DOLLAR_V_OLD,
     LEGACY_HELPER,
     LEGACY_MODEL_REQUESTS,
+    MODEL_REQUEST_NEW,
     MODEL_REQUEST_OLD,
     PATCH_MARKER,
     QV_NEW,
@@ -27,7 +29,7 @@ def test_patch_updates_model_switch_and_thinking_picker() -> None:
     assert changed is True
     assert PATCH_MARKER in patched
     assert "id:`adaptive`,label:`adaptive`" in patched
-    assert "l=isMiniMaxM3ModelRef(a,o)?`adaptive`" in patched
+    assert "l=isMiniMaxM3ModelRef(f,d)?`adaptive`" in patched
     assert "isMiniMaxM3ModelRef(t||UB(e))?{thinkingLevel:`adaptive`}:" in patched
     assert "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{}" in patched
     assert REGISTRATION_VERSION_NEW in patched
@@ -42,6 +44,25 @@ def test_patch_is_idempotent() -> None:
     assert changed is True
     assert changed_again is False
     assert same == patched
+
+
+def test_patch_uses_current_model_override_for_thinking_options() -> None:
+    source = f"{LEGACY_HELPER}{QV_NEW}{DOLLAR_V_NEW}{MODEL_REQUEST_NEW}"
+
+    patched, changed = patch_control_ui_bundle(source)
+
+    assert changed is True
+    assert DOLLAR_V_CURRENT_NEW in patched
+    assert "m=HB(e),p=m.indexOf(`/`),f=p>0?m.slice(0,p):KV(m,e.chatModelCatalog??[])" in patched
+
+
+def test_current_model_patch_is_idempotent() -> None:
+    source = f"{QV_NEW}{DOLLAR_V_CURRENT_NEW}{MODEL_REQUEST_NEW}"
+
+    patched, changed = patch_control_ui_bundle(source)
+
+    assert changed is False
+    assert patched == source
 
 
 def test_patch_upgrades_the_initial_local_patch_revision() -> None:

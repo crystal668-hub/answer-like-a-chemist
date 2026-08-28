@@ -18,6 +18,7 @@ DEFAULT_BUNDLE = Path(
 )
 PATCH_MARKER = "function isMiniMaxM3ModelRef"
 PATCH_COMPLETE_MARKER = "isMiniMaxM3ModelRef(GV(e).provider,GV(e).model)?{thinkingLevel:null}:{}"
+CURRENT_MODEL_MARKER = "m=HB(e),p=m.indexOf(`/`),f=p>0?m.slice(0,p):KV(m,e.chatModelCatalog??[])"
 SERVICE_WORKER_BUILD_ID = "2026.6.9-c645ec4555c0"
 SERVICE_WORKER_PATCHED_BUILD_ID = f"{SERVICE_WORKER_BUILD_ID}-minimax-m3-ui1"
 REGISTRATION_VERSION_OLD = (
@@ -78,6 +79,16 @@ DOLLAR_V_NEW = (
     "u=isMiniMaxM3ModelRef(a,o)&&r!==`off`&&r!==`adaptive`?``:s.length===0&&r===`off`?``:r;"
     "return{currentOverride:u,defaultLabel:nV(l),options:YV(s,u)}}"
 )
+DOLLAR_V_CURRENT_NEW = (
+    "function $V(e){let t=e.sessionsResult?.sessions?.find(t=>t.key===e.sessionKey),"
+    "n=t?.thinkingLevel,r=typeof n==`string`&&n.trim()?cp(n)??n.trim():``,i=e.sessionsResult?."
+    "defaults,{provider:a,model:o}=GV(e),m=HB(e),p=m.indexOf(`/`),f=p>0?m.slice(0,p):"
+    "KV(m,e.chatModelCatalog??[])??(isMiniMaxM3ModelRef(m,``)?`minimax`:a),d=p>0?m.slice(p+1):m||o,"
+    "s=QV(t,i,f,d,e.chatModelCatalog??[]),c=(!t||JV(t,i))&&i?.thinkingDefault?i.thinkingDefault:void 0,"
+    "l=isMiniMaxM3ModelRef(f,d)?`adaptive`:t?.thinkingDefault??c??(f&&d?dp({provider:f,model:d,"
+    "catalog:e.chatModelCatalog??[]}):`off`),u=isMiniMaxM3ModelRef(f,d)&&r!==`off`&&r!==`adaptive`?``:"
+    "s.length===0&&r===`off`?``:r;return{currentOverride:u,defaultLabel:nV(l),options:YV(s,u)}}"
+)
 
 MODEL_REQUEST_OLD = "model:t||null}),UV(e),await dV(e),!0"
 MODEL_REQUEST_NEW = (
@@ -102,6 +113,10 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
 
     if PATCH_COMPLETE_MARKER in source:
         patched = source.replace(LEGACY_HELPER, HELPER, 1)
+        if CURRENT_MODEL_MARKER not in patched:
+            if DOLLAR_V_NEW not in patched:
+                raise ValueError("recognized MiniMax-M3 patch marker but current thinking function was not found")
+            patched = patched.replace(DOLLAR_V_NEW, DOLLAR_V_CURRENT_NEW, 1)
         for legacy_request in LEGACY_MODEL_REQUESTS:
             if legacy_request in patched:
                 patched = patched.replace(legacy_request, MODEL_REQUEST_NEW, 1)
@@ -114,6 +129,8 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
         patched = source.replace(LEGACY_HELPER, HELPER, 1)
         if patched == source:
             raise ValueError("recognized MiniMax-M3 patch marker but legacy helper was not found")
+        if DOLLAR_V_NEW in patched:
+            patched = patched.replace(DOLLAR_V_NEW, DOLLAR_V_CURRENT_NEW, 1)
         for legacy_request in LEGACY_MODEL_REQUESTS:
             if legacy_request in patched:
                 patched = patched.replace(legacy_request, MODEL_REQUEST_NEW, 1)
@@ -124,7 +141,7 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
     replacements = (
         ("function QV(", HELPER + "function QV(", 1),
         (QV_OLD, QV_NEW, 1),
-        (DOLLAR_V_OLD, DOLLAR_V_NEW, 1),
+        (DOLLAR_V_OLD, DOLLAR_V_CURRENT_NEW, 1),
         (MODEL_REQUEST_OLD, MODEL_REQUEST_NEW, 1),
     )
     patched = source
