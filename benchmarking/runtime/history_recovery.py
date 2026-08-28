@@ -453,7 +453,9 @@ def replay_workspace_adjudication(
             updated["evaluation"] = new_evaluation
             updated["evaluable"] = True
             updated["scored"] = True
-            updated["degraded_execution"] = audit.adjudication == "scoreable_degraded" or manual_approval_eligible
+            updated["degraded_execution"] = bool(payload.get("degraded_execution")) or (
+                audit.adjudication == "scoreable_degraded" or manual_approval_eligible
+            )
             updated["execution_error_kind"] = None
             updated["error"] = None
             if manual_approval_requested:

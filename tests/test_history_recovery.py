@@ -420,5 +420,6 @@ def test_history_dry_run_uses_persisted_record_policy_when_final_artifacts_are_m
     assert updated["short_answer_text"] == "X"
     assert updated["answer_availability"] == "recovered_candidate"
     assert updated["recovery_mode"] == "archived_final_answer"
+    assert updated["degraded_execution"] is True
     results = json.loads((run_root / "results.json").read_text(encoding="utf-8"))
     assert results["results"][0]["short_answer_text"] == "X"
