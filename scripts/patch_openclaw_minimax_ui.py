@@ -90,10 +90,12 @@ def patch_control_ui_bundle(source: str) -> tuple[str, bool]:
     """Return a patched bundle and whether any replacement was made."""
 
     if PATCH_COMPLETE_MARKER in source:
+        patched = source.replace(LEGACY_HELPER, HELPER, 1)
         for legacy_request in LEGACY_MODEL_REQUESTS:
-            if legacy_request in source:
-                return source.replace(legacy_request, MODEL_REQUEST_NEW, 1), True
-        return source, False
+            if legacy_request in patched:
+                patched = patched.replace(legacy_request, MODEL_REQUEST_NEW, 1)
+                break
+        return patched, patched != source
 
     # Upgrade the first local patch revision, which only handled entering M3.
     if PATCH_MARKER in source:
