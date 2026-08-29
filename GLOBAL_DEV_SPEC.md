@@ -245,14 +245,17 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   failure and the audit is unavailable with indeterminate contamination, the
   audit remains attached as diagnostic workspace-isolation metadata and does
   not replace the original failure. Confirmed contamination and archive
-  failures retain precedence. A narrow parser-error allowlist preserves a
-  successful `exec` result when the exact `No closing quotation` lexer error
-  occurs in a heredoc command, `/bin/bash -n` validates the original command,
-  the paired tool result is successful, and the command contains no protected
-  root path. The allowlist records a warning finding with clear contamination;
-  malformed commands, missing results, syntax failures, or protected-root
-  references remain non-evaluable or contaminated according to the normal
-  audit rules.
+  failures retain precedence. Exec auditing first builds a structured shell
+  projection that tracks quotes, escapes, heredocs, command substitutions,
+  nested substitutions, backticks, and arithmetic substitutions without
+  executing transcript commands. Parser recovery is represented by stable
+  recovery codes and versions; a successful `exec` result may be retained as a
+  warning only when the original shell syntax is valid, the projection is
+  complete, and the normal protected-path scan (including literal paths inside
+  nested substitutions) finds no forbidden access. Unknown or incomplete shell
+  constructs, missing results, syntax failures, unresolved recovery, and
+  protected-root references remain non-evaluable or contaminated according to
+  the normal audit rules.
 
 ### ChemQA runner
 
@@ -430,10 +433,13 @@ finalized. Archive failure remains fail closed.
 Known audit parser conditions use stable codes and an in-code recovery-handler
 registry. `exec_unterminated_heredoc_eof` projects the complete EOF heredoc body
 through recovery version 1, emits `transcript_audit_recovered`, and continues the
-normal protected-path scan. Recovery success is a boundary warning; an unknown
-condition, incomplete projection, or recovery exception remains unavailable.
-Historical dry-run replay can use a persisted per-record workspace policy when
-an interrupted legacy run lacks final aggregate artifacts; apply mode still
+normal protected-path scan. Dynamic shell constructs use a quote-aware, nested
+projection before `shlex` tokenization; literal paths discovered inside command
+substitutions are audited with the same immutable policy. Recovery success is a
+boundary warning; an unknown condition, incomplete projection, unresolved
+dynamic construct, or recovery exception remains unavailable. Historical
+dry-run replay can use a persisted per-record workspace policy when an
+interrupted legacy run lacks final aggregate artifacts; apply mode still
 requires `results.json` and `runtime-manifest.json`.
 
 This lifecycle, guard, and transcript audit is not an operating-system security

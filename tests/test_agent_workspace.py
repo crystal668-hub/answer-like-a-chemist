@@ -1090,12 +1090,19 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         for command in (
             "cat $UNKNOWN/track/tasks.jsonl",
             f"cat ${{UNKNOWN:-{self.root / 'datasets'}}}/tasks.jsonl",
+        ):
+            with self.subTest(command=command):
+                audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
+                self.assertEqual("clean", audit.status)
+
+        for command in (
             f"cat $(printf {self.root / 'datasets'})/tasks.jsonl",
             f"cat `printf {self.root / 'datasets'}`/tasks.jsonl",
         ):
             with self.subTest(command=command):
                 audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
-                self.assertEqual("clean", audit.status)
+                self.assertEqual("contaminated", audit.status)
+                self.assertEqual("benchmark_dataset_root", audit.findings[0]["policy_id"])
 
     def test_existing_symlink_alias_resolves_into_protected_root(self) -> None:
         dataset_root = self.root / "datasets"
@@ -1390,12 +1397,50 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         )
 
         self.assertEqual("complete", audit.audit_execution_status)
-        self.assertEqual("warning", audit.boundary_status)
+        self.assertEqual("clean", audit.boundary_status)
         self.assertEqual("clear", audit.contamination_status)
         self.assertEqual("scoreable", audit.adjudication)
-        self.assertEqual("parser_error_whitelisted", audit.findings[0]["rule_id"])
-        self.assertEqual("valid", audit.findings[0]["evidence"]["shell_syntax"])
         self.manager.seal(lease, AttemptOutcome(runner_status="completed", contamination_audit=audit))
+
+    def test_command_substitution_projection_handles_nested_quotes_and_parentheses(self) -> None:
+        commands = (
+            'P=$(python3 -c "import os; print(os.path.dirname(os.path.abspath(\"x)\")))"); ls "$P"',
+            'value="$(printf "%s" "nested (value)")"; echo "$value"',
+            "echo $(echo $(printf 'inner (value)'))",
+            "echo `printf '%s' 'backtick (value)'`",
+            "echo $((1 + (2 * 3)))",
+            'echo "$(($(printf 1) + 2))"',
+            'echo "`printf \'double " quote\'`"',
+            "printf '%s' \"escaped \\) parenthesis\"",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
+                self.assertEqual("clean", audit.status)
+                self.assertEqual("complete", audit.audit_execution_status)
+
+    def test_command_substitution_projection_scans_nested_literal_protected_paths(self) -> None:
+        protected = self.root / "datasets" / "track" / "tasks.jsonl"
+        for command in (
+            f"cat $(cat '{protected}')",
+            f"cat `printf '%s' '{protected}'`",
+            f"cat $(echo $(printf '%s' '{protected}'))",
+        ):
+            with self.subTest(command=command):
+                audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
+                self.assertEqual("contaminated", audit.status)
+                self.assertEqual("benchmark_dataset_root", audit.findings[0]["policy_id"])
+
+    def test_historical_no_closing_quotation_commands_are_auditable(self) -> None:
+        commands = (
+            'P=$(python3 -c "import pyscf,os;print(os.path.dirname(pyscf.__file__))"); echo $P; ls $P; echo ---; find $P -iname \'*spin_orbit*\' -o -iname \'*soc*\' | head -20',
+            'cd "$BENCHMARK_SKILL_SCRATCH_DIR" && SITE=$("$BENCHMARK_SKILL_SCRATCH_DIR/venv/bin/python" -c "import pyscf,os;print(os.path.dirname(pyscf.__file__))") && grep -rn "spin_orbit\\|get_soi\\|spsai" "$SITE/x2c/" --include=*.py | grep -v test | head -30 && ls "$SITE" | tr \'\\n\' \' \'',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                audit = self._audit_tool_call(tool_name="exec", arguments={"command": command})
+                self.assertEqual("clean", audit.status)
+                self.assertEqual("complete", audit.audit_execution_status)
 
     def test_heredoc_bodies_with_quotes_and_multiple_delimiters_audit_clean(self) -> None:
         audit = self._audit_tool_call(
@@ -1471,7 +1516,20 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("recover_unterminated_heredoc_eof", finding["recovery_handler"])
         self.assertEqual(1, finding["recovery_version"])
         self.assertEqual("failed", finding["operation_outcome"])
-        self.assertEqual({"call_line", "result_line", "result_is_error", "exit_code"}, set(finding["evidence"]))
+        self.assertEqual(
+            {
+                "call_line",
+                "result_line",
+                "result_is_error",
+                "exit_code",
+                "parser_recovery_code",
+                "parser_recovery_version",
+                "projection_coverage",
+                "masked_construct_count",
+                "dynamic_command_count",
+            },
+            set(finding["evidence"]),
+        )
         self.assertNotIn("topsecret", finding["command_excerpt"])
 
     def test_completed_heredoc_does_not_emit_recovery_warning(self) -> None:

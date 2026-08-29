@@ -32,6 +32,8 @@ class AuditProjection:
     text: str
     recovery_code: str | None = None
     recovery_version: int | None = None
+    dynamic_commands: tuple[str, ...] = ()
+    masked_construct_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -328,10 +330,122 @@ def _resolve_candidate(
     )
 
 
-def _without_dynamic_command_substitutions(command: str) -> str:
+_UNTERMINATED_DYNAMIC_CODE = "exec_unterminated_dynamic_substitution"
+_PARSER_ERROR_RECOVERY_CODE = "exec_parser_error_bash_validation"
+_PARSER_ERROR_RECOVERY_VERSION = 1
+
+
+def _consume_backtick(command: str, start: int) -> tuple[int, str]:
+    index = start + 1
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and index + 1 < len(command):
+            index += 2
+            continue
+        if char == "`":
+            return index + 1, command[start + 1 : index]
+        index += 1
+    raise AuditParserCondition(
+        code=_UNTERMINATED_DYNAMIC_CODE,
+        details={"construct": "backtick", "start": start},
+    )
+
+
+def _consume_arithmetic_substitution(command: str, start: int) -> int:
+    depth = 1
+    index = start + 3
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and index + 1 < len(command):
+            index += 2
+            continue
+        if command.startswith("$(", index):
+            nested_end, _ = _consume_command_substitution(command, index)
+            index = nested_end
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                if index + 1 < len(command) and command[index + 1] == ")":
+                    return index + 2
+                raise AuditParserCondition(
+                    code=_UNTERMINATED_DYNAMIC_CODE,
+                    details={"construct": "arithmetic", "start": start},
+                )
+        index += 1
+    raise AuditParserCondition(
+        code=_UNTERMINATED_DYNAMIC_CODE,
+        details={"construct": "arithmetic", "start": start},
+    )
+
+
+def _consume_command_substitution(command: str, start: int) -> tuple[int, str]:
+    depth = 1
+    index = start + 2
+    quote = ""
+    while index < len(command):
+        char = command[index]
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            index += 1
+            continue
+        if quote == '"':
+            if char == "\\" and index + 1 < len(command):
+                index += 2
+                continue
+            if command.startswith("$((", index):
+                index = _consume_arithmetic_substitution(command, index)
+                continue
+            if command.startswith("$(", index):
+                nested_end, _ = _consume_command_substitution(command, index)
+                index = nested_end
+                continue
+            if char == "`":
+                index, _ = _consume_backtick(command, index)
+                continue
+            if char == '"':
+                quote = ""
+            index += 1
+            continue
+        if char == "\\" and index + 1 < len(command):
+            index += 2
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if command.startswith("$((", index):
+            index = _consume_arithmetic_substitution(command, index)
+            continue
+        if command.startswith("$(", index):
+            nested_end, _ = _consume_command_substitution(command, index)
+            index = nested_end
+            continue
+        if char == "`":
+            index, _ = _consume_backtick(command, index)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1, command[start + 2 : index]
+        index += 1
+    raise AuditParserCondition(
+        code=_UNTERMINATED_DYNAMIC_CODE,
+        details={"construct": "command_substitution", "start": start},
+    )
+
+
+def _project_dynamic_constructs(command: str) -> tuple[str, tuple[str, ...], int]:
     result: list[str] = []
+    dynamic_commands: list[str] = []
     index = 0
     quote = ""
+    masked_count = 0
     while index < len(command):
         char = command[index]
         if char == "\\" and quote != "'" and index + 1 < len(command):
@@ -346,34 +460,32 @@ def _without_dynamic_command_substitutions(command: str) -> str:
             result.append(char)
             index += 1
             continue
-        if quote != "'" and command.startswith("$(", index):
-            depth = 1
-            index += 2
-            while index < len(command) and depth:
-                if command.startswith("$(", index):
-                    depth += 1
-                    index += 2
-                    continue
-                if command[index] == ")":
-                    depth -= 1
-                index += 1
+        if quote != "'" and command.startswith("$((", index):
+            index = _consume_arithmetic_substitution(command, index)
             result.append(" ")
+            masked_count += 1
+            continue
+        if quote != "'" and command.startswith("$(", index):
+            end, body = _consume_command_substitution(command, index)
+            dynamic_commands.append(body)
+            result.append(" ")
+            masked_count += 1
+            index = end
             continue
         if quote != "'" and char == "`":
-            index += 1
-            while index < len(command):
-                if command[index] == "\\" and index + 1 < len(command):
-                    index += 2
-                    continue
-                if command[index] == "`":
-                    index += 1
-                    break
-                index += 1
+            index, body = _consume_backtick(command, index)
+            dynamic_commands.append(body)
             result.append(" ")
+            masked_count += 1
             continue
         result.append(char)
         index += 1
-    return "".join(result)
+    return "".join(result), tuple(dynamic_commands), masked_count
+
+
+def _without_dynamic_command_substitutions(command: str) -> str:
+    projected, _, _ = _project_dynamic_constructs(command)
+    return projected
 
 
 _HEREDOC_BODY_START = "\x00OPENCLAW_AUDIT_HEREDOC_BODY_START\x00"
@@ -529,7 +641,7 @@ AUDIT_ERROR_RECOVERY_HANDLERS = {
 
 def _command_audit_projection(command: str) -> AuditProjection:
     try:
-        return _build_command_audit_projection(command)
+        projection = _build_command_audit_projection(command)
     except AuditParserCondition as condition:
         handler = AUDIT_ERROR_RECOVERY_HANDLERS.get(condition.code)
         if handler is None:
@@ -543,13 +655,20 @@ def _command_audit_projection(command: str) -> AuditProjection:
             or not projection.text
         ):
             raise ValueError(f"Incomplete audit recovery projection: {condition.code}") from condition
-        return projection
+    projected, dynamic_commands, masked_count = _project_dynamic_constructs(projection.text)
+    return AuditProjection(
+        text=projected,
+        recovery_code=projection.recovery_code,
+        recovery_version=projection.recovery_version,
+        dynamic_commands=dynamic_commands,
+        masked_construct_count=masked_count,
+    )
 
 
 def _exec_tokens(command: str) -> tuple[list[str], AuditProjection]:
     projection = _command_audit_projection(command)
     lexer = shlex.shlex(
-        _without_dynamic_command_substitutions(projection.text),
+        projection.text,
         posix=True,
         punctuation_chars="|&;()<>",
     )
@@ -638,6 +757,21 @@ def _exec_command_candidates(
         pending_cd = cd_candidate.resolved_path if cd_candidate is not None else None
         if candidate is None and cd_candidate is not None:
             candidates.append(cd_candidate)
+    for dynamic_command in projection.dynamic_commands:
+        nested_candidates, _ = _exec_command_candidates(
+            dynamic_command,
+            workspace=workspace,
+            environment=environment,
+        )
+        candidates.extend(
+            PathCandidate(
+                raw_token=candidate.raw_token,
+                expanded_token=candidate.expanded_token,
+                resolved_path=candidate.resolved_path,
+                source="exec.command_substitution",
+            )
+            for candidate in nested_candidates
+        )
     return candidates, projection
 
 
@@ -731,7 +865,7 @@ def _transcript_audit_failure(
     return finding
 
 
-def _parser_error_whitelist_finding(
+def _parser_error_recovery_finding(
     exc: Exception,
     *,
     event: ToolEvent,
@@ -745,7 +879,13 @@ def _parser_error_whitelist_finding(
         return None
     arguments = event.arguments if isinstance(event.arguments, Mapping) else {}
     command = str(arguments.get("command") or "")
-    if not re.search(r"(?m)(?<!<)<<-?\s*['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?(?:\s|$)", command):
+    try:
+        projected, dynamic_commands, masked_count = _project_dynamic_constructs(command)
+        lexer = shlex.shlex(projected, posix=True, punctuation_chars="|&;()<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        list(lexer)
+    except Exception:
         return None
     if any(str(root.path) in command for root in policy.protected_roots):
         return None
@@ -780,6 +920,11 @@ def _parser_error_whitelist_finding(
             "result_line": event.result_line,
             "result_is_error": bool(event.result and event.result.get("isError") is True),
             "shell_syntax": "valid",
+            "parser_recovery_code": _PARSER_ERROR_RECOVERY_CODE,
+            "parser_recovery_version": _PARSER_ERROR_RECOVERY_VERSION,
+            "projection_coverage": "complete",
+            "dynamic_command_count": len(dynamic_commands),
+            "masked_construct_count": masked_count,
         },
     }
 
@@ -906,6 +1051,11 @@ def _forbidden_access_findings(
                     "result_line": event.result_line,
                     "result_is_error": bool(event.result and event.result.get("isError") is True),
                     "exit_code": _result_exit_code(event.result),
+                    "parser_recovery_code": projection.recovery_code,
+                    "parser_recovery_version": projection.recovery_version,
+                    "projection_coverage": "complete",
+                    "masked_construct_count": projection.masked_construct_count,
+                    "dynamic_command_count": len(projection.dynamic_commands),
                 },
             }
         )
