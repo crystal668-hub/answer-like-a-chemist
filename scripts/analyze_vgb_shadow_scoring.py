@@ -71,7 +71,7 @@ class ScoringContext:
 def candidates() -> tuple[Candidate, ...]:
     score_space = (
         Candidate("official_linear", "official", "s", "Pinned v0.9.1 linear score."),
-        Candidate("score_square", "score_space", "s^2", "Square the completed task score." , score_transform="square"),
+        Candidate("score_square", "score_space", "s^2", "Square the completed task score.", score_transform="square"),
         Candidate("score_sqrt", "score_space", "sqrt(s)", "Square root of the completed task score.", score_transform="sqrt"),
         Candidate(
             "score_complement_square",
@@ -99,8 +99,12 @@ def candidates() -> tuple[Candidate, ...]:
     for mapping, formula, description in (
         ("linear", "max(0,1-e)", "Pinned linear decay in normalized error."),
         ("exponential", "2^-e", "Exponential tail with half-score at one tolerance width."),
+        ("exponential_p05", "2^(-sqrt(e))", "Generalized exponential tail with p=0.5; half-score at one tolerance width."),
+        ("exponential_p2", "2^(-e^2)", "Generalized exponential tail with p=2; half-score at one tolerance width."),
         ("rational", "1/(1+e)", "Rational tail in normalized error."),
+        ("rational_p05", "1/(1+sqrt(e))", "Generalized rational tail with p=0.5; half-score at one tolerance width."),
         ("power2", "(1+e)^-2", "Quadratic rational tail in normalized error."),
+        ("logistic", "1.5/(1+0.5*4^e)", "Normalized logistic tail with score 0.5 at one tolerance width."),
     ):
         for aggregation in ("arithmetic_mean", "geometric_mean", "product"):
             suffix = "arithmetic" if aggregation == "arithmetic_mean" else aggregation.removesuffix("_mean")
@@ -156,10 +160,21 @@ def error_mapping(error: float | None, mapping: str) -> float:
         return max(0.0, 1.0 - error)
     if mapping == "exponential":
         return 2.0 ** (-error)
+    if mapping == "exponential_p05":
+        return 2.0 ** (-math.sqrt(error))
+    if mapping == "exponential_p2":
+        return 2.0 ** (-(error**2))
     if mapping == "rational":
         return 1.0 / (1.0 + error)
+    if mapping == "rational_p05":
+        return 1.0 / (1.0 + math.sqrt(error))
     if mapping == "power2":
         return (1.0 + error) ** -2
+    if mapping == "logistic":
+        exponent = error * math.log(4.0)
+        if exponent > 700.0:
+            return 0.0
+        return 1.5 / (1.0 + 0.5 * math.exp(exponent))
     raise ValueError(f"Unsupported error mapping: {mapping}")
 
 
@@ -590,6 +605,42 @@ def percentile(values: list[float], fraction: float) -> float | None:
     return ordered[min(len(ordered) - 1, int((len(ordered) - 1) * fraction))]
 
 
+def direct_nonlinear_summary(candidate_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summary: list[dict[str, Any]] = []
+    for report_item in candidate_reports:
+        candidate = report_item["candidate"]
+        if candidate.get("kind") != "error_space" or candidate.get("aggregation") != "arithmetic_mean":
+            continue
+        pairs = report_item["pair_metrics"]
+        absolute_gaps = [abs(float(item["mean_signed_gap"])) for item in pairs]
+        summary.append(
+            {
+                "candidate_id": candidate["candidate_id"],
+                "formula": candidate["formula"],
+                "mapping": candidate["field_mapping"],
+                "average_absolute_model_gap": statistics.mean(absolute_gaps) if absolute_gaps else None,
+                "maximum_absolute_model_gap": max(absolute_gaps) if absolute_gaps else None,
+                "total_ties_below_0_01": sum(int(item["tie_count_below_0_01"]) for item in pairs),
+                "total_ties_with_answer_distance_ge_1": sum(
+                    int(item["tie_with_answer_distance_ge_1_count"]) for item in pairs
+                ),
+                "total_ranking_reversals": sum(int(item["ranking_reversal_count"]) for item in pairs),
+                "slices": {
+                    f"{item['track']}::{item['group']}": {
+                        "signed_gap": item["mean_signed_gap"],
+                        "absolute_gap": abs(float(item["mean_signed_gap"])),
+                    }
+                    for item in pairs
+                },
+            }
+        )
+    return sorted(
+        summary,
+        key=lambda item: float(item["average_absolute_model_gap"] or 0.0),
+        reverse=True,
+    )
+
+
 def analyze_comparison(payload: dict[str, Any], context: ScoringContext) -> dict[str, Any]:
     candidates_list = candidates()
     source_rows = payload.get("results")
@@ -802,6 +853,7 @@ def analyze_comparison(payload: dict[str, Any], context: ScoringContext) -> dict
                 "examples": examples,
             }
         )
+    candidate_reports_payload = candidate_reports
     return {
         "schema_version": 1,
         "kind": "verifier_grounded_shadow_scoring",
@@ -820,8 +872,9 @@ def analyze_comparison(payload: dict[str, Any], context: ScoringContext) -> dict
             "public_gold_verified": True,
         },
         "candidates": [candidate.__dict__ for candidate in candidates_list],
+        "direct_nonlinear_summary": direct_nonlinear_summary(candidate_reports_payload),
         "records": records,
-        "candidate_reports": candidate_reports,
+        "candidate_reports": candidate_reports_payload,
     }
 
 
@@ -903,6 +956,9 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         candidate = report_item["candidate"]
         for pair in report_item["pair_metrics"]:
             lines.append("| " + " | ".join(md_value(value) for value in (candidate["candidate_id"], pair["track"], pair["group"], pair["gpt_paired_average_score"], pair["qwen_paired_average_score"], pair["gpt_full_average_score"], pair["qwen_full_average_score"], pair["mean_signed_gap"], pair["mean_absolute_gap"], pair["median_absolute_gap"], pair["p90_absolute_gap"], pair["tie_count_below_0_01"], pair["tie_with_answer_distance_ge_1_count"], pair["ranking_reversal_count"])) + " |")
+    lines.extend(["", "## Direct Nonlinear Ranking", "", "This table compares direct error-to-score mappings with arithmetic-mean task aggregation. The official linear rule is included only as a baseline. All rows retain a nonzero tail for finite normalized errors.", "", "| rank | candidate | formula | average absolute model gap | maximum slice gap | ties <0.01 | ties with answer distance >=1 | ranking reversals |", "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |"])
+    for rank, item in enumerate(report["direct_nonlinear_summary"], start=1):
+        lines.append("| " + " | ".join(md_value(value) for value in (rank, item["candidate_id"], item["formula"], item["average_absolute_model_gap"], item["maximum_absolute_model_gap"], item["total_ties_below_0_01"], item["total_ties_with_answer_distance_ge_1"], item["total_ranking_reversals"])) + " |")
     lines.extend(["", "## Distribution", "", "| candidate | model | track | group | mean | median | zero rate | high-score rate | interior rate | Spearman vs official | Kendall vs official |", "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"])
     for report_item in report["candidate_reports"]:
         candidate = report_item["candidate"]

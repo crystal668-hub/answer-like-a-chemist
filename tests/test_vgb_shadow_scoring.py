@@ -6,6 +6,7 @@ import pytest
 
 from scripts.analyze_vgb_shadow_scoring import (
     aggregate_scores,
+    direct_nonlinear_summary,
     error_mapping,
     field_score,
     rank_correlation,
@@ -19,8 +20,12 @@ from scripts.analyze_vgb_shadow_scoring import (
     [
         ("linear", [1.0, 0.0, 0.0]),
         ("exponential", [1.0, 0.5, 0.25]),
+        ("exponential_p05", [1.0, 0.5, 2 ** (-math.sqrt(2))]),
+        ("exponential_p2", [1.0, 0.5, 0.0625]),
         ("rational", [1.0, 0.5, 1 / 3]),
-        ("power2", [1.0, 0.25, 0.1111111111111111]),
+        ("rational_p05", [1.0, 0.5, 1 / (1 + math.sqrt(2))]),
+        ("power2", [1.0, 0.25, 1 / 9]),
+        ("logistic", [1.0, 0.5, 1 / 6]),
     ],
 )
 def test_error_mapping_boundaries(mapping: str, expected: list[float]) -> None:
@@ -31,6 +36,21 @@ def test_error_mapping_boundaries(mapping: str, expected: list[float]) -> None:
 def test_linear_mapping_clips_but_tail_mappings_retain_large_error_information() -> None:
     assert error_mapping(4.0, "linear") == 0.0
     assert error_mapping(4.0, "exponential") > error_mapping(8.0, "exponential") > 0.0
+
+
+def test_direct_nonlinear_tails_are_monotone_and_nonzero_for_large_finite_errors() -> None:
+    for mapping in (
+        "exponential",
+        "exponential_p05",
+        "exponential_p2",
+        "rational",
+        "rational_p05",
+        "power2",
+        "logistic",
+    ):
+        values = [error_mapping(error, mapping) for error in (0.0, 0.25, 1.0, 4.0, 16.0)]
+        assert values == sorted(values, reverse=True)
+        assert all(value > 0.0 for value in values)
 
 
 @pytest.mark.parametrize("transform", ["square", "sqrt", "complement_square", "complement_sqrt", "log1p9"])
@@ -129,3 +149,22 @@ def test_unordered_numeric_group_uses_best_assignment() -> None:
     assert score == pytest.approx(1.0)
     assert all(item["score"] == 0.0 for item in fields)
     assert groups[0]["score"] == pytest.approx(1.0)
+
+
+def test_direct_nonlinear_summary_keeps_only_arithmetic_error_candidates() -> None:
+    reports = [
+        {
+            "candidate": {"candidate_id": "error_exponential_arithmetic", "kind": "error_space", "aggregation": "arithmetic_mean", "field_mapping": "exponential", "formula": "2^-e"},
+            "pair_metrics": [
+                    {"track": "advanced", "group": "skill-on", "mean_signed_gap": 0.2, "tie_count_below_0_01": 1, "tie_with_answer_distance_ge_1_count": 0, "ranking_reversal_count": 0}
+            ],
+        },
+        {
+            "candidate": {"candidate_id": "error_exponential_geometric", "kind": "error_space", "aggregation": "geometric_mean", "field_mapping": "exponential", "formula": "2^-e"},
+            "pair_metrics": [
+                    {"track": "advanced", "group": "skill-on", "mean_signed_gap": 0.9, "tie_count_below_0_01": 0, "tie_with_answer_distance_ge_1_count": 0, "ranking_reversal_count": 0}
+            ],
+        },
+    ]
+    summary = direct_nonlinear_summary(reports)
+    assert [item["candidate_id"] for item in summary] == ["error_exponential_arithmetic"]

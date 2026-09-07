@@ -158,8 +158,12 @@ printed in the report.
   scoring analysis over an existing verifier-grounded comparison report. It
   validates the pinned v0.9.1 task/profile inventory and public gold answers,
   reconstructs official scores before calculating diagnostic score-space,
-  error-space, and aggregation candidates, and writes independent JSON, CSV,
-  Markdown, and SHA-256 manifest artifacts without changing formal scores.
+  error-space, and aggregation candidates, including finite-error tail kernels
+  such as generalized exponential, rational, and logistic mappings, and writes
+  independent JSON, CSV, Markdown, and SHA-256 manifest artifacts without
+  changing formal scores. Direct error-kernel summaries rank arithmetic-mean
+  candidates by model separation while preserving the official linear result as
+  a baseline.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
   provider configuration for `qwen3.6-plus`, `deepseek-v4-pro`,
   `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash` using the
