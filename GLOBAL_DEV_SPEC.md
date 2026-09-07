@@ -154,6 +154,12 @@ printed in the report.
   workspaces into an independent evidence archive, records a path/metadata/SHA-256
   inventory, verifies every archive and unchanged source, and deletes sources
   only when all requested archives pass those checks.
+- `scripts/analyze_vgb_shadow_scoring.py` performs read-only nonlinear shadow
+  scoring analysis over an existing verifier-grounded comparison report. It
+  validates the pinned v0.9.1 task/profile inventory and public gold answers,
+  reconstructs official scores before calculating diagnostic score-space,
+  error-space, and aggregation candidates, and writes independent JSON, CSV,
+  Markdown, and SHA-256 manifest artifacts without changing formal scores.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
   provider configuration for `qwen3.6-plus`, `deepseek-v4-pro`,
   `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash` using the
