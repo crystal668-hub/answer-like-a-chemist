@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -273,9 +274,19 @@ def benchmark_skill_routing_inventory() -> dict[str, Any]:
                     if key not in {"skill", "single_agent_exposure"}
                 },
                 "source_path": f"skills/{skill_id}",
+                "container_source_path": f"/opt/benchmark/skills/{skill_id}",
+                "manifest_digest": hashlib.sha256(
+                    json.dumps(entry, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
             }
         )
-    return {"schema_version": 1, "health_check_applied": False, "skills": entries}
+    canonical = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {
+        "schema_version": 1,
+        "health_check_applied": False,
+        "skills": entries,
+        "inventory_sha256": hashlib.sha256(canonical).hexdigest(),
+    }
 
 
 def load_skill_tree() -> tuple[dict[str, Any], ...]:
@@ -304,7 +315,7 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
     if available_skills is None:
         lines.append("All single-agent chemistry skills are listed below.")
     else:
-        lines.append("Only health-checked skills available in this run are listed below.")
+        lines.append("The skills listed below come from the complete benchmark routing inventory.")
     for domain in SKILL_TREE:
         rendered_families: list[tuple[dict[str, Any], list[str]]] = []
         for family in domain["families"]:

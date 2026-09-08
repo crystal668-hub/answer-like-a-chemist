@@ -64,7 +64,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt resource admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Benchmark skill inventory/routing projection, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -200,11 +200,11 @@ uv run python -m benchmarking.workflow.cli
 
 The implemented default experiment groups are:
 
-- `single_llm_skills_on`: one OpenClaw agent with the health-filtered benchmark
-  skill allowlist.
+- `single_llm_skills_on`: one OpenClaw agent with the complete benchmark skill
+  routing inventory.
 - `single_llm_skills_off`: one OpenClaw agent with an explicit empty skill list.
-- `chemqa_skills_on`: the fixed-lane ChemQA workflow with the health-filtered
-  benchmark skill allowlist.
+- `chemqa_skills_on`: the fixed-lane ChemQA workflow with the benchmark skill
+  allowlist.
 
 All three current group definitions disable generic web search and web fetch.
 For each invocation, the CLI:
@@ -418,7 +418,8 @@ The final run artifact set includes:
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
 - `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
-- `skill-health.json` and `web-search-preflight.json`;
+- `skill-routing-inventory.json`, `web-search-preflight.json`, and (when the
+  Docker backend is selected) container attempt manifests/spools;
 - `analysis/` status, evidence, and reports when automated analysis is enabled.
 
 Legacy fixed-workspace evidence uses a separate archive kind and schema. It
@@ -539,8 +540,9 @@ boundary. Processes still run as the same local user.
   and may contain provider and gateway configuration. It must be treated as local
   operational state.
 - Many chemistry skills require optional Python packages, external executables,
-  API credentials, network providers, or optional MinerU API access. Startup
-  health filtering is the runtime authority for benchmark exposure.
+  API credentials, network providers, or optional MinerU API access. Skills-on
+  routing exposes the complete inventory; dependency and provider failures are
+  recorded during attempt execution.
 
 ### Non-goals of the current system
 

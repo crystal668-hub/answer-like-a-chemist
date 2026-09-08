@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from benchmarking.core.contracts import (
@@ -26,6 +26,7 @@ from benchmarking.core.convergence import (
     is_complete_answer_for_eval,
     is_timeout_family_text,
 )
+from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -41,6 +42,12 @@ from benchmarking.runtime.attempt_environment import (
     create_attempt_environment,
     dependency_install_events,
     remediate_forbidden_distributions,
+)
+from benchmarking.runtime.container_runtime import (
+    ContainerAttemptSpec,
+    ContainerMount,
+    DockerContainerRuntime,
+    materialize_container_config,
 )
 from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
@@ -487,6 +494,12 @@ class SingleLLMRunner:
         sleep_fn: Callable[[float], None] = time.sleep,
         no_timeout: bool = False,
         pypi_cutoff: str | None = None,
+        execution_backend: str = "host",
+        container_runtime: DockerContainerRuntime | None = None,
+        container_image: str = "openclaw-benchmark-single-llm:latest",
+        container_cpus: float | None = None,
+        container_memory_bytes: int | None = None,
+        container_pids_limit: int | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
@@ -512,6 +525,14 @@ class SingleLLMRunner:
         self.timeout_retries = max(0, int(timeout_retries))
         self.no_timeout = bool(no_timeout)
         self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or "").strip() or None
+        self.execution_backend = str(execution_backend or "host").strip().lower()
+        if self.execution_backend not in {"host", "docker"}:
+            raise ValueError(f"Unsupported single-LLM execution backend: {execution_backend}")
+        self.container_runtime = container_runtime or DockerContainerRuntime()
+        self.container_image = container_image
+        self.container_cpus = container_cpus
+        self.container_memory_bytes = container_memory_bytes
+        self.container_pids_limit = container_pids_limit
         self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
             timeout_retry_backoff_seconds,
             max_retries=self.timeout_retries,
@@ -545,14 +566,22 @@ class SingleLLMRunner:
     def _timeout_mode(self) -> str:
         return "no_timeout" if self.no_timeout else "bounded"
 
-    def _build_command(self, *, record: Any, session_id: str, prompt: str, wrapper_path: Path) -> list[str]:
+    def _build_command(
+        self,
+        *,
+        record: Any,
+        session_id: str,
+        prompt: str,
+        wrapper_path: Path,
+        config_path: Path | None = None,
+    ) -> list[str]:
         command = [
             sys.executable,
             str(wrapper_path),
             "--agent",
             self.agent_id,
             "--config-file",
-            str(self.config_path),
+            str(config_path or self.config_path),
             "--session-id",
             session_id,
             "--message",
@@ -942,6 +971,7 @@ class SingleLLMRunner:
                 result.runner_meta["attempt_environment"] = {"status": "failed", "error": str(exc)}
 
         attempt_env["BENCHMARK_WORKSPACE_DIR"] = str(lease.active_workspace)
+        attempt_env["BENCHMARK_ATTEMPT_INDEX"] = str(attempt_index)
         attempt_env["BENCHMARK_SKILL_SCRATCH_DIR"] = str(lease.scratch_dir)
         attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(lease.request_dir)
         attempt_env["BENCHMARK_SKILL_OUTPUT_DIR"] = str(lease.output_dir)
@@ -1248,6 +1278,140 @@ class SingleLLMRunner:
         temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         os.replace(temporary, self.config_path)
 
+    def _run_attempt_in_docker(
+        self,
+        *,
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        prompt: str,
+        session_id: str,
+        wrapper_path: Path,
+        env: dict[str, str],
+    ) -> RunnerResult:
+        workspace = Path(str(env.get("BENCHMARK_WORKSPACE_DIR") or self.workspace_manager.active_workspace_path(group_id=str(group.id), agent_id=self.agent_id))).resolve()
+        spool = workspace / "scratch" / "outputs" / "container-spool"
+        spool.mkdir(parents=True, exist_ok=True)
+        config_path = spool / "openclaw.json"
+        materialize_container_config(
+            self.config_path,
+            config_path,
+            agent_id=self.agent_id,
+            host_workspace=workspace,
+            host_skills_root=runtime_paths.skills_root,
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+        )
+        agent_entry = next(
+            entry for entry in ((json.loads(self.config_path.read_text(encoding="utf-8")).get("agents") or {}).get("list") or [])
+            if isinstance(entry, dict) and str(entry.get("id") or "") == self.agent_id
+        )
+        agent_dir = Path(str(agent_entry.get("agentDir") or "")).expanduser().resolve()
+        input_dir = Path(str(getattr(input_bundle, "bundle_dir", workspace / "scratch"))).resolve()
+        container_command = self._build_command(
+            record=record,
+            session_id=session_id,
+            prompt=prompt,
+            wrapper_path=Path("/opt/benchmark/benchmarking/runtime/single_llm_openclaw_wrapper.py"),
+            config_path=Path("/benchmark/config/openclaw.json"),
+        )
+        container_env = {
+            key: value
+            for key, value in env.items()
+            if key in {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY", "BENCHMARK_PYPI_CUTOFF"}
+        }
+        container_env.update(
+            {
+                "OPENCLAW_CONFIG_PATH": "/benchmark/config/openclaw.json",
+                "BENCHMARK_WORKSPACE_DIR": "/benchmark/workspace",
+                "BENCHMARK_SKILL_SCRATCH_DIR": "/benchmark/workspace/scratch",
+                "BENCHMARK_SKILL_REQUEST_DIR": "/benchmark/workspace/scratch/requests",
+                "BENCHMARK_SKILL_OUTPUT_DIR": "/benchmark/workspace/scratch/outputs",
+                "BENCHMARK_SKILL_NOTES_DIR": "/benchmark/workspace/scratch/notes",
+                "BENCHMARK_PROJECT_ROOT": "/opt/benchmark",
+                "BENCHMARK_SKILL_RUNNER": "/opt/benchmark/scripts/run_skill.py",
+                "BENCHMARK_ATTEMPT_PYTHON": "/opt/benchmark/.venv/bin/python",
+                "BENCHMARK_ATTEMPT_UV_CACHE": "/benchmark/workspace/scratch/tmp/cache/uv",
+            }
+        )
+        mounts = [
+            ContainerMount(workspace, PurePosixPath("/benchmark/workspace"), "rw", "workspace"),
+            ContainerMount(input_dir, PurePosixPath("/benchmark/input"), "ro", "input"),
+            ContainerMount(config_path, PurePosixPath("/benchmark/config/openclaw.json"), "ro", "config"),
+            ContainerMount(agent_dir, PurePosixPath("/benchmark/session/agent"), "rw", "session"),
+            ContainerMount(spool, PurePosixPath("/benchmark/result-spool"), "rw", "spool"),
+        ]
+        if bool(getattr(group, "skills_enabled", True)):
+            mounts.append(ContainerMount(runtime_paths.skills_root, PurePosixPath("/opt/benchmark/skills"), "ro", "skills"))
+        identity = AttemptIdentity(
+            run_id=self.workspace_manager.run_id,
+            invocation_id=self.workspace_manager.invocation_id,
+            group_id=str(group.id),
+            runner_kind="single_llm",
+            agent_id=self.agent_id,
+            record_id=str(record.record_id),
+            attempt_index=int(env.get("BENCHMARK_ATTEMPT_INDEX") or 0),
+            session_id=session_id,
+            template_id="single-llm-skills-on-v1" if bool(getattr(group, "skills_enabled", True)) else "single-llm-skills-off-v1",
+        )
+        spec = ContainerAttemptSpec(
+            identity=identity,
+            image=self.container_image,
+            command=tuple(container_command),
+            environment=container_env,
+            mounts=tuple(mounts),
+            cpu_limit=self.container_cpus,
+            memory_limit_bytes=self.container_memory_bytes,
+            pids_limit=self.container_pids_limit,
+            timeout_seconds=self._wrapper_subprocess_timeout_seconds(),
+            allowed_source_roots=(workspace, input_dir, config_path, agent_dir, runtime_paths.skills_root),
+        )
+        (spool / "container-manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "identity": identity.sentinel_fields(),
+                    "image": spec.image,
+                    "network_mode": spec.network_mode,
+                    "mounts": [
+                        {"source": str(mount.source), "target": str(mount.target), "mode": mount.mode, "kind": mount.kind}
+                        for mount in spec.mounts
+                    ],
+                    "resource_limits": {"cpus": spec.cpu_limit, "memory_bytes": spec.memory_limit_bytes, "pids": spec.pids_limit},
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        handle = self.container_runtime.create(spec)
+        try:
+            self.container_runtime.start(handle)
+            outcome = self.container_runtime.collect(handle, timeout_seconds=spec.timeout_seconds, cancellation_token=getattr(self, "_cancellation_token", None))
+            (spool / "stdout.log").write_text(outcome.stdout, encoding="utf-8")
+            (spool / "stderr.log").write_text(outcome.stderr, encoding="utf-8")
+            if outcome.timed_out:
+                return self._subprocess_timeout_result(exc=subprocess.TimeoutExpired(container_command, spec.timeout_seconds, output=outcome.stdout, stderr=outcome.stderr), record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+            completed = subprocess.CompletedProcess(container_command, outcome.return_code or 0, outcome.stdout, outcome.stderr)
+            if completed.returncode != 0:
+                classification = capture_execution_error(returncode=completed.returncode, stdout=outcome.stdout, stderr=outcome.stderr, session_id=session_id)
+                return self._execution_error_result(classification=classification, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+            payload = self._parse_json_stdout(completed, container_command)
+            result_payload = self._unwrap_agent_payload(payload)
+            runner_meta = dict(result_payload.get("meta") or {})
+            runner_meta["container"] = {"container_id": handle.container_id, "container_name": handle.container_name, "image_digest": handle.image_digest, "inspect": dict(outcome.inspect), "stats": dict(outcome.stats), "cleanup": dict(outcome.cleanup)}
+            return RunnerResult(status=RunStatus.COMPLETED, answer=AnswerPayload(short_answer_text=self._summarize_payloads(list(result_payload.get("payloads") or [])), full_response_text=self._summarize_payloads(list(result_payload.get("payloads") or []))), raw=payload, runner_meta=runner_meta)
+        finally:
+            try:
+                self.container_runtime.stop(handle, grace_seconds=10)
+            except Exception:
+                try:
+                    self.container_runtime.kill(handle)
+                except Exception:
+                    pass
+            cleanup = self.container_runtime.remove(handle, force=True)
+            (spool / "cleanup.json").write_text(json.dumps(cleanup.__dict__, indent=2) + "\n", encoding="utf-8")
+
     def _run_attempt(
         self,
         record: Any,
@@ -1259,6 +1423,16 @@ class SingleLLMRunner:
         wrapper_path: Path,
         env: dict[str, str],
     ) -> RunnerResult:
+        if self.execution_backend == "docker":
+            return self._run_attempt_in_docker(
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                prompt=prompt,
+                session_id=session_id,
+                wrapper_path=wrapper_path,
+                env=env,
+            )
         command = self._build_command(record=record, session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
         try:
             result = self._run_subprocess(command, env=env, timeout=self._wrapper_subprocess_timeout_seconds())

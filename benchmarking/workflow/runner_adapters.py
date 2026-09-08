@@ -31,6 +31,7 @@ from benchmarking.runtime.cleanroom import (
     iter_pending_cleanup_manifests,
 )
 from benchmarking.runtime.config_pool import actual_slot_ids
+from benchmarking.runtime.container_runtime import DockerContainerRuntime
 from benchmarking.runtime.session_isolation import inspect_postflight_session
 from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
 from benchmarking.workflow.chemqa_response import (
@@ -119,6 +120,11 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
         contamination_auditor=None,
         cancellation_token: CancellationToken | None = None,
         process_registry: OwnedProcessRegistry | None = None,
+        execution_backend: str = "host",
+        container_image: str = "openclaw-benchmark-single-llm:latest",
+        container_cpus: float | None = None,
+        container_memory_bytes: int | None = None,
+        container_pids_limit: int | None = None,
     ) -> None:
         self._cancellation_enabled = cancellation_token is not None
         self._cancellation_token = cancellation_token or CancellationToken()
@@ -157,6 +163,12 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             sleep_fn=sleep_fn,
             no_timeout=no_timeout,
             pypi_cutoff=pypi_cutoff,
+            execution_backend=execution_backend,
+            container_runtime=DockerContainerRuntime() if execution_backend == "docker" else None,
+            container_image=container_image,
+            container_cpus=container_cpus,
+            container_memory_bytes=container_memory_bytes,
+            container_pids_limit=container_pids_limit,
             run_subprocess=lambda *args, **kwargs: subprocess_utils.run_owned_subprocess(
                 *args,
                 cancellation_token=self._cancellation_token,

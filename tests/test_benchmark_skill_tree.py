@@ -109,10 +109,10 @@ def test_top_level_skill_tree_is_a_neutral_full_catalog() -> None:
     assert len(rendered.splitlines()) < 150
 
 
-def test_top_level_skill_tree_reflects_health_filtered_availability() -> None:
+def test_top_level_skill_tree_uses_routing_inventory_wording() -> None:
     rendered = render_top_level_skill_tree(available_skills={"act-like-a-chemist", "rdkit", "paper-access"})
 
-    assert "Only health-checked skills available in this run are listed below" in rendered
+    assert "complete benchmark routing inventory" in rendered
     assert "benchmark-solving-protocol" not in rendered
     assert "chemist-sop" in rendered
     assert "molecular-structure-identity" in rendered

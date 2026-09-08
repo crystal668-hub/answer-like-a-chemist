@@ -134,6 +134,12 @@ def run_group(
     process_registry: Any | None = None,
     pypi_cutoff: str | None = None,
     vgb_skill_allowlist: tuple[str, ...] | list[str] = (),
+    admission_controller: Any | None = None,
+    execution_backend: str = "host",
+    container_image: str = "openclaw-benchmark-single-llm:latest",
+    container_cpus: float | None = None,
+    container_memory_bytes: int | None = None,
+    container_pids_limit: int | None = None,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
 
@@ -197,6 +203,11 @@ def run_group(
                 cancellation_token=cancellation_token,
                 process_registry=process_registry,
                 pypi_cutoff=pypi_cutoff,
+                execution_backend=execution_backend,
+                container_image=container_image,
+                container_cpus=container_cpus,
+                container_memory_bytes=container_memory_bytes,
+                container_pids_limit=container_pids_limit,
             )
     except Exception as exc:
         if cancellation_token is not None and cancellation_token.is_cancelled:
@@ -260,7 +271,12 @@ def run_group(
             progress_writer.record_started(group.id, record.record_id, index=index)
         started = time.time()
         run_result: Any | None = None
+        admission_lease = None
         try:
+            if admission_controller is not None and group.runner == "single_llm":
+                from benchmarking.runtime.attempt_admission import ResourceRequest
+
+                admission_lease = admission_controller.acquire(ResourceRequest())
             run_result = runner.run(record, group)
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
@@ -367,6 +383,9 @@ def run_group(
                 )
             if progress_writer is not None:
                 progress_writer.error(group_id=group.id, record_id=record.record_id, message=str(exc))
+        finally:
+            if admission_lease is not None:
+                admission_controller.release(admission_lease)
         group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
         if progress_writer is not None:

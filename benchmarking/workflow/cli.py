@@ -42,6 +42,7 @@ from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import judge as judge_runtime
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
+from benchmarking.runtime.attempt_admission import AttemptAdmissionController
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -255,6 +256,12 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="相邻波次之间的等待秒数，默认 10，用于给系统释放资源的窗口",
     )
+    parser.add_argument("--execution-backend", choices=("host", "docker"), default="host", help="single-LLM execution backend")
+    parser.add_argument("--container-image", default="openclaw-benchmark-single-llm:latest", help="Docker image for single-LLM attempts")
+    parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
+    parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")
+    parser.add_argument("--container-pids-limit", type=int, help="PID limit per single-LLM container")
+    parser.add_argument("--max-concurrent-attempts", type=int, help="Maximum admitted single-LLM attempts")
     parser.add_argument("--review-rounds", type=int, help="ChemQA review rounds 覆盖值")
     parser.add_argument("--rebuttal-rounds", type=int, help="ChemQA rebuttal rounds 覆盖值")
     parser.add_argument("--list-datasets", action="store_true", help="列出可发现的数据集文件后退出")
@@ -538,6 +545,11 @@ def main() -> int:
         raise _BenchmarkError(f"Benchmark workspace startup recovery failed: {exc.message}") from exc
     cancellation_token = CancellationToken()
     process_registry = OwnedProcessRegistry(cancellation_token=cancellation_token)
+    admission_controller = AttemptAdmissionController(
+        total_cpus=float(max(1, os.cpu_count() or 1)),
+        total_memory_bytes=0,
+        max_attempts=getattr(args, "max_concurrent_attempts", None),
+    )
     pending_records_by_group = {
         group_id: run_state.pending_records_for_group(
             records,
@@ -624,6 +636,7 @@ def main() -> int:
         slugify_fn=run_state.slugify,
         pypi_cutoff=pypi_cutoff,
         vgb_skill_allowlist=tuple(experiments.BENCHMARK_SKILLS_ALLOWLIST),
+        admission_controller=admission_controller,
     )
 
     group_results: dict[str, list[_GroupRecordResult]] = {}
@@ -703,6 +716,12 @@ def main() -> int:
                         progress_writer=progress_writer,
                         cancellation_token=cancellation_token,
                         process_registry=process_registry,
+                        admission_controller=admission_controller,
+                        execution_backend=getattr(args, "execution_backend", "host"),
+                        container_image=getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
+                        container_cpus=getattr(args, "container_cpus", None),
+                        container_memory_bytes=getattr(args, "container_memory_bytes", None),
+                        container_pids_limit=getattr(args, "container_pids_limit", None),
                     )
                     future_map[future] = group_id
 
@@ -927,8 +946,9 @@ def main() -> int:
         },
         "records": len(records),
         "execution_plan": {
-            "mode": "wave-batched",
+            "mode": "wave-batched-with-attempt-admission",
             "max_concurrent_groups": args.max_concurrent_groups,
+            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", None),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
             "waves": group_waves,
         },
@@ -952,8 +972,9 @@ def main() -> int:
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
         "execution_plan": {
-            "mode": "wave-batched",
+            "mode": "wave-batched-with-attempt-admission",
             "max_concurrent_groups": args.max_concurrent_groups,
+            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", None),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
             "waves": group_waves,
         },
@@ -963,6 +984,10 @@ def main() -> int:
         "skill_health": {
             "summary": skill_health_summary,
             "report_path": str(output_root / "skill-routing-inventory.json"),
+            "health_check_applied": False,
+        },
+        "skill_routing_inventory": {
+            "path": str(output_root / "skill-routing-inventory.json"),
             "health_check_applied": False,
         },
         "web_search_preflight": {
@@ -975,6 +1000,16 @@ def main() -> int:
             "backoff_seconds": list(single_timeout_retry_backoff_seconds),
         },
         "timeout_mode": timeout_mode,
+        "container_runtime": {
+            "backend": getattr(args, "execution_backend", "host"),
+            "image": getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
+            "network_mode": "host",
+            "resource_limits": {
+                "cpus": getattr(args, "container_cpus", None),
+                "memory_bytes": getattr(args, "container_memory_bytes", None),
+                "pids": getattr(args, "container_pids_limit", None),
+            },
+        },
         "workspace_isolation": {
             "schema_version": 3,
             "run_id": run_id,
