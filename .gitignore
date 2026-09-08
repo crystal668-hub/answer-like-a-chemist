@@ -21,6 +21,7 @@ __pycache__/
 /state/
 /docs/*
 !/docs/superpowers/
+!/docs/design/
 /data/
 /benchmark-single-skills-on/
 /benchmark-runs/
