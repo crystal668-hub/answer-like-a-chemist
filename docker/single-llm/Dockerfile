@@ -14,7 +14,7 @@ COPY benchmarking ./benchmarking
 
 RUN npm install --global openclaw@2026.6.9 \
     && uv sync --frozen --no-dev \
-    && useradd --create-home --uid 1000 --shell /bin/sh benchmark
+    && python -c "from pathlib import Path; Path('/etc/group').open('a').write('benchmark:x:1000:\\n'); Path('/etc/passwd').open('a').write('benchmark:x:1000:1000::/home/benchmark:/bin/sh\\n'); Path('/home/benchmark').mkdir(parents=True, exist_ok=True)"
 
 COPY docker/single-llm/entrypoint.sh /opt/benchmark/entrypoint.sh
 RUN chmod 0555 /opt/benchmark/entrypoint.sh \

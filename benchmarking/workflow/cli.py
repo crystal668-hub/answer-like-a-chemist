@@ -256,7 +256,7 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="相邻波次之间的等待秒数，默认 10，用于给系统释放资源的窗口",
     )
-    parser.add_argument("--execution-backend", choices=("host", "docker"), default="host", help="single-LLM execution backend")
+    parser.add_argument("--execution-backend", choices=("host", "docker"), default="docker", help="single-LLM execution backend")
     parser.add_argument("--container-image", default="openclaw-benchmark-single-llm:latest", help="Docker image for single-LLM attempts")
     parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
     parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")
@@ -717,7 +717,7 @@ def main() -> int:
                         cancellation_token=cancellation_token,
                         process_registry=process_registry,
                         admission_controller=admission_controller,
-                        execution_backend=getattr(args, "execution_backend", "host"),
+                        execution_backend=getattr(args, "execution_backend", "docker"),
                         container_image=getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
                         container_cpus=getattr(args, "container_cpus", None),
                         container_memory_bytes=getattr(args, "container_memory_bytes", None),
@@ -1002,7 +1002,7 @@ def main() -> int:
         },
         "timeout_mode": timeout_mode,
         "container_runtime": {
-            "backend": getattr(args, "execution_backend", "host"),
+            "backend": getattr(args, "execution_backend", "docker"),
             "image": getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
             "network_mode": "host",
             "resource_limits": {

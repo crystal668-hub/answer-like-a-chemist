@@ -549,7 +549,9 @@ boundary. Processes still run as the same local user.
 
 - The host execution backend still runs attempt workspaces as the same local
   user; the optional Docker backend adds container isolation but is not a
-  complete syscall or multi-user security boundary.
+  complete syscall or multi-user security boundary. The CLI defaults to the
+  Docker backend for single-LLM attempts; `--execution-backend host` remains a
+  compatibility fallback.
 - The benchmark dashboard is a localhost review surface, not a benchmark launcher,
   multi-user service, or authority that rewrites immutable result artifacts.
 - Automated post-run analysis is not part of benchmark scoring.
