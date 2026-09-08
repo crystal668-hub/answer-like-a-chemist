@@ -67,7 +67,8 @@ from benchmarking.scoring.evaluators.verifier_grounded import (
 )
 from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
 from benchmarking.scoring.results import build_execution_error_evaluation
-from benchmarking.skills.health import check_all_skill_health, summarize_skill_health
+from benchmarking.skills.health import check_all_skill_health, summarize_skill_health  # compatibility imports; routing does not probe health
+from benchmarking.skills.tree import benchmark_skill_routing_inventory
 from benchmarking.workflow import (
     dataset_selection,
     experiments,
@@ -547,12 +548,18 @@ def main() -> int:
         for group_id in group_ids
     }
 
-    skill_health_reports = check_all_skill_health(experiments.BENCHMARK_SKILLS_ALLOWLIST, workspace_root=runtime_paths.project_root)
-    skill_health_summary = summarize_skill_health(skill_health_reports)
-    run_state.save_json(output_root / "skill-health.json", {"summary": skill_health_summary, "skills": skill_health_reports})
+    skill_routing_inventory = benchmark_skill_routing_inventory()
+    run_state.save_json(output_root / "skill-routing-inventory.json", skill_routing_inventory)
+    skill_health_summary: dict[str, Any] = {
+        "health_check_applied": False,
+        "available_skill_count": len(skill_routing_inventory["skills"]),
+        "unavailable_skill_count": 0,
+        "available_skills": [entry["skill_id"] for entry in skill_routing_inventory["skills"]],
+        "unavailable_skills": [],
+    }
     effective_experiment_specs = experiments.build_effective_experiment_specs(
         experiments.EXPERIMENT_SPECS,
-        skill_health_reports=skill_health_reports,
+        skill_health_reports={},
     )
 
     config_pool = runtime_config_pool.ConfigPool(
@@ -955,7 +962,8 @@ def main() -> int:
         "merge_existing_per_record": args.merge_existing_per_record,
         "skill_health": {
             "summary": skill_health_summary,
-            "report_path": str(output_root / "skill-health.json"),
+            "report_path": str(output_root / "skill-routing-inventory.json"),
+            "health_check_applied": False,
         },
         "web_search_preflight": {
             **web_search_preflight,

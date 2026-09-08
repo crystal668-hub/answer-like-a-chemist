@@ -59,7 +59,10 @@ from benchmarking.scoring.results import (
     EvaluationResult,
     build_execution_error_evaluation,
 )
-from benchmarking.skills.tree import load_chemistry_skill_inventory
+from benchmarking.skills.tree import (
+    benchmark_skill_routing_inventory,
+    load_chemistry_skill_inventory,
+)
 from benchmarking.workflow import cli as benchmark_test
 from benchmarking.workflow import (
     dataset_selection,
@@ -201,7 +204,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
         effective = experiments.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
 
-        self.assertEqual(("rdkit",), effective["single_llm_skills_on"].skill_allowlist)
+        self.assertEqual(("rdkit", "paper-access"), effective["single_llm_skills_on"].skill_allowlist)
 
     def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
         inventory_skills = [
@@ -213,6 +216,14 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertEqual(85, len(experiments.BENCHMARK_SKILLS_ALLOWLIST))
         self.assertIn("act-like-a-chemist", experiments.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("chem-calculator", experiments.BENCHMARK_SKILLS_ALLOWLIST)
+
+    def test_benchmark_skill_routing_inventory_is_not_health_filtered(self) -> None:
+        inventory = benchmark_skill_routing_inventory()
+        self.assertFalse(inventory["health_check_applied"])
+        self.assertEqual(
+            {entry["skill_id"] for entry in inventory["skills"]},
+            set(experiments.BENCHMARK_SKILLS_ALLOWLIST),
+        )
         self.assertIn("pymatgen", experiments.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("paper-retrieval", experiments.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertIn("paper-access", experiments.BENCHMARK_SKILLS_ALLOWLIST)

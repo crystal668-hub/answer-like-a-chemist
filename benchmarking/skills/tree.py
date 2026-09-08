@@ -251,6 +251,33 @@ def benchmark_skill_allowlist() -> tuple[str, ...]:
     )
 
 
+def benchmark_skill_routing_inventory() -> dict[str, Any]:
+    """Return the complete deterministic routing inventory for benchmark skills.
+
+    This is metadata projection only; it intentionally performs no dependency,
+    API, executable, or network health checks.
+    """
+    entries = []
+    for entry in load_chemistry_skill_inventory().get("skills", []):
+        if entry.get("single_agent_exposure") is not True:
+            continue
+        skill_id = str(entry.get("skill") or "").strip()
+        if not skill_id:
+            continue
+        entries.append(
+            {
+                "skill_id": skill_id,
+                "route_metadata": {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {"skill", "single_agent_exposure"}
+                },
+                "source_path": f"skills/{skill_id}",
+            }
+        )
+    return {"schema_version": 1, "health_check_applied": False, "skills": entries}
+
+
 def load_skill_tree() -> tuple[dict[str, Any], ...]:
     return SKILL_TREE
 

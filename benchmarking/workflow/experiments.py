@@ -104,15 +104,9 @@ def build_effective_experiment_specs(
     *,
     skill_health_reports: dict[str, dict[str, Any]],
 ) -> dict[str, ExperimentSpec]:
-    available = {skill for skill, report in skill_health_reports.items() if report.get("available") is True}
-    effective: dict[str, ExperimentSpec] = {}
-    for group_id, spec in specs.items():
-        if spec.skills_enabled and spec.skill_allowlist:
-            filtered = tuple(skill for skill in spec.skill_allowlist if skill in available)
-            effective[group_id] = replace(spec, skill_allowlist=filtered)
-        else:
-            effective[group_id] = spec
-    return effective
+    # Retained signature for callers and historical compatibility.  Skill
+    # health probing is intentionally no longer part of routing semantics.
+    return {group_id: replace(spec, skill_allowlist=tuple(spec.skill_allowlist)) for group_id, spec in specs.items()}
 
 
 def select_group_ids(raw: str) -> list[str]:

@@ -65,7 +65,7 @@ runbooks.
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
-| `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
+| `benchmarking/skills/` | Benchmark skill inventory/routing projection, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and synchronized dataset/subset facets across filters, run summaries, and record details. |
@@ -119,7 +119,8 @@ stable `EvaluationResult` shape and execution-error construction;
   benchmark-owned process termination.
 - Chemistry provider skills live as independent bundles under `skills/`.
   `skills/chemistry-routing-matrix.json` is the machine-readable capability and
-  exposure inventory; it is not a deterministic router.
+  exposure inventory; it is projected directly for skills-on runs and is not
+  health-filtered or a deterministic router.
 - The RDKit skill exposes neutral, explicit conformer force-field selection:
   its generic conformer entrypoint requires `MMFF` or `UFF`, and dedicated MMFF
   and UFF scripts implement each family without cross-family fallback. Every
@@ -212,8 +213,8 @@ For each invocation, the CLI:
    datasets, normalize them to `BenchmarkRecord`, apply record selection, and
    classify the run output root. Runner adapters materialize run-local visual
    bundles when required.
-2. Runs skill health checks, filters skills-on allowlists, prepares a unique
-   invocation identity, captures the verifier-grounded release identity for the
+2. Projects the complete benchmark skill routing inventory without startup
+   dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
    lifetime of the invocation, recovers sentinel-proven stale active workspaces,
    and writes run-scoped OpenClaw configs.
 3. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches groups in
@@ -504,9 +505,11 @@ boundary. Processes still run as the same local user.
 - Single-LLM and judge calls clear only stale main-session pointers, use explicit
   run-scoped session ids, and verify the requested session and transcript after
   the turn. Historical transcripts remain available for audit.
-- Skills-on exposure is the intersection of the inventory allowlist and startup
-  health results. Skills-off runner configs contain `skills: []`. Skill choice is
-  left to the model; tool and skill diagnostics do not change answer scores.
+- Skills-on exposure uses the complete benchmark skill routing inventory.
+  Skills-off runner configs contain `skills: []`. Both groups use the same base
+  runtime and may install dependencies through the registry allowlist during an
+  attempt. Skill choice is left to the model; tool and skill diagnostics do not
+  change answer scores.
 - Agent-invoked local skill scripts run through `scripts/run_skill.py`, which uses
   the canonical workspace for dependency resolution and the attempt scratch
   directory for relative artifacts.
