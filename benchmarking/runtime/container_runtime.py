@@ -8,6 +8,7 @@ injectable and testable.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import stat
 import subprocess
@@ -156,7 +157,8 @@ class DockerContainerRuntime:
     def create(self, spec: ContainerAttemptSpec) -> ContainerAttemptHandle:
         self._validate_mounts(spec.mounts, spec.allowed_source_roots)
         labels = {**_identity_labels(spec.identity), **{str(k): str(v) for k, v in spec.labels.items()}}
-        name = "benchmark-" + "-".join((spec.identity.run_id, spec.identity.record_id, str(spec.identity.attempt_index), spec.identity.session_id))[:180]
+        raw_name = "-".join((spec.identity.run_id, spec.identity.record_id, str(spec.identity.attempt_index), spec.identity.session_id))
+        name = "benchmark-" + re.sub(r"[^a-zA-Z0-9_.-]+", "-", raw_name).strip("-.")[:180]
         args = ["create", "--name", name, "--network", spec.network_mode, "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m"]
         if spec.cpu_limit is not None:
             args += ["--cpus", str(spec.cpu_limit)]
