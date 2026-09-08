@@ -132,6 +132,8 @@ def run_group(
     progress_writer: Any | None = None,
     cancellation_token: CancellationToken | None = None,
     process_registry: Any | None = None,
+    pypi_cutoff: str | None = None,
+    vgb_skill_allowlist: tuple[str, ...] | list[str] = (),
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
 
@@ -184,6 +186,7 @@ def run_group(
                 config_path=config_path,
                 runtime_bundle_root=runtime_bundle_root,
                 configured_skills=tuple(experiment_specs[group.id].skill_allowlist or ()),
+                vgb_configured_skills=tuple(vgb_skill_allowlist) if group.skills_enabled else (),
                 skill_health_summary=skill_health_summary,
                 convergence_policy=single_convergence_policy or ConvergencePolicy(timeout_seconds=single_timeout),
                 timeout_retries=single_timeout_retries,
@@ -193,6 +196,7 @@ def run_group(
                 workspace_manager=workspace_manager,
                 cancellation_token=cancellation_token,
                 process_registry=process_registry,
+                pypi_cutoff=pypi_cutoff,
             )
     except Exception as exc:
         if cancellation_token is not None and cancellation_token.is_cancelled:

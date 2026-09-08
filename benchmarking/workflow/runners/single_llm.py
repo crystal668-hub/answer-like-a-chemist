@@ -33,10 +33,20 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
 )
+from benchmarking.runtime.attempt_environment import (
+    AttemptPythonEnvironment,
+    cleanup_attempt_environment,
+    cleanup_partial_attempt_environment,
+    collect_dependency_manifest,
+    create_attempt_environment,
+    dependency_install_events,
+    remediate_forbidden_distributions,
+)
 from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
     capture_execution_error,
 )
+from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
@@ -469,19 +479,23 @@ class SingleLLMRunner:
         allowed_workspace_roots: tuple[Path, ...] | list[Path] = (),
         contamination_auditor: Callable[..., ContaminationAudit] | None = None,
         configured_skills: tuple[str, ...] | list[str] = (),
+        vgb_configured_skills: tuple[str, ...] | list[str] = (),
         skill_health_summary: dict[str, Any] | None = None,
         convergence_policy: ConvergencePolicy | None = None,
         timeout_retries: int = 3,
         timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
         sleep_fn: Callable[[float], None] = time.sleep,
         no_timeout: bool = False,
+        pypi_cutoff: str | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
         self.convergence_policy = convergence_policy or ConvergencePolicy(timeout_seconds=timeout_seconds)
         self.config_path = config_path
         self.runtime_bundle_root = runtime_bundle_root
-        self.configured_skills = tuple(str(skill) for skill in configured_skills)
+        self.default_configured_skills = tuple(str(skill) for skill in configured_skills)
+        self.vgb_configured_skills = tuple(str(skill) for skill in vgb_configured_skills)
+        self.configured_skills = self.default_configured_skills
         self._run_subprocess = run_subprocess
         self._parse_json_stdout = parse_json_stdout
         self._unwrap_agent_payload = unwrap_agent_payload
@@ -497,6 +511,7 @@ class SingleLLMRunner:
         self.skill_health_summary = dict(skill_health_summary or {})
         self.timeout_retries = max(0, int(timeout_retries))
         self.no_timeout = bool(no_timeout)
+        self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or "").strip() or None
         self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
             timeout_retry_backoff_seconds,
             max_retries=self.timeout_retries,
@@ -556,9 +571,15 @@ class SingleLLMRunner:
         return command
 
     @staticmethod
-    def _attach_scratch_prompt(prompt: str, *, scratch_dir: Path, request_dir: Path, output_dir: Path) -> str:
-        return "\n".join(
-            [
+    def _attach_scratch_prompt(
+        prompt: str,
+        *,
+        scratch_dir: Path,
+        request_dir: Path,
+        output_dir: Path,
+        attempt_python_enabled: bool = False,
+    ) -> str:
+        lines = [
                 prompt.rstrip(),
                 "",
                 "BENCHMARK WORKSPACE FILE CONTRACT:",
@@ -566,8 +587,16 @@ class SingleLLMRunner:
                 '- For exec, omit workdir and begin with: cd "$BENCHMARK_SKILL_SCRATCH_DIR" &&',
                 "- Create child output directories in the same shell command before entering them.",
                 "- Do not reconstruct or modify benchmark runtime absolute paths.",
-            ]
-        )
+        ]
+        if attempt_python_enabled:
+            lines.extend(
+                [
+                    "- This attempt has a fresh Python environment; use `$BENCHMARK_ATTEMPT_PYTHON` for scratch scripts.",
+                    "- Install needed registry packages with `uv pip install PACKAGE`; installation time is part of the answer budget.",
+                    "- Do not create another venv or use pip, editable installs, URLs, local wheels, alternate indexes, or verifier packages.",
+                ]
+            )
+        return "\n".join(lines)
 
     def _timeout_failure_result(
         self,
@@ -848,6 +877,7 @@ class SingleLLMRunner:
         environment: dict[str, str],
     ) -> RunnerResult:
         skills_enabled = bool(getattr(group, "skills_enabled", True))
+        is_vgb = str(getattr(record, "eval_kind", "") or "").strip() == "verifier_grounded"
         identity = AttemptIdentity(
             run_id=self.workspace_manager.run_id,
             invocation_id=self.workspace_manager.invocation_id,
@@ -884,7 +914,33 @@ class SingleLLMRunner:
                 },
             )
 
+        attempt_environment: AttemptPythonEnvironment | None = None
+        result: RunnerResult | None = None
         attempt_env = dict(environment)
+        if is_vgb:
+            try:
+                attempt_environment = create_attempt_environment(
+                    lease.scratch_dir,
+                    bootstrap_python=sys.executable,
+                    pypi_cutoff=self.pypi_cutoff,
+                )
+                attempt_env = build_openclaw_subprocess_env(
+                    base_env=attempt_env,
+                    config_path=self.config_path,
+                    attempt_python=attempt_environment.python,
+                )
+                attempt_env.update(attempt_environment.to_env())
+            except Exception as exc:
+                cleanup_partial_attempt_environment(lease.scratch_dir)
+                result = self._unexpected_attempt_failure_result(
+                    exc=exc,
+                    record=record,
+                    group=group,
+                    input_bundle=input_bundle,
+                    session_id=session_id,
+                )
+                result.runner_meta["attempt_environment"] = {"status": "failed", "error": str(exc)}
+
         attempt_env["BENCHMARK_WORKSPACE_DIR"] = str(lease.active_workspace)
         attempt_env["BENCHMARK_SKILL_SCRATCH_DIR"] = str(lease.scratch_dir)
         attempt_env["BENCHMARK_SKILL_REQUEST_DIR"] = str(lease.request_dir)
@@ -897,6 +953,7 @@ class SingleLLMRunner:
             scratch_dir=lease.scratch_dir,
             request_dir=lease.request_dir,
             output_dir=lease.output_dir,
+            attempt_python_enabled=attempt_environment is not None,
         )
         scratch_meta = {
             "workspace_dir": str(lease.active_workspace),
@@ -909,24 +966,53 @@ class SingleLLMRunner:
             "session_id": session_id,
             "group_id": str(group.id),
         }
-        try:
-            result = self._run_attempt(
-                record,
-                group,
-                input_bundle=input_bundle,
-                prompt=attempt_prompt,
-                session_id=session_id,
-                wrapper_path=wrapper_path,
-                env=attempt_env,
-            )
-        except Exception as exc:
-            result = self._unexpected_attempt_failure_result(
-                exc=exc,
-                record=record,
-                group=group,
-                input_bundle=input_bundle,
-                session_id=session_id,
-            )
+        if result is None:
+            try:
+                result = self._run_attempt(
+                    record,
+                    group,
+                    input_bundle=input_bundle,
+                    prompt=attempt_prompt,
+                    session_id=session_id,
+                    wrapper_path=wrapper_path,
+                    env=attempt_env,
+                )
+            except Exception as exc:
+                result = self._unexpected_attempt_failure_result(
+                    exc=exc,
+                    record=record,
+                    group=group,
+                    input_bundle=input_bundle,
+                    session_id=session_id,
+                )
+        assert result is not None
+        if attempt_environment is not None:
+            try:
+                session_isolation = result.runner_meta.get("session_isolation")
+                session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
+                manifest = collect_dependency_manifest(
+                    attempt_environment,
+                    identity=identity.sentinel_fields(),
+                    base_env=attempt_env,
+                    install_events=dependency_install_events(
+                        session_isolation.get("postflight_entry_session_file")
+                    ),
+                )
+                dependency_audit = remediate_forbidden_distributions(
+                    attempt_environment,
+                    manifest,
+                )
+                manifest["dependency_audit"] = dependency_audit
+                manifest_path = lease.notes_dir / "dependency-manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                result.runner_meta["attempt_environment"] = manifest
+                result.runner_meta["dependency_audit"] = dependency_audit
+            except Exception as exc:
+                result.runner_meta["attempt_environment"] = {
+                    "status": "manifest_failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            result.runner_meta["attempt_environment_cleanup"] = cleanup_attempt_environment(attempt_environment)
         result.runner_meta["workspace_scratch"] = scratch_meta
         if skills_enabled:
             result.runner_meta["skill_scratch"] = scratch_meta
@@ -1006,6 +1092,10 @@ class SingleLLMRunner:
                 original_result=result,
             )
         isolation_meta.update(archive.to_meta())
+        if attempt_environment is not None:
+            archived_environment_manifest = archive.workspace / "scratch" / "notes" / "dependency-manifest.json"
+            if archived_environment_manifest.is_file():
+                result.runner_meta["attempt_environment_manifest"] = str(archived_environment_manifest)
         result.runner_meta["workspace_isolation"] = isolation_meta
         return result
 
@@ -1057,6 +1147,7 @@ class SingleLLMRunner:
         return result
 
     def run(self, record: Any, group: Any) -> RunnerResult:
+        self._configure_record_skills(record, group)
         input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
         prompt = self._build_single_llm_prompt(
             record,
@@ -1134,6 +1225,28 @@ class SingleLLMRunner:
             retry_reason=retry_reason,
             attempt_history=attempt_history,
         )
+
+    def _configure_record_skills(self, record: Any, group: Any) -> None:
+        is_vgb = str(getattr(record, "eval_kind", "") or "").strip() == "verifier_grounded"
+        skills_enabled = bool(getattr(group, "skills_enabled", True))
+        selected = self.vgb_configured_skills if is_vgb and skills_enabled else self.default_configured_skills
+        self.configured_skills = selected
+        if not self.config_path.is_file():
+            return
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        entries = ((payload.get("agents") or {}).get("list") or [])
+        changed = False
+        for entry in entries:
+            if isinstance(entry, dict) and str(entry.get("id") or "") == self.agent_id:
+                if entry.get("skills") != list(selected):
+                    entry["skills"] = list(selected)
+                    changed = True
+                break
+        if not changed:
+            return
+        temporary = self.config_path.with_name(f".{self.config_path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(temporary, self.config_path)
 
     def _run_attempt(
         self,

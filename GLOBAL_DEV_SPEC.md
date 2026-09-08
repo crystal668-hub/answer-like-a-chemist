@@ -68,7 +68,7 @@ runbooks.
 | `benchmarking/skills/` | Benchmark skill inventory projection, health checks, fixed skill-script runtime, and post-run tool/skill diagnostics. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
-| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, and dashboard-only annotations. |
+| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and synchronized dataset/subset facets across filters, run summaries, and record details. |
 
 `benchmarking.runtime.paths` is the shared path authority used by the package
 and scripts. The benchmark CLI is owned directly by `benchmarking.workflow.cli`;
@@ -154,6 +154,16 @@ printed in the report.
   workspaces into an independent evidence archive, records a path/metadata/SHA-256
   inventory, verifies every archive and unchanged source, and deletes sources
   only when all requested archives pass those checks.
+- `scripts/analyze_vgb_shadow_scoring.py` performs read-only nonlinear shadow
+  scoring analysis over an existing verifier-grounded comparison report. It
+  validates the pinned v0.9.1 task/profile inventory and public gold answers,
+  reconstructs official scores before calculating diagnostic score-space,
+  error-space, and aggregation candidates, including finite-error tail kernels
+  such as generalized exponential, rational, and logistic mappings, and writes
+  independent JSON, CSV, Markdown, and SHA-256 manifest artifacts without
+  changing formal scores. Direct error-kernel summaries rank arithmetic-mean
+  candidates by model separation while preserving the official linear result as
+  a baseline.
 - `scripts/sync_openclaw_qwen_provider.py` updates the live runtime-home Qwen
   provider configuration for `qwen3.6-plus`, `deepseek-v4-pro`,
   `qwen3.7-max`, `qwen3.7-plus`, and `qwen3.8-flash` using the
@@ -169,6 +179,9 @@ printed in the report.
 - The benchmark CLI and fixed-lane OpenClaw drivers accept the `adaptive`
   thinking level required by MiniMax-M3; the Benchmark Orchestrator validates
   the model-specific level before launching a run.
+- VGB `single-LLM` attempts create a fresh `scratch/venv` from the bootstrap
+  Python via `uv venv --seed --no-project`; the workspace `.venv` remains the
+  bootstrap environment for the runner and non-VGB records.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
@@ -237,12 +250,20 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   default), sends a same-session reminder with the remaining time.
 - Every primary or timeout-retry attempt receives a fresh sentinel-managed
   workspace and run-scoped session id.
+- Records with `eval_kind=verifier_grounded` additionally receive a fresh
+  attempt-local Python environment and uv cache. All attempts in an invocation
+  share its run-start PyPI cutoff, while each retry starts from a new empty
+  environment. The agent may install registry packages with `uv pip`; pip
+  mutations, direct URLs, local/editable sources, alternate indexes, dependency
+  target overrides, and the pinned verifier distribution are blocked for
+  explicit commands under the cooperative-agent threat model.
 - The runner materializes the role contract, attaches current scratch paths,
   invokes `benchmarking.runtime.single_llm_openclaw_wrapper`, validates OpenClaw
   JSON stdout, and enforces the eval-aware candidate-answer contract.
-- The canonical workspace contract requires Python virtual environments created
-  under `scratch/` to use `python3 -m venv --copies venv`, keeping interpreter
-  entries inside the attempt workspace for safe archival.
+- The canonical workspace contract requires agent-created Python virtual
+  environments under `scratch/` to use `python3 -m venv --copies venv`.
+  Runner-created VGB environments use `uv venv --seed --no-project`, are
+  inventoried after the agent returns, and are removed before archival.
 - Nonzero OpenClaw subprocess results are classified from structured error
   evidence before diagnostic excerpts are truncated. Provider failures retain
   a terminal `primary_error` plus ordered `observed_errors`; internal error
@@ -251,6 +272,16 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - Timeout-family failures may create a fresh attempt. Transcript recovery and a
   same-session finalization repair can preserve a complete answer; incomplete or
   unreliable output remains non-scoreable.
+- Canonical skill scripts continue through `scripts/run_skill.py`. Within a VGB
+  attempt it executes them directly with `BENCHMARK_ATTEMPT_PYTHON`, without
+  resolving the workspace project or implicitly installing project extras.
+- After a VGB attempt returns, the runner records dependency commands from the
+  transcript, the installed distribution inventory, RECORD hashes, a hashed
+  replay requirements file, the run-start PyPI cutoff, credential names, and
+  allowlisted native-tool fingerprints. It removes any detected exact-denylist
+  distributions, then deletes the venv, uv cache, and native-tool wrappers
+  before sealing the workspace; the manifest remains in archived scratch and
+  runner metadata.
 - The transcript is audited under the attempt access policy before the complete
   workspace is archived. A `non_evaluable` adjudication or archive failure
   rejects an otherwise complete answer; `scoreable_degraded` preserves it with
@@ -298,7 +329,8 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   `python -I`; agent-visible datasets contain public prompts and answer schemas,
   not hidden verifier material. Final reporting references for every
   release-declared property-calculation track come from that pinned release's
-  public sample-answer inventory.
+  public `task(..., include_gold=True)` view; scoring-profile identifiers are
+  removed before the references enter reporting artifacts.
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
   change benchmark scoring or the CLI exit outcome.
@@ -319,7 +351,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   facets use the canonical
   `source_file` dataset segment when it follows the standard
   `<dataset>/data/<file>.jsonl` layout, correcting inconsistent persisted result
-  labels without rewriting run artifacts. Manual dashboard refreshes expose
+  labels without rewriting run artifacts. Verifier-grounded property-calculation
+  records are displayed under the release track names
+  `property_calculation_advanced` and `property_calculation_basic`, derived from
+  their record IDs while retaining historical dataset file names. Manual dashboard refreshes expose
   their pending state through the refresh control and restore the control after
   either success or failure. Favorited runs are pinned to the top of the run
   list; within favorited and non-favorited groups, discovery keeps the existing
