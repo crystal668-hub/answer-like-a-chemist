@@ -654,7 +654,8 @@ def main() -> int:
                 started_at=started_at,
                 inter_wave_delay_seconds=args.inter_wave_delay_seconds,
             )
-            with ThreadPoolExecutor(max_workers=max(1, len(wave_group_ids))) as executor:
+            attempt_limit = getattr(args, "max_concurrent_attempts", None)
+            with ThreadPoolExecutor(max_workers=max(1, int(attempt_limit or len(wave_group_ids)))) as executor:
                 future_map = {}
                 for group_id in wave_group_ids:
                     if cancellation_token.is_cancelled:
@@ -690,10 +691,16 @@ def main() -> int:
                         if spec is not None
                         else experiments.DEFAULT_SINGLE_AGENT
                     )
-                    future = executor.submit(
+                    batches = (
+                        [[record] for record in group_records]
+                        if attempt_limit and group.runner == "single_llm"
+                        else [group_records]
+                    )
+                    for records_batch in batches:
+                        future = executor.submit(
                         execute_group,
                         group=group,
-                        records=group_records,
+                        records=records_batch,
                         output_root=output_root,
                         single_timeout=args.single_timeout,
                         chemqa_timeout=args.chemqa_timeout,
@@ -722,26 +729,27 @@ def main() -> int:
                         container_cpus=getattr(args, "container_cpus", None),
                         container_memory_bytes=getattr(args, "container_memory_bytes", None),
                         container_pids_limit=getattr(args, "container_pids_limit", None),
-                    )
-                    future_map[future] = group_id
+                        )
+                        future_map[future] = (group_id, records_batch)
 
                 for future in as_completed(future_map):
-                    group_id = future_map[future]
+                    group_id, records_batch = future_map[future]
                     try:
-                        group_results[group_id] = future.result()
+                        group_results.setdefault(group_id, []).extend(future.result())
                     except Exception as exc:
                         group = experiments.EXPERIMENT_GROUPS[group_id]
                         error_message = f"Group `{group_id}` failed before returning results: {exc}"
-                        group_results[group_id] = materialize_failure_results(
+                        failure_results = materialize_failure_results(
                             group=group,
-                            records=pending_records_by_group[group_id],
+                            records=records_batch,
                             output_root=output_root,
                             error_message=error_message,
                         )
+                        group_results.setdefault(group_id, []).extend(failure_results)
                         record_group_progress_failure(
                             progress_writer,
                             group_id=group_id,
-                            records=pending_records_by_group[group_id],
+                            records=records_batch,
                             error_message=error_message,
                         )
             gc.collect()
