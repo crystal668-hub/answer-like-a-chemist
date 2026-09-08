@@ -989,6 +989,7 @@ def main() -> int:
         "skill_routing_inventory": {
             "path": str(output_root / "skill-routing-inventory.json"),
             "health_check_applied": False,
+            "sha256": skill_routing_inventory.get("inventory_sha256", ""),
         },
         "web_search_preflight": {
             **web_search_preflight,
@@ -1009,6 +1010,7 @@ def main() -> int:
                 "memory_bytes": getattr(args, "container_memory_bytes", None),
                 "pids": getattr(args, "container_pids_limit", None),
             },
+            "spool_root": str(output_root / "container-spool"),
         },
         "workspace_isolation": {
             "schema_version": 3,

@@ -11,7 +11,6 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /opt/benchmark
 COPY pyproject.toml uv.lock README.md ./
 COPY benchmarking ./benchmarking
-COPY scripts ./scripts
 
 RUN npm install --global openclaw@2026.6.9 \
     && uv sync --frozen --no-dev \

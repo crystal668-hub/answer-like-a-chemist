@@ -1342,6 +1342,7 @@ class SingleLLMRunner:
         ]
         if bool(getattr(group, "skills_enabled", True)):
             mounts.append(ContainerMount(runtime_paths.skills_root, PurePosixPath("/opt/benchmark/skills"), "ro", "skills"))
+            mounts.append(ContainerMount(runtime_paths.project_root / "scripts" / "run_skill.py", PurePosixPath("/opt/benchmark/scripts/run_skill.py"), "ro", "skill_runner"))
         identity = AttemptIdentity(
             run_id=self.workspace_manager.run_id,
             invocation_id=self.workspace_manager.invocation_id,
