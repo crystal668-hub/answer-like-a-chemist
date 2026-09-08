@@ -419,7 +419,8 @@ The final run artifact set includes:
 - `progress/events.jsonl` and `progress/state.json`;
 - `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
 - `skill-routing-inventory.json`, `web-search-preflight.json`, and (when the
-  Docker backend is selected) container attempt manifests/spools;
+  Docker backend is selected) per-attempt container manifests, logs, stats, and
+  cleanup spools;
 - `analysis/` status, evidence, and reports when automated analysis is enabled.
 
 Legacy fixed-workspace evidence uses a separate archive kind and schema. It
@@ -546,7 +547,9 @@ boundary. Processes still run as the same local user.
 
 ### Non-goals of the current system
 
-- Attempt workspaces are not containers, separate OS users, or syscall sandboxes.
+- The host execution backend still runs attempt workspaces as the same local
+  user; the optional Docker backend adds container isolation but is not a
+  complete syscall or multi-user security boundary.
 - The benchmark dashboard is a localhost review surface, not a benchmark launcher,
   multi-user service, or authority that rewrites immutable result artifacts.
 - Automated post-run analysis is not part of benchmark scoring.
