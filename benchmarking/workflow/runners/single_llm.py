@@ -1401,7 +1401,15 @@ class SingleLLMRunner:
             result_payload = self._unwrap_agent_payload(payload)
             runner_meta = dict(result_payload.get("meta") or {})
             runner_meta["container"] = {"container_id": handle.container_id, "container_name": handle.container_name, "image_digest": handle.image_digest, "inspect": dict(outcome.inspect), "stats": dict(outcome.stats), "cleanup": dict(outcome.cleanup)}
-            return RunnerResult(status=RunStatus.COMPLETED, answer=AnswerPayload(short_answer_text=self._summarize_payloads(list(result_payload.get("payloads") or [])), full_response_text=self._summarize_payloads(list(result_payload.get("payloads") or []))), raw=payload, runner_meta=runner_meta)
+            return self._build_container_runner_result(
+                payload=payload,
+                result_payload=result_payload,
+                runner_meta=runner_meta,
+                record=record,
+                group=group,
+                input_bundle=input_bundle,
+                session_id=session_id,
+            )
         finally:
             try:
                 self.container_runtime.stop(handle, grace_seconds=10)
@@ -1412,6 +1420,54 @@ class SingleLLMRunner:
                     pass
             cleanup = self.container_runtime.remove(handle, force=True)
             (spool / "cleanup.json").write_text(json.dumps(cleanup.__dict__, indent=2) + "\n", encoding="utf-8")
+
+    def _build_container_runner_result(
+        self,
+        *,
+        payload: dict[str, Any],
+        result_payload: dict[str, Any],
+        runner_meta: dict[str, Any],
+        record: Any,
+        group: Any,
+        input_bundle: Any,
+        session_id: str,
+    ) -> RunnerResult:
+        runner_meta["convergence_policy"] = self.convergence_policy.to_meta()
+        runner_meta["timeout_mode"] = self._timeout_mode()
+        payloads = list(result_payload.get("payloads") or [])
+        full_response_text = self._summarize_payloads(payloads)
+        short_answer_text, full_response_text = self._normalize_answer_tracks(full_response_text=full_response_text)
+        runner_meta["skill_use_audit"] = build_skill_use_audit(
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            configured_skills=self.configured_skills,
+            runner_meta=runner_meta,
+            final_response_text=full_response_text,
+            skill_health_summary=self.skill_health_summary,
+        )
+        if input_bundle is not None:
+            runner_meta["runtime_bundle"] = input_bundle.to_meta()
+        diagnostics = runner_meta.get("stdout_diagnostics")
+        if isinstance(diagnostics, dict) and diagnostics.get("schema_valid") is False:
+            message = "Single-LLM OpenClaw stdout did not contain a schema-valid agent result payload."
+            return RunnerResult(status=RunStatus.FAILED, answer=AnswerPayload(), raw=payload, runner_meta={**runner_meta, "error": message}, failure=FailureInfo(code="agent_result_contract_invalid", message=message, details=dict(diagnostics)))
+        session_isolation = runner_meta.get("session_isolation")
+        if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
+            message = f"Single-LLM OpenClaw session isolation failed for `{session_id}`."
+            return RunnerResult(status=RunStatus.FAILED, answer=AnswerPayload(short_answer_text=short_answer_text, full_response_text=full_response_text), raw=payload, runner_meta={**runner_meta, "error": message}, failure=FailureInfo(code="session_isolation_failed", message=message, details=dict(session_isolation)))
+        convergence = runner_meta.get("convergence")
+        recovered = isinstance(convergence, dict) and bool(convergence.get("transcript_answer_recovered") or convergence.get("finalization_rescue_succeeded"))
+        agent_error = classify_agent_error_payload(payloads=payloads, runner_meta=runner_meta, full_response_text=full_response_text, eval_kind=str(getattr(record, "eval_kind", "") or ""), answer_schema=verifier_grounded_answer_schema_from_record(record))
+        if agent_error is not None and not recovered:
+            return RunnerResult(status=RunStatus.FAILED, answer=AnswerPayload(), raw=payload, runner_meta={**runner_meta, "error": agent_error.message}, failure=FailureInfo(code=agent_error.kind, message=agent_error.message, details=dict(agent_error.details)))
+        contract = validate_candidate_answer_contract(record=record, short_answer_text=short_answer_text, full_response_text=full_response_text, runner_meta=runner_meta)
+        runner_meta["candidate_answer_contract"] = dict(contract.details)
+        if not contract.valid and not recovered:
+            return RunnerResult(status=RunStatus.FAILED, answer=AnswerPayload(), raw=payload, runner_meta={**runner_meta, "error": contract.message}, failure=FailureInfo(code=contract.code, message=contract.message, details=dict(contract.details)))
+        answer = AnswerPayload(short_answer_text=short_answer_text, full_response_text=full_response_text)
+        if recovered:
+            runner_meta["degraded_execution"] = True
+            return RunnerResult(status=RunStatus.RECOVERED, answer=answer, raw=payload, runner_meta=runner_meta, recovery=RecoveryInfo(source="single-llm-container-transcript", scored=True, evaluable=True, reliability="high_confidence_recovered", recovery_mode="single-llm-container-transcript", details=dict(convergence or {})))
+        return RunnerResult(status=RunStatus.COMPLETED, answer=answer, raw=payload, runner_meta=runner_meta)
 
     def _run_attempt(
         self,
