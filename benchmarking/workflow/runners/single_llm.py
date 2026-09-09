@@ -574,9 +574,10 @@ class SingleLLMRunner:
         prompt: str,
         wrapper_path: Path,
         config_path: Path | None = None,
+        python_executable: str | None = None,
     ) -> list[str]:
         command = [
-            sys.executable,
+            python_executable or sys.executable,
             str(wrapper_path),
             "--agent",
             self.agent_id,
@@ -1301,11 +1302,10 @@ class SingleLLMRunner:
             host_skills_root=runtime_paths.skills_root,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
         )
-        agent_entry = next(
-            entry for entry in ((json.loads(self.config_path.read_text(encoding="utf-8")).get("agents") or {}).get("list") or [])
-            if isinstance(entry, dict) and str(entry.get("id") or "") == self.agent_id
-        )
-        agent_dir = Path(str(agent_entry.get("agentDir") or "")).expanduser().resolve()
+        session_root = workspace / "scratch" / "session"
+        (session_root / "agents" / self.agent_id / "agent").mkdir(parents=True, exist_ok=True)
+        for name in ("logs", "state"):
+            (session_root / name).mkdir(parents=True, exist_ok=True)
         input_dir = Path(str(getattr(input_bundle, "bundle_dir", workspace / "scratch"))).resolve()
         container_command = self._build_command(
             record=record,
@@ -1313,14 +1313,21 @@ class SingleLLMRunner:
             prompt=prompt,
             wrapper_path=Path("/opt/benchmark/benchmarking/runtime/single_llm_openclaw_wrapper.py"),
             config_path=Path("/benchmark/config/openclaw.json"),
+            python_executable="/opt/benchmark/.venv/bin/python",
         )
         container_env = {
             key: value
             for key, value in env.items()
-            if key in {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY", "BENCHMARK_PYPI_CUTOFF"}
+            if key in {"LANG", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY", "BENCHMARK_PYPI_CUTOFF"}
+            or key.endswith("_API_KEY")
+            or key.endswith("_TOKEN")
+            or key.endswith("_BASE_URL")
         }
         container_env.update(
             {
+                "HOME": "/home/benchmark",
+                "OPENCLAW_HOME": "/home/benchmark",
+                "OPENCLAW_STATE_DIR": "/benchmark/session",
                 "OPENCLAW_CONFIG_PATH": "/benchmark/config/openclaw.json",
                 "BENCHMARK_WORKSPACE_DIR": "/benchmark/workspace",
                 "BENCHMARK_SKILL_SCRATCH_DIR": "/benchmark/workspace/scratch",
@@ -1337,7 +1344,7 @@ class SingleLLMRunner:
             ContainerMount(workspace, PurePosixPath("/benchmark/workspace"), "rw", "workspace"),
             ContainerMount(input_dir, PurePosixPath("/benchmark/input"), "ro", "input"),
             ContainerMount(config_path, PurePosixPath("/benchmark/config/openclaw.json"), "ro", "config"),
-            ContainerMount(agent_dir, PurePosixPath("/benchmark/session/agent"), "rw", "session"),
+            ContainerMount(session_root, PurePosixPath("/benchmark/session"), "rw", "session"),
             ContainerMount(spool, PurePosixPath("/benchmark/result-spool"), "rw", "spool"),
         ]
         if bool(getattr(group, "skills_enabled", True)):
@@ -1364,7 +1371,7 @@ class SingleLLMRunner:
             memory_limit_bytes=self.container_memory_bytes,
             pids_limit=self.container_pids_limit,
             timeout_seconds=self._wrapper_subprocess_timeout_seconds(),
-            allowed_source_roots=(workspace, input_dir, config_path, agent_dir, runtime_paths.skills_root),
+            allowed_source_roots=(workspace, input_dir, config_path, session_root, runtime_paths.skills_root),
         )
         (spool / "container-manifest.json").write_text(
             json.dumps(
@@ -1398,6 +1405,7 @@ class SingleLLMRunner:
                 classification = capture_execution_error(returncode=completed.returncode, stdout=outcome.stdout, stderr=outcome.stderr, session_id=session_id)
                 return self._execution_error_result(classification=classification, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
             payload = self._parse_json_stdout(completed, container_command)
+            payload = self._translate_container_paths(payload, session_root=session_root)
             result_payload = self._unwrap_agent_payload(payload)
             runner_meta = dict(result_payload.get("meta") or {})
             runner_meta["container"] = {"container_id": handle.container_id, "container_name": handle.container_name, "image_digest": handle.image_digest, "inspect": dict(outcome.inspect), "stats": dict(outcome.stats), "cleanup": dict(outcome.cleanup)}
@@ -1420,6 +1428,19 @@ class SingleLLMRunner:
                     pass
             cleanup = self.container_runtime.remove(handle, force=True)
             (spool / "cleanup.json").write_text(json.dumps(cleanup.__dict__, indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _translate_container_paths(value: Any, *, session_root: Path) -> Any:
+        if isinstance(value, str):
+            return value.replace("/benchmark/session", str(session_root))
+        if isinstance(value, list):
+            return [SingleLLMRunner._translate_container_paths(item, session_root=session_root) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: SingleLLMRunner._translate_container_paths(item, session_root=session_root)
+                for key, item in value.items()
+            }
+        return value
 
     def _build_container_runner_result(
         self,

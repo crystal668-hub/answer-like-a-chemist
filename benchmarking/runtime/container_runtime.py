@@ -320,7 +320,7 @@ def materialize_container_config(
         if str(entry.get("id") or "") == agent_id:
             item = rewrite(entry)
             item["workspace"] = "/benchmark/workspace"
-            item["agentDir"] = "/benchmark/session/agent"
+            item["agentDir"] = f"/benchmark/session/agents/{agent_id}/agent"
             selected.append(item)
     if not selected:
         raise ContainerRuntimeError(f"OpenClaw agent is missing from config: {agent_id}", code="container_config_invalid")

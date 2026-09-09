@@ -9,6 +9,7 @@ from benchmarking.runtime.container_runtime import (
     ContainerMount,
     ContainerRuntimeError,
     DockerContainerRuntime,
+    materialize_container_config,
 )
 
 
@@ -41,3 +42,24 @@ def test_create_builds_hardened_docker_command(tmp_path: Path) -> None:
     assert "--cap-drop" in command and "ALL" in command
     assert "--pids-limit" in command and "64" in command
     assert "--network" in command and "host" in command
+
+
+def test_materialize_container_config_uses_attempt_local_agent_state(tmp_path: Path) -> None:
+    source = tmp_path / "runtime.json"
+    source.write_text(
+        '{"agents":{"list":[{"id":"agent","workspace":"/host/work","agentDir":"/host/agent"}]}}',
+        encoding="utf-8",
+    )
+    destination = tmp_path / "container.json"
+    materialize_container_config(
+        source,
+        destination,
+        agent_id="agent",
+        host_workspace=Path("/host/work"),
+        host_skills_root=tmp_path / "skills",
+        skills_enabled=False,
+    )
+    payload = __import__("json").loads(destination.read_text(encoding="utf-8"))
+    entry = payload["agents"]["list"][0]
+    assert entry["workspace"] == "/benchmark/workspace"
+    assert entry["agentDir"] == "/benchmark/session/agents/agent/agent"

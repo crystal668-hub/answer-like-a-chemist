@@ -240,6 +240,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 
 ### Single-LLM runner
 
+- The default Docker backend runs the OpenClaw wrapper and embedded (`--local`)
+  agent turn inside the attempt container. It uses an attempt-local OpenClaw
+  state/session root under the managed workspace; container transcript paths
+  are translated back to their host archive paths before audit. Provider
+  credentials and endpoints are injected from the runner environment rather
+  than resolved through the host gateway.
 - Bounded single-LLM attempts default to 7200 seconds (2 hours). The runner
   forwards this budget to OpenClaw as `--timeout`; the wrapper subprocess guard
   adds the 90-second finalization safety window and 30-second process margin,
