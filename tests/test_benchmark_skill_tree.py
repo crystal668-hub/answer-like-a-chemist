@@ -110,7 +110,7 @@ def test_top_level_skill_tree_is_a_neutral_full_catalog() -> None:
 
 
 def test_top_level_skill_tree_uses_routing_inventory_wording() -> None:
-    rendered = render_top_level_skill_tree(available_skills={"act-like-a-chemist", "rdkit", "paper-access"})
+    rendered = render_top_level_skill_tree(configured_skills={"act-like-a-chemist", "rdkit", "paper-access"})
 
     assert "complete benchmark routing inventory" in rendered
     assert "benchmark-solving-protocol" not in rendered

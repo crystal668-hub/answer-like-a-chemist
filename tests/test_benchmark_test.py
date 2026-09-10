@@ -185,26 +185,10 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertFalse(experiments.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
         self.assertTrue(experiments.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
-    def test_effective_experiment_specs_filter_unavailable_skills(self) -> None:
-        health_reports = {
-            "rdkit": {"available": True},
-            "paper-access": {"available": False, "unavailable_reasons": [{"kind": "missing_dependency", "name": "bs4"}]},
-        }
-        specs = {
-            "single_llm_skills_on": ExperimentSpec(
-                id="single_llm_skills_on",
-                label="demo",
-                runner_kind="single_llm",
-                websearch_enabled=True,
-                skills_enabled=True,
-                single_agent_id="benchmark-single-skills-on",
-                skill_allowlist=("rdkit", "paper-access"),
-            )
-        }
-
-        effective = experiments.build_effective_experiment_specs(specs, skill_health_reports=health_reports)
-
-        self.assertEqual(("rdkit", "paper-access"), effective["single_llm_skills_on"].skill_allowlist)
+    def test_experiment_specs_expose_complete_configured_inventory(self) -> None:
+        for group_id, spec in experiments.EXPERIMENT_SPECS.items():
+            expected = tuple(experiments.BENCHMARK_SKILLS_ALLOWLIST) if spec.skills_enabled else ()
+            self.assertEqual(expected, spec.skill_allowlist, group_id)
 
     def test_benchmark_skills_allowlist_comes_from_skill_tree(self) -> None:
         inventory_skills = [
@@ -247,6 +231,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "benchmarking.workflow.cli",
                 "--single-agent-id-override",
                 "custom-single-agent",
+                "--execution-backend",
+                "host",
             ],
         ):
             args = benchmark_test.parse_args()
@@ -416,12 +402,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
             with mock.patch.object(runtime_config_pool, "ConfigPool", DummyConfigPool), \
                 mock.patch.object(judge_runtime, "JudgeClient", return_value=object()), \
-                mock.patch.object(benchmark_test, "check_all_skill_health", return_value={}), \
-                mock.patch.object(
-                    benchmark_test,
-                    "summarize_skill_health",
-                    return_value={"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
-                ), \
                 mock.patch.object(
                     benchmark_test,
                     "run_benchmark_web_search_preflight",
@@ -2916,6 +2896,7 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = fake_run_subprocess
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
@@ -2946,7 +2927,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("chembench_open_ended", command[command.index("--eval-kind") + 1])
             self.assertNotIn("--finalization-grace-seconds", command)
             audit = out.runner_meta["skill_use_audit"]
-            self.assertEqual(2, audit["available_skill_count"])
+            self.assertEqual(2, audit["configured_skill_count"])
             self.assertTrue(audit["skill_tool_executed"])
             self.assertEqual(1, audit["tool_call_count"])
             self.assertTrue(out.runner_meta["session_isolation"]["session_isolation_ok"])
@@ -2987,6 +2968,7 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = fake_run_subprocess
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
@@ -3045,6 +3027,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
                 config_path=Path("/tmp/single.json"),
@@ -3109,6 +3092,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3163,6 +3147,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3211,6 +3196,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3266,6 +3252,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3300,6 +3287,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3347,6 +3335,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3388,6 +3377,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3419,6 +3409,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3454,6 +3445,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3496,6 +3488,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3542,6 +3535,7 @@ Points: 0.5, Item: Second criterion
 
                     subprocess_utils.run_subprocess = fake_run_subprocess
                     runner = runner_adapters.SingleLLMRunner(
+                        execution_backend="host",
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
                         config_path=Path("/tmp/single.json"),
@@ -3589,6 +3583,7 @@ Points: 0.5, Item: Second criterion
 
                     subprocess_utils.run_subprocess = fake_run_subprocess
                     runner = runner_adapters.SingleLLMRunner(
+                        execution_backend="host",
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
                         config_path=Path("/tmp/single.json"),
@@ -3626,6 +3621,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3666,6 +3662,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3712,6 +3709,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3772,6 +3770,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3834,6 +3833,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3903,6 +3903,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -3962,6 +3963,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4020,6 +4022,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4070,6 +4073,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4123,6 +4127,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4175,6 +4180,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4234,6 +4240,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),
@@ -4295,6 +4302,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runner = runner_adapters.SingleLLMRunner(
+                execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
                 config_path=Path("/tmp/single.json"),

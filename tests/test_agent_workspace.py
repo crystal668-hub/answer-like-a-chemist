@@ -486,6 +486,17 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertFalse(owned.exists())
         self.assertEqual("keep", unknown.read_text(encoding="utf-8"))
 
+    def test_container_transcript_projection_audits_host_workspace_without_rewriting_evidence(self):
+        lease = self.manager.prepare(self._identity())
+        transcript = self.root / "container-transcript.jsonl"
+        payload = {"type": "message", "message": {"role": "assistant", "content": [{"type": "toolCall", "name": "write", "arguments": {"path": "/benchmark/workspace/scratch/tmp/result.txt", "content": "ok"}}]}}
+        original = json.dumps(payload) + "\n"
+        transcript.write_text(original)
+        audit = self.manager.audit_attempt(lease, {"session_isolation": {"postflight_entry_session_file": str(transcript)}}, transcript_path_mappings={"/benchmark/workspace": str(lease.active_workspace)})
+        self.assertEqual("complete", audit.audit_execution_status)
+        self.assertEqual("clear", audit.contamination_status)
+        self.assertEqual(original, transcript.read_text())
+
     def test_identity_scope_and_outside_runtime_paths_fail_closed(self) -> None:
         with self.assertRaisesRegex(WorkspaceIsolationError, "scope") as raised:
             self.manager.prepare(self._identity(invocation_id="other"))

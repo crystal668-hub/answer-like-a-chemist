@@ -128,6 +128,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             return CompletedProcess()
 
         return SingleLLMRunner(
+            execution_backend="host",
             agent_id="benchmark-single-skills-on",
             timeout_seconds=10,
             config_path=config_path,
@@ -187,10 +188,24 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def test_skills_on_timeout_retry_keeps_original_prompt(self) -> None:
         captured_commands: list[list[str]] = []
         runner = self._runner(captured_commands=captured_commands)
+        from benchmarking.runtime.attempt_admission import AttemptAdmissionController
+        class CountingAdmission(AttemptAdmissionController):
+            acquisitions = 0
+            releases = 0
+            def acquire(self):
+                self.acquisitions += 1
+                return super().acquire()
+            def release(self, lease):
+                self.releases += 1
+                return super().release(lease)
+        admission = CountingAdmission(max_attempts=1)
+        runner.admission_controller = admission
 
         result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
 
         self.assertEqual(2, len(captured_commands))
+        self.assertEqual(2, admission.acquisitions)
+        self.assertEqual(2, admission.releases)
         first_prompt = self._message_from_command(captured_commands[0])
         self.assertIn("BASE PROMPT", first_prompt)
         self.assertIn("BENCHMARK WORKSPACE FILE CONTRACT", first_prompt)
@@ -465,6 +480,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
             )
 
         runner = SingleLLMRunner(
+            execution_backend="host",
             agent_id="benchmark-single-skills-on",
             timeout_seconds=10,
             config_path=config_path,

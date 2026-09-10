@@ -213,7 +213,10 @@ function validateAttemptPackageCommand(command) {
   const marker = tokens.findIndex((value, index) => value === "pip" && index > 0 && tokens[index - 1] === "uv");
   if (marker >= 0 && ["install", "uninstall"].includes(tokens[marker + 1])) {
     for (const token of tokens.slice(marker + 2)) {
-      if (token.startsWith("-") || token.includes("/")) continue;
+      if (token.includes("/") || token === "." || token === ".." || /\.(?:whl|zip|tar\.gz)$/i.test(token)) {
+        return { ok: false, access: "dependency", reason: "local dependency sources are forbidden" };
+      }
+      if (token.startsWith("-")) continue;
       if (FORBIDDEN_DISTRIBUTIONS.has(normalizeDistribution(token))) {
         return { ok: false, access: "dependency", reason: "the requested distribution is forbidden in benchmark attempts" };
       }

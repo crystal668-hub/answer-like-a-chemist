@@ -43,6 +43,7 @@ from benchmarking.runtime import judge as judge_runtime
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.attempt_admission import AttemptAdmissionController
+from benchmarking.runtime.container_runtime import DockerContainerRuntime, ContainerRuntimeError
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -68,7 +69,6 @@ from benchmarking.scoring.evaluators.verifier_grounded import (
 )
 from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
 from benchmarking.scoring.results import build_execution_error_evaluation
-from benchmarking.skills.health import check_all_skill_health, summarize_skill_health  # compatibility imports; routing does not probe health
 from benchmarking.skills.tree import benchmark_skill_routing_inventory
 from benchmarking.workflow import (
     dataset_selection,
@@ -248,7 +248,7 @@ def parse_args() -> argparse.Namespace:
         "--max-concurrent-groups",
         type=int,
         default=2,
-        help="最多同时运行多少个实验组；默认 2，以降低 WSL 峰值资源占用",
+        help="Maximum concurrent ChemQA groups per wave (default: 2)",
     )
     parser.add_argument(
         "--inter-wave-delay-seconds",
@@ -261,7 +261,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
     parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")
     parser.add_argument("--container-pids-limit", type=int, help="PID limit per single-LLM container")
-    parser.add_argument("--max-concurrent-attempts", type=int, help="Maximum admitted single-LLM attempts")
+    parser.add_argument("--max-concurrent-attempts", type=int, default=2, help="Maximum admitted single-LLM attempts (default: 2)")
     parser.add_argument("--review-rounds", type=int, help="ChemQA review rounds 覆盖值")
     parser.add_argument("--rebuttal-rounds", type=int, help="ChemQA rebuttal rounds 覆盖值")
     parser.add_argument("--list-datasets", action="store_true", help="列出可发现的数据集文件后退出")
@@ -270,7 +270,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="打印本次实际选中的题目清单后退出",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.max_concurrent_attempts < 1:
+        parser.error("--max-concurrent-attempts must be positive")
+    return args
 
 
 
@@ -539,6 +542,26 @@ def main() -> int:
             output_root=output_root,
         ),
     )
+    docker_startup = {}
+    if getattr(args, "execution_backend", "docker") == "docker" and any(
+        experiments.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in group_ids
+    ):
+        runtime = DockerContainerRuntime()
+        try:
+            docker_startup["daemon"] = runtime.check_ready()
+            docker_startup["requested_image"] = args.container_image
+            args.container_image = runtime.resolve_image_digest(args.container_image)
+            docker_startup["image_id"] = args.container_image
+            docker_startup["recovery"] = runtime.recover_orphans(runtime_root=workspace_manager.runtime_root)
+            docker_startup["status"] = "ready"
+            if any(not item["removed"] and item.get("run_id") == run_id for item in docker_startup["recovery"]):
+                raise ContainerRuntimeError("Existing run containers could not be safely recovered")
+        except ContainerRuntimeError as exc:
+            docker_startup.update(status="failed", error=str(exc))
+            raise _BenchmarkError(f"Docker startup failed: {exc}") from exc
+        finally:
+            run_state.save_json(output_root / "docker-startup.json", docker_startup)
+            run_state.save_json(output_root / "runtime-manifest.json", {"terminal_status": "starting" if docker_startup.get("status") == "ready" else "failed", "docker_startup": docker_startup})
     try:
         workspace_startup_recovery = workspace_manager.recover_all_incomplete()
     except WorkspaceIsolationError as exc:
@@ -546,9 +569,8 @@ def main() -> int:
     cancellation_token = CancellationToken()
     process_registry = OwnedProcessRegistry(cancellation_token=cancellation_token)
     admission_controller = AttemptAdmissionController(
-        total_cpus=float(max(1, os.cpu_count() or 1)),
-        total_memory_bytes=0,
-        max_attempts=getattr(args, "max_concurrent_attempts", None),
+        max_attempts=getattr(args, "max_concurrent_attempts", 2),
+        cancellation_token=cancellation_token,
     )
     pending_records_by_group = {
         group_id: run_state.pending_records_for_group(
@@ -562,17 +584,7 @@ def main() -> int:
 
     skill_routing_inventory = benchmark_skill_routing_inventory()
     run_state.save_json(output_root / "skill-routing-inventory.json", skill_routing_inventory)
-    skill_health_summary: dict[str, Any] = {
-        "health_check_applied": False,
-        "available_skill_count": len(skill_routing_inventory["skills"]),
-        "unavailable_skill_count": 0,
-        "available_skills": [entry["skill_id"] for entry in skill_routing_inventory["skills"]],
-        "unavailable_skills": [],
-    }
-    effective_experiment_specs = experiments.build_effective_experiment_specs(
-        experiments.EXPERIMENT_SPECS,
-        skill_health_reports={},
-    )
+    effective_experiment_specs = experiments.EXPERIMENT_SPECS
 
     config_pool = runtime_config_pool.ConfigPool(
         base_config_path=Path(args.openclaw_config).expanduser().resolve(),
@@ -600,7 +612,9 @@ def main() -> int:
         cancellation_token=cancellation_token,
         process_registry=process_registry,
     )
-    group_waves = build_group_waves(group_ids, max_concurrent_groups=args.max_concurrent_groups)
+    single_groups = [key for key in group_ids if experiments.EXPERIMENT_GROUPS[key].runner == "single_llm"]
+    other_groups = [key for key in group_ids if key not in single_groups]
+    group_waves = ([single_groups] if single_groups else []) + build_group_waves(other_groups, max_concurrent_groups=args.max_concurrent_groups)
     progress_writer = ProgressWriter(
         output_root,
         total_records=sum(len(group_records) for group_records in pending_records_by_group.values()),
@@ -654,8 +668,9 @@ def main() -> int:
                 started_at=started_at,
                 inter_wave_delay_seconds=args.inter_wave_delay_seconds,
             )
-            attempt_limit = getattr(args, "max_concurrent_attempts", None)
-            with ThreadPoolExecutor(max_workers=max(1, int(attempt_limit or len(wave_group_ids)))) as executor:
+            attempt_limit = getattr(args, "max_concurrent_attempts", 2)
+            single_queue = all(experiments.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in wave_group_ids)
+            with ThreadPoolExecutor(max_workers=attempt_limit if single_queue else max(1, len(wave_group_ids))) as executor:
                 future_map = {}
                 for group_id in wave_group_ids:
                     if cancellation_token.is_cancelled:
@@ -685,6 +700,8 @@ def main() -> int:
                         )
                         continue
                     config_path = config_pool.config_for_group(group)
+                    if single_queue:
+                        progress_writer.group_started(group_id)
                     spec = effective_experiment_specs.get(group_id)
                     single_agent = (
                         spec.resolve_single_agent_id(args.single_agent_id_override)
@@ -693,7 +710,7 @@ def main() -> int:
                     )
                     batches = (
                         [[record] for record in group_records]
-                        if attempt_limit and group.runner == "single_llm"
+                        if group.runner == "single_llm"
                         else [group_records]
                     )
                     for records_batch in batches:
@@ -719,11 +736,11 @@ def main() -> int:
                         no_timeout=bool(getattr(args, "no_timeout", False)),
                         workspace_manager=workspace_manager,
                         experiment_specs=effective_experiment_specs,
-                        skill_health_summary=skill_health_summary,
                         progress_writer=progress_writer,
                         cancellation_token=cancellation_token,
                         process_registry=process_registry,
                         admission_controller=admission_controller,
+                        manage_group_lifecycle=not single_queue,
                         execution_backend=getattr(args, "execution_backend", "docker"),
                         container_image=getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
                         container_cpus=getattr(args, "container_cpus", None),
@@ -754,6 +771,16 @@ def main() -> int:
                         )
             gc.collect()
             completed_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+            if single_queue:
+                for group_id in wave_group_ids:
+                    if experiments.EXPERIMENT_GROUPS[group_id].websearch and dict((web_search_preflight.get("reports") or {}).get(group_id) or {}).get("available") is not True:
+                        continue
+                    if cancellation_token.is_cancelled:
+                        progress_writer.group_cancelled(group_id)
+                    else:
+                        entries = group_results.get(group_id, [])
+                        status = "completed" if all(item.run_lifecycle_status == "completed" for item in entries) else "completed_with_errors"
+                        progress_writer.group_completed(group_id, status=status)
             run_state.write_wave_status(
                 output_root,
                 wave_index=wave_index,
@@ -929,7 +956,6 @@ def main() -> int:
         ),
         "groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
         "run_groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
-        "skill_health_summary": skill_health_summary,
         "web_search_preflight": web_search_preflight,
         "convergence_policy": convergence_policy_meta,
         "single_timeout_retry": {
@@ -954,9 +980,9 @@ def main() -> int:
         },
         "records": len(records),
         "execution_plan": {
-            "mode": "wave-batched-with-attempt-admission",
+            "mode": "single-llm-queue-and-chemqa-waves",
             "max_concurrent_groups": args.max_concurrent_groups,
-            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", None),
+            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
             "waves": group_waves,
         },
@@ -975,25 +1001,21 @@ def main() -> int:
     run_state.save_json(output_root / "results.json", payload)
     run_state.remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
+        "docker_startup": docker_startup,
         "terminal_status": payload["status"],
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
         "execution_plan": {
-            "mode": "wave-batched-with-attempt-admission",
+            "mode": "single-llm-queue-and-chemqa-waves",
             "max_concurrent_groups": args.max_concurrent_groups,
-            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", None),
+            "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
             "waves": group_waves,
         },
         "aggregate_groups": aggregate_group_ids,
         "run_groups": group_ids,
         "merge_existing_per_record": args.merge_existing_per_record,
-        "skill_health": {
-            "summary": skill_health_summary,
-            "report_path": str(output_root / "skill-routing-inventory.json"),
-            "health_check_applied": False,
-        },
         "skill_routing_inventory": {
             "path": str(output_root / "skill-routing-inventory.json"),
             "health_check_applied": False,
@@ -1018,7 +1040,7 @@ def main() -> int:
                 "memory_bytes": getattr(args, "container_memory_bytes", None),
                 "pids": getattr(args, "container_pids_limit", None),
             },
-            "spool_root": str(output_root / "container-spool"),
+            "spool_path": "<attempt-workspace>/scratch/outputs/container-spool",
         },
         "workspace_isolation": {
             "schema_version": 3,

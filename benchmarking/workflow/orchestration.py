@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 import traceback
+import json
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -123,7 +125,6 @@ def run_group(
     slugify_fn: Callable[..., str],
     single_convergence_policy: ConvergencePolicy | None = None,
     chemqa_convergence_policy: ConvergencePolicy | None = None,
-    skill_health_summary: dict[str, Any] | None = None,
     single_timeout_retries: int = 3,
     single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
     single_agent_thinking: str,
@@ -135,13 +136,37 @@ def run_group(
     pypi_cutoff: str | None = None,
     vgb_skill_allowlist: tuple[str, ...] | list[str] = (),
     admission_controller: Any | None = None,
-    execution_backend: str = "host",
+    manage_group_lifecycle: bool = True,
+    execution_backend: str = "docker",
     container_image: str = "openclaw-benchmark-single-llm:latest",
     container_cpus: float | None = None,
     container_memory_bytes: int | None = None,
     container_pids_limit: int | None = None,
 ) -> list[GroupRecordResult]:
     runtime_bundle_root = output_root / "input-bundles"
+    if group.runner == "single_llm" and not manage_group_lifecycle and workspace_manager is not None:
+        original_agent = single_agent
+        single_agent = f"{single_agent[:51]}-{uuid.uuid4().hex[:12]}"
+        original_workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=original_agent)
+        new_workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=single_agent)
+        source = json.loads(config_path.read_text())
+
+        def rewrite(value):
+            if isinstance(value, str):
+                if value == str(original_workspace) or value.startswith(str(original_workspace) + "/"):
+                    return str(new_workspace) + value[len(str(original_workspace)):]
+                if value == original_agent:
+                    return single_agent
+                return value.replace("/" + original_agent + "/", "/" + single_agent + "/")
+            if isinstance(value, list):
+                return [rewrite(item) for item in value]
+            if isinstance(value, dict):
+                return {rewrite(key): rewrite(item) for key, item in value.items()}
+            return value
+
+        config_path = output_root / "runtime-config" / f"{single_agent}.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        save_json_fn(config_path, rewrite(source))
 
     def mark_cancelling() -> None:
         if progress_writer is None or cancellation_token is None:
@@ -193,7 +218,6 @@ def run_group(
                 runtime_bundle_root=runtime_bundle_root,
                 configured_skills=tuple(experiment_specs[group.id].skill_allowlist or ()),
                 vgb_configured_skills=tuple(vgb_skill_allowlist) if group.skills_enabled else (),
-                skill_health_summary=skill_health_summary,
                 convergence_policy=single_convergence_policy or ConvergencePolicy(timeout_seconds=single_timeout),
                 timeout_retries=single_timeout_retries,
                 timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
@@ -203,6 +227,7 @@ def run_group(
                 cancellation_token=cancellation_token,
                 process_registry=process_registry,
                 pypi_cutoff=pypi_cutoff,
+                admission_controller=admission_controller,
                 execution_backend=execution_backend,
                 container_image=container_image,
                 container_cpus=container_cpus,
@@ -231,7 +256,7 @@ def run_group(
                 progress_writer.group_cancelled(group.id)
             return group_results
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
-        if progress_writer is not None:
+        if progress_writer is not None and manage_group_lifecycle:
             progress_writer.group_started(group.id)
             progress_writer.error(group_id=group.id, message=error_message)
         group_results = [
@@ -247,12 +272,12 @@ def run_group(
             if progress_writer is not None:
                 progress_writer.record_started(group.id, str(entry.record_id), index=index)
                 progress_writer.record_completed(group.id, str(entry.record_id), status="failed", score=0.0)
-        if progress_writer is not None:
+        if progress_writer is not None and manage_group_lifecycle:
             progress_writer.group_completed(group.id, status="failed")
         return group_results
 
     group_results: list[GroupRecordResult] = []
-    if progress_writer is not None:
+    if progress_writer is not None and manage_group_lifecycle:
         progress_writer.group_started(group.id)
     for index, record in enumerate(records, start=1):
         if cancellation_token is not None and cancellation_token.is_cancelled:
@@ -271,12 +296,7 @@ def run_group(
             progress_writer.record_started(group.id, record.record_id, index=index)
         started = time.time()
         run_result: Any | None = None
-        admission_lease = None
         try:
-            if admission_controller is not None and group.runner == "single_llm":
-                from benchmarking.runtime.attempt_admission import ResourceRequest
-
-                admission_lease = admission_controller.acquire(ResourceRequest())
             run_result = runner.run(record, group)
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
@@ -383,9 +403,6 @@ def run_group(
                 )
             if progress_writer is not None:
                 progress_writer.error(group_id=group.id, record_id=record.record_id, message=str(exc))
-        finally:
-            if admission_lease is not None:
-                admission_controller.release(admission_lease)
         group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
         if progress_writer is not None:
@@ -400,7 +417,7 @@ def run_group(
                     status=str(entry.run_lifecycle_status or "completed"),
                     score=float(score) if isinstance(score, (int, float)) else None,
                 )
-    if progress_writer is not None:
+    if progress_writer is not None and manage_group_lifecycle:
         if any(item.run_lifecycle_status == "cancelled" for item in group_results):
             progress_writer.group_cancelled(group.id)
         else:

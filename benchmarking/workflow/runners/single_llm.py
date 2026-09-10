@@ -7,10 +7,13 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import nullcontext
+from datetime import UTC, datetime
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+from dotenv import dotenv_values
 
 from benchmarking.core.contracts import (
     AnswerPayload,
@@ -44,11 +47,13 @@ from benchmarking.runtime.attempt_environment import (
     remediate_forbidden_distributions,
 )
 from benchmarking.runtime.container_runtime import (
+    ContainerRuntimeError,
     ContainerAttemptSpec,
     ContainerMount,
     DockerContainerRuntime,
     materialize_container_config,
 )
+from benchmarking.runtime.cancellation import CancellationReason
 from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
     capture_execution_error,
@@ -487,14 +492,14 @@ class SingleLLMRunner:
         contamination_auditor: Callable[..., ContaminationAudit] | None = None,
         configured_skills: tuple[str, ...] | list[str] = (),
         vgb_configured_skills: tuple[str, ...] | list[str] = (),
-        skill_health_summary: dict[str, Any] | None = None,
         convergence_policy: ConvergencePolicy | None = None,
         timeout_retries: int = 3,
         timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
         sleep_fn: Callable[[float], None] = time.sleep,
         no_timeout: bool = False,
         pypi_cutoff: str | None = None,
-        execution_backend: str = "host",
+        admission_controller=None,
+        execution_backend: str = "docker",
         container_runtime: DockerContainerRuntime | None = None,
         container_image: str = "openclaw-benchmark-single-llm:latest",
         container_cpus: float | None = None,
@@ -521,11 +526,11 @@ class SingleLLMRunner:
         self.workspace_manager = workspace_manager
         self.allowed_workspace_roots = tuple(Path(path).expanduser().resolve() for path in allowed_workspace_roots)
         self._contamination_auditor = contamination_auditor
-        self.skill_health_summary = dict(skill_health_summary or {})
         self.timeout_retries = max(0, int(timeout_retries))
         self.no_timeout = bool(no_timeout)
-        self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or "").strip() or None
-        self.execution_backend = str(execution_backend or "host").strip().lower()
+        self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or datetime.now(UTC).isoformat()).strip()
+        self.admission_controller = admission_controller
+        self.execution_backend = str(execution_backend or "docker").strip().lower()
         if self.execution_backend not in {"host", "docker"}:
             raise ValueError(f"Unsupported single-LLM execution backend: {execution_backend}")
         self.container_runtime = container_runtime or DockerContainerRuntime()
@@ -646,7 +651,6 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text="",
-            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -685,7 +689,6 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text="",
-            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -824,7 +827,6 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text="",
-            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -886,12 +888,24 @@ class SingleLLMRunner:
                 environment=environment,
                 policy=policy,
             ))
+        mappings = None
+        if self.execution_backend == "docker":
+            mappings = {
+                "/benchmark/workspace": str(lease.active_workspace),
+                "/benchmark/session": str(lease.scratch_dir / "session"),
+                "/opt/benchmark/skills": str(runtime_paths.skills_root),
+                "/opt/benchmark/scripts/run_skill.py": str(runtime_paths.project_root / "scripts/run_skill.py"),
+            }
+            bundle_dir = getattr(input_bundle, "bundle_dir", None)
+            if bundle_dir is not None:
+                mappings["/benchmark/input"] = str(bundle_dir)
         return self.workspace_manager.audit_attempt(
             lease,
             result.runner_meta,
             allowed_roots=[scope.path for scope in policy.read_scopes],
             environment=environment,
             policy=policy,
+            transcript_path_mappings=mappings,
         )
 
     def _run_isolated_attempt(
@@ -947,7 +961,7 @@ class SingleLLMRunner:
         attempt_environment: AttemptPythonEnvironment | None = None
         result: RunnerResult | None = None
         attempt_env = dict(environment)
-        if is_vgb:
+        if is_vgb and self.execution_backend == "host":
             try:
                 attempt_environment = create_attempt_environment(
                     lease.scratch_dir,
@@ -984,7 +998,7 @@ class SingleLLMRunner:
             scratch_dir=lease.scratch_dir,
             request_dir=lease.request_dir,
             output_dir=lease.output_dir,
-            attempt_python_enabled=attempt_environment is not None,
+            attempt_python_enabled=attempt_environment is not None or self.execution_backend == "docker",
         )
         scratch_meta = {
             "workspace_dir": str(lease.active_workspace),
@@ -1017,6 +1031,35 @@ class SingleLLMRunner:
                     session_id=session_id,
                 )
         assert result is not None
+        if self.execution_backend == "docker":
+            if result.failure is not None:
+                session_root = lease.scratch_dir / "session"
+                try:
+                    session_audit = inspect_postflight_session(
+                        self.agent_id, session_id, config_path=self.config_path,
+                        session_store_path=session_root / "agents" / self.agent_id / "sessions/sessions.json",
+                    )
+                    result.runner_meta["session_isolation"] = self._translate_container_paths(session_audit, session_root=session_root)
+                except (OSError, SessionIsolationError):
+                    transcript = session_root / "agents" / self.agent_id / "sessions" / f"{session_id}.jsonl"
+                    if transcript.is_file() and not transcript.is_symlink():
+                        result.runner_meta["session_isolation"]["postflight_entry_session_file"] = str(transcript)
+            manifest_path = lease.notes_dir / "dependency-manifest.json"
+            result.runner_meta["attempt_environment"] = (
+                json.loads(manifest_path.read_text()) if manifest_path.is_file()
+                else {"status": "manifest_failed", "error": "container dependency evidence missing"}
+            )
+            result.runner_meta["dependency_audit"] = result.runner_meta["attempt_environment"].get("dependency_audit", {})
+            cleanup_path = lease.notes_dir / "dependency-cleanup.json"
+            result.runner_meta["attempt_environment_cleanup"] = json.loads(cleanup_path.read_text()) if cleanup_path.is_file() else {"status": "unavailable"}
+            cleanup_partial_attempt_environment(lease.scratch_dir)
+            if result.failure is None and result.runner_meta["attempt_environment"].get("status") != "complete":
+                failed = self._unexpected_attempt_failure_result(
+                    exc=RuntimeError("Container dependency evidence is incomplete"), record=record,
+                    group=group, input_bundle=input_bundle, session_id=session_id,
+                )
+                failed.runner_meta.update(result.runner_meta)
+                result = failed
         if attempt_environment is not None:
             try:
                 session_isolation = result.runner_meta.get("session_isolation")
@@ -1185,7 +1228,7 @@ class SingleLLMRunner:
             websearch_enabled=group.websearch,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
             input_bundle=input_bundle,
-            available_skills=set(self.configured_skills),
+            configured_skills=set(self.configured_skills),
             time_budget_seconds=None if self.no_timeout else self.convergence_policy.timeout_seconds,
         )
         initial_session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
@@ -1206,16 +1249,17 @@ class SingleLLMRunner:
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
             session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
-            result = self._run_isolated_attempt(
-                record=record,
-                group=group,
-                input_bundle=input_bundle,
-                prompt=prompt,
-                session_id=session_id,
-                attempt_index=attempt_index,
-                wrapper_path=wrapper_path,
-                environment=env,
-            )
+            with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
+                result = self._run_isolated_attempt(
+                    record=record,
+                    group=group,
+                    input_bundle=input_bundle,
+                    prompt=prompt,
+                    session_id=session_id,
+                    attempt_index=attempt_index,
+                    wrapper_path=wrapper_path,
+                    environment=env,
+                )
             last_result = result
             decision = self._timeout_retry_decision(result)
             can_retry = decision.retryable and attempt_index < self.timeout_retries
@@ -1315,9 +1359,11 @@ class SingleLLMRunner:
             config_path=Path("/benchmark/config/openclaw.json"),
             python_executable="/opt/benchmark/.venv/bin/python",
         )
+        container_command = ["/opt/benchmark/.venv/bin/python", "-m", "benchmarking.runtime.container_attempt", *container_command[1:]]
         container_env = {
             key: value
-            for key, value in env.items()
+            for key, value in {**dotenv_values(Path(os.environ.get("OPENCLAW_ENV_FILE", str(runtime_paths.openclaw_home / ".env")))), **env}.items()
+            if isinstance(value, str)
             if key in {"LANG", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY", "BENCHMARK_PYPI_CUTOFF"}
             or key.endswith("_API_KEY")
             or key.endswith("_TOKEN")
@@ -1336,7 +1382,9 @@ class SingleLLMRunner:
                 "BENCHMARK_SKILL_NOTES_DIR": "/benchmark/workspace/scratch/notes",
                 "BENCHMARK_PROJECT_ROOT": "/opt/benchmark",
                 "BENCHMARK_SKILL_RUNNER": "/opt/benchmark/scripts/run_skill.py",
-                "BENCHMARK_ATTEMPT_PYTHON": "/opt/benchmark/.venv/bin/python",
+                "BENCHMARK_ATTEMPT_PYTHON": "/benchmark/workspace/scratch/venv/bin/python",
+                "BENCHMARK_PYPI_CUTOFF": self.pypi_cutoff,
+                "UV_CACHE_DIR": "/benchmark/workspace/scratch/tmp/cache/uv",
                 "BENCHMARK_ATTEMPT_UV_CACHE": "/benchmark/workspace/scratch/tmp/cache/uv",
             }
         )
@@ -1371,8 +1419,9 @@ class SingleLLMRunner:
             memory_limit_bytes=self.container_memory_bytes,
             pids_limit=self.container_pids_limit,
             timeout_seconds=self._wrapper_subprocess_timeout_seconds(),
-            allowed_source_roots=(workspace, input_dir, config_path, session_root, runtime_paths.skills_root),
+            allowed_source_roots=(workspace, input_dir, config_path, session_root, runtime_paths.skills_root, runtime_paths.project_root / "scripts/run_skill.py"),
         )
+        container_env["BENCHMARK_ATTEMPT_IDENTITY"] = json.dumps(identity.sentinel_fields())
         (spool / "container-manifest.json").write_text(
             json.dumps(
                 {
@@ -1428,6 +1477,11 @@ class SingleLLMRunner:
                     pass
             cleanup = self.container_runtime.remove(handle, force=True)
             (spool / "cleanup.json").write_text(json.dumps(cleanup.__dict__, indent=2) + "\n", encoding="utf-8")
+            if not cleanup.removed:
+                token = self.admission_controller.cancellation_token if self.admission_controller is not None else getattr(self, "_cancellation_token", None)
+                if token is not None:
+                    token.cancel(CancellationReason(source="container_cleanup", message="Container removal failed; scheduling stopped"))
+                raise ContainerRuntimeError(f"container cleanup failed: {cleanup.error}", code="container_cleanup_failed")
 
     @staticmethod
     def _translate_container_paths(value: Any, *, session_root: Path) -> Any:
@@ -1463,7 +1517,6 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text=full_response_text,
-            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -1554,7 +1607,6 @@ class SingleLLMRunner:
                 configured_skills=self.configured_skills,
                 runner_meta=runner_meta,
                 final_response_text="",
-                skill_health_summary=self.skill_health_summary,
             )
             if input_bundle is not None:
                 runner_meta["runtime_bundle"] = input_bundle.to_meta()
@@ -1577,7 +1629,6 @@ class SingleLLMRunner:
             configured_skills=self.configured_skills,
             runner_meta=runner_meta,
             final_response_text=full_response_text,
-            skill_health_summary=self.skill_health_summary,
         )
         if input_bundle is not None:
             runner_meta["runtime_bundle"] = input_bundle.to_meta()

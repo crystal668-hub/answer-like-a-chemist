@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import dataclass
 
 from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.skills.tree import benchmark_skill_allowlist
@@ -97,16 +96,6 @@ EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
         skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
     ),
 }
-
-
-def build_effective_experiment_specs(
-    specs: dict[str, ExperimentSpec],
-    *,
-    skill_health_reports: dict[str, dict[str, Any]],
-) -> dict[str, ExperimentSpec]:
-    # Retained signature for callers and historical compatibility.  Skill
-    # health probing is intentionally no longer part of routing semantics.
-    return {group_id: replace(spec, skill_allowlist=tuple(spec.skill_allowlist)) for group_id, spec in specs.items()}
 
 
 def select_group_ids(raw: str) -> list[str]:

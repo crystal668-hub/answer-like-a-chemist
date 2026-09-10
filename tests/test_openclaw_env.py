@@ -46,6 +46,16 @@ def test_build_openclaw_subprocess_env_uses_attempt_python_and_clears_overrides(
     assert env["API_TOKEN"] == "keep"
 
 
+def test_attempt_python_symlink_preserves_venv_identity(tmp_path) -> None:
+    import sys
+    python = tmp_path / "venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(sys.executable)
+    env = build_openclaw_subprocess_env(base_env={}, attempt_python=python, system_proxy_text="")
+    assert env["BENCHMARK_ATTEMPT_PYTHON"] == str(python)
+    assert env["VIRTUAL_ENV"] == str(python.parent.parent)
+
+
 def test_parse_scutil_proxy_output_extracts_http_and_https_proxy() -> None:
     payload = """
 <dictionary> {

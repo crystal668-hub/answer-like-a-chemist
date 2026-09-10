@@ -60,10 +60,11 @@ def create_attempt_environment(
     uv_executable: str | None = None,
     run_subprocess: RunSubprocess = subprocess.run,
     timeout_seconds: int = 120,
+    cache_dir: Path | None = None,
 ) -> AttemptPythonEnvironment:
     root = Path(root).expanduser().resolve()
     venv_dir = root / "venv"
-    cache_dir = root / ".uv-cache"
+    cache_dir = cache_dir or root / ".uv-cache"
     tool_bin_dir = root / ".runtime-bin"
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +158,8 @@ def collect_dependency_manifest(
         timeout=60,
     )
     packages = [line.strip() for line in (freeze.stdout or "").splitlines() if line.strip()]
+    if freeze.returncode != 0:
+        raise RuntimeError("attempt dependency freeze failed")
     replay = _build_replay_lock(environment, packages, env=env, run_subprocess=run_subprocess)
     probe = run_subprocess(
         [
@@ -176,6 +179,8 @@ def collect_dependency_manifest(
         timeout=60,
     )
     distributions: list[dict[str, str]] = []
+    if probe.returncode != 0:
+        raise RuntimeError("attempt distribution inventory failed")
     if probe.returncode == 0:
         try:
             distributions = [dict(item) for item in json.loads(probe.stdout) if isinstance(item, dict)]
@@ -364,7 +369,7 @@ def cleanup_attempt_environment(environment: AttemptPythonEnvironment) -> dict[s
 
 def cleanup_partial_attempt_environment(root: Path) -> None:
     root = Path(root).expanduser().resolve()
-    for path in (root / "venv", root / ".uv-cache", root / ".runtime-bin"):
+    for path in (root / "venv", root / ".uv-cache", root / ".runtime-bin", root / "tmp/cache/uv"):
         if path.is_symlink() or path.is_file():
             path.unlink()
         elif path.is_dir():

@@ -493,6 +493,7 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
             "Args",
             (),
             {
+                "execution_backend": "host",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -531,12 +532,6 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
     )
     monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
-    monkeypatch.setattr(benchmarking_cli, "check_all_skill_health", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        benchmarking_cli,
-        "summarize_skill_health",
-        lambda reports: {"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
-    )
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(
         benchmarking_cli,
@@ -676,6 +671,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             "Args",
             (),
             {
+                "execution_backend": "host",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -714,12 +710,6 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     )
     monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
-    monkeypatch.setattr(benchmarking_cli, "check_all_skill_health", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        benchmarking_cli,
-        "summarize_skill_health",
-        lambda reports: {"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
-    )
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -835,6 +825,7 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             "Args",
             (),
             {
+                "execution_backend": "host",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "no_analysis": True,
@@ -874,12 +865,6 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
     )
     monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
-    monkeypatch.setattr(benchmarking_cli, "check_all_skill_health", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        benchmarking_cli,
-        "summarize_skill_health",
-        lambda reports: {"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
-    )
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -945,6 +930,7 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             "Args",
             (),
             {
+                "execution_backend": "host",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -983,12 +969,6 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
-    monkeypatch.setattr(benchmarking_cli, "check_all_skill_health", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        benchmarking_cli,
-        "summarize_skill_health",
-        lambda reports: {"available_skill_count": 0, "unavailable_skill_count": 0, "available_skills": [], "unavailable_skills": []},
-    )
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(

@@ -1,23 +1,52 @@
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 import pytest
 
-from benchmarking.runtime.attempt_admission import (
-    AttemptAdmissionController,
-    ResourceRequest,
-)
+from benchmarking.runtime.attempt_admission import AttemptAdmissionController
+from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationReason, CancellationToken
 
 
-def test_admission_tracks_and_releases_resources() -> None:
-    controller = AttemptAdmissionController(total_cpus=2, total_memory_bytes=100, max_attempts=2)
-    lease = controller.acquire(ResourceRequest(cpus=1, memory_bytes=40))
-    snapshot = controller.capacity_snapshot()
-    assert snapshot.used_cpus == 1
-    assert snapshot.used_memory_bytes == 40
+def test_capacity_waits_until_release_and_rejects_duplicate_release():
+    controller = AttemptAdmissionController(max_attempts=1)
+    lease = controller.acquire()
+    waiting = threading.Event()
+
+    def acquire():
+        waiting.set()
+        return controller.acquire()
+
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(acquire)
+        assert waiting.wait(1)
+        assert not future.done()
+        controller.release(lease)
+        second = future.result(timeout=1)
+        with pytest.raises(ValueError):
+            controller.release(lease)
+        controller.release(second)
+
+
+def test_cancellation_wakes_waiter_without_starting_attempt():
+    token = CancellationToken()
+    controller = AttemptAdmissionController(max_attempts=1, cancellation_token=token)
+    lease = controller.acquire()
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(controller.acquire)
+        token.cancel(CancellationReason(source="test"))
+        with pytest.raises(BenchmarkCancelledError):
+            future.result(timeout=1)
     controller.release(lease)
-    assert controller.capacity_snapshot().used_cpus == 0
+    with pytest.raises(BenchmarkCancelledError):
+        controller.acquire()
 
 
-def test_admission_rejects_when_capacity_is_exhausted() -> None:
-    controller = AttemptAdmissionController(total_cpus=1, total_memory_bytes=100)
-    controller.acquire(ResourceRequest(cpus=1))
-    with pytest.raises(RuntimeError, match="capacity exhausted"):
-        controller.acquire(ResourceRequest(cpus=1))
+def test_exception_releases_attempt_and_invalid_limits_fail():
+    controller = AttemptAdmissionController(max_attempts=1)
+    with pytest.raises(RuntimeError):
+        with controller.attempt():
+            raise RuntimeError("attempt failed")
+    with controller.attempt():
+        pass
+    with pytest.raises(ValueError):
+        AttemptAdmissionController(max_attempts=0)

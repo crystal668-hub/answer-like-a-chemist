@@ -46,6 +46,18 @@ class ToolEvent:
     result: Mapping[str, Any] | None = None
 
 
+def _project_transcript_paths(value: Any, mappings: Mapping[str, str]) -> Any:
+    if isinstance(value, str):
+        for source, target in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
+            value = re.sub(re.escape(source) + r"(?=/|[\s\"'`;]|$)", lambda _match: target, value)
+        return value
+    if isinstance(value, list):
+        return [_project_transcript_paths(item, mappings) for item in value]
+    if isinstance(value, dict):
+        return {key: _project_transcript_paths(item, mappings) for key, item in value.items()}
+    return value
+
+
 def _audit_recovery_candidates(runner_meta: Mapping[str, Any]) -> tuple[str, ...]:
     candidates: list[str] = []
     session = runner_meta.get("session_isolation")

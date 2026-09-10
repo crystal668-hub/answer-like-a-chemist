@@ -21,6 +21,7 @@ from benchmarking.runtime.workspace_audit import (
     _forbidden_access_findings,
     _operation_outcome,
     _parser_error_recovery_finding,
+    _project_transcript_paths,
     _redact_text,
     _select_audit_transcript,
     _tool_events_from_transcript,
@@ -826,6 +827,7 @@ class AttemptWorkspaceManager:
         allowed_roots: tuple[Path, ...] | list[Path],
         environment: Mapping[str, str] | None,
         policy: _WorkspaceAccessPolicy,
+        transcript_path_mappings: Mapping[str, str] | None = None,
     ) -> _WorkspaceAudit | None:
         if runner_meta.get("workspace_audit_recovery_attempted") is True:
             return None
@@ -853,6 +855,7 @@ class AttemptWorkspaceManager:
                 allowed_roots=allowed_roots,
                 environment=environment,
                 policy=policy,
+                transcript_path_mappings=transcript_path_mappings,
             )
             return _WorkspaceAudit(
                 audit_execution_status=recovered.audit_execution_status,
@@ -878,6 +881,7 @@ class AttemptWorkspaceManager:
         allowed_roots: tuple[Path, ...] | list[Path] = (),
         environment: Mapping[str, str] | None = None,
         policy: _WorkspaceAccessPolicy | None = None,
+        transcript_path_mappings: Mapping[str, str] | None = None,
     ) -> _WorkspaceAudit:
         session_isolation = runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, Mapping) else {}
@@ -916,7 +920,10 @@ class AttemptWorkspaceManager:
             for line_number, raw_line in enumerate(transcript_lines, start=1):
                 if not raw_line.strip():
                     continue
-                payloads.append((line_number, json.loads(raw_line)))
+                value = json.loads(raw_line)
+                if transcript_path_mappings:
+                    value = _project_transcript_paths(value, transcript_path_mappings)
+                payloads.append((line_number, value))
             events, standalone_results = _tool_events_from_transcript(payloads)
         except Exception as exc:
             recovered = self._retry_audit_from_archive(
@@ -927,6 +934,7 @@ class AttemptWorkspaceManager:
                 allowed_roots=allowed_roots,
                 environment=environment,
                 policy=active_policy,
+                transcript_path_mappings=transcript_path_mappings,
             )
             if recovered is not None:
                 return recovered
@@ -978,6 +986,7 @@ class AttemptWorkspaceManager:
                         allowed_roots=allowed_roots,
                         environment=environment,
                         policy=active_policy,
+                        transcript_path_mappings=transcript_path_mappings,
                     )
                     if recovered is not None:
                         return recovered

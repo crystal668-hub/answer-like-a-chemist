@@ -101,14 +101,14 @@ def build_single_llm_prompt(
     websearch_enabled: bool,
     skills_enabled: bool = True,
     input_bundle: RuntimeBundleLike | None = None,
-    available_skills: set[str] | None = None,
+    configured_skills: set[str] | None = None,
     time_budget_seconds: int | None = None,
 ) -> str:
     instructions: list[str] = []
     if isinstance(time_budget_seconds, int) and time_budget_seconds > 0:
         instructions.append(f"Time budget: {time_budget_seconds} seconds for the whole answer attempt.")
     if skills_enabled:
-        instructions.append(render_top_level_skill_tree(available_skills=available_skills))
+        instructions.append(render_top_level_skill_tree(configured_skills=configured_skills))
 
     if record.eval_kind == "superchem_multiple_choice_rpf":
         instructions.append("End with exactly one line formatted as: FINAL ANSWER: <option letters>.")

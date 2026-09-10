@@ -8,6 +8,8 @@ injectable and testable.
 from __future__ import annotations
 
 import json
+import os
+import socket
 import re
 import shutil
 import stat
@@ -18,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
-from benchmarking.runtime.agent_workspace import AttemptIdentity
+from benchmarking.runtime.agent_workspace import AttemptIdentity, AttemptWorkspaceManager
 from benchmarking.runtime.cancellation import CancellationToken
 
 
@@ -143,7 +145,7 @@ class DockerContainerRuntime:
                 target_allowed = True
             if not target_allowed or mount.target in seen:
                 raise ContainerRuntimeError(f"invalid container mount target: {mount.target}", code="container_mount_invalid")
-            if mount.kind in {"input", "config"} and mount.mode != "ro":
+            if mount.kind in {"input", "config", "skills", "skill_runner"} and mount.mode != "ro":
                 raise ContainerRuntimeError(f"mount must be read-only: {mount.target}", code="container_mount_invalid")
             if mount.source.is_symlink() or not mount.source.exists():
                 raise ContainerRuntimeError(f"mount source is missing or symlink: {mount.source}", code="container_mount_invalid")
@@ -156,7 +158,8 @@ class DockerContainerRuntime:
 
     def create(self, spec: ContainerAttemptSpec) -> ContainerAttemptHandle:
         self._validate_mounts(spec.mounts, spec.allowed_source_roots)
-        labels = {**_identity_labels(spec.identity), **{str(k): str(v) for k, v in spec.labels.items()}}
+        labels = {**{str(k): str(v) for k, v in spec.labels.items()}, **_identity_labels(spec.identity),
+                  "benchmark.owner_pid": str(os.getpid()), "benchmark.owner_host": socket.gethostname()}
         raw_name = "-".join((spec.identity.run_id, spec.identity.record_id, str(spec.identity.attempt_index), spec.identity.session_id))
         name = "benchmark-" + re.sub(r"[^a-zA-Z0-9_.-]+", "-", raw_name).strip("-.")[:180]
         args = ["create", "--name", name, "--network", spec.network_mode, "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m"]
@@ -177,12 +180,12 @@ class DockerContainerRuntime:
         container_id = result.stdout.strip().splitlines()[-1]
         if not container_id:
             raise ContainerRuntimeError("docker create returned no container id", code="container_create_failed")
-        inspect = self.inspect(container_id)
-        configured_image = str(inspect.get("Config", {}).get("Image") or spec.image)
         try:
-            image_digest = self.resolve_image_digest(spec.image)
-        except ContainerRuntimeError:
-            image_digest = configured_image
+            inspect = self.inspect(container_id)
+            image_digest = str(inspect.get("Image") or self.resolve_image_digest(spec.image))
+        except Exception:
+            self._command(["rm", "-f", container_id], timeout=30)
+            raise
         return ContainerAttemptHandle(container_id, name, spec.identity, image_digest, labels=labels)
 
     def start(self, handle: ContainerAttemptHandle) -> None:
@@ -205,31 +208,38 @@ class DockerContainerRuntime:
         return dict(payload) if isinstance(payload, dict) else {}
 
     def resolve_image_digest(self, image: str) -> str:
-        result = self._command(["image", "inspect", "--format", "{{json .RepoDigests}}", image])
+        result = self._command(["image", "inspect", "--format", "{{json .Id}}", image], timeout=15)
         try:
-            digests = json.loads(result.stdout)
+            digest = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise ContainerRuntimeError("docker image inspect returned invalid JSON", code="docker_invalid_response") from exc
-        if isinstance(digests, list) and digests:
-            return str(digests[0])
-        if "@sha256:" in image:
-            return image
-        raise ContainerRuntimeError(f"docker image has no immutable repo digest: {image}", code="container_image_unpinned")
+        if isinstance(digest, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+            return digest
+        raise ContainerRuntimeError(f"docker image has invalid immutable ID: {image}", code="container_image_unpinned")
 
     def collect(self, handle: ContainerAttemptHandle, *, timeout_seconds: float | None = None, cancellation_token: CancellationToken | None = None) -> ContainerAttemptResult:
         timed_out = False
         cancelled = False
-        try:
-            self._command(["wait", handle.container_id], timeout=timeout_seconds)
-        except ContainerRuntimeError as exc:
-            if exc.code == "docker_command_timeout":
-                timed_out = True
-            else:
-                raise exc
-        if cancellation_token is not None and cancellation_token.is_cancelled:
-            cancelled = True
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        while True:
+            cancelled = cancellation_token is not None and cancellation_token.is_cancelled
+            timed_out = deadline is not None and time.monotonic() >= deadline
+            if cancelled or timed_out:
+                # Give the container supervisor time to stop the agent and preserve evidence.
+                self.stop(handle, grace_seconds=300)
+                break
+            interval = min(1.0, max(0.01, deadline - time.monotonic())) if deadline is not None else 1.0
+            try:
+                self._command(["wait", handle.container_id], timeout=interval)
+                break
+            except ContainerRuntimeError as exc:
+                if exc.code != "docker_command_timeout":
+                    raise
         logs = self._command(["logs", handle.container_id])
         inspect = self.inspect(handle.container_id)
+        config = inspect.get("Config")
+        if isinstance(config, dict) and isinstance(config.get("Env"), list):
+            config["Env"] = [f"{item.split('=', 1)[0]}=<redacted>" for item in config["Env"]]
         state = inspect.get("State") if isinstance(inspect.get("State"), dict) else {}
         try:
             stats = self.stats(handle.container_id)
@@ -251,20 +261,48 @@ class DockerContainerRuntime:
         except ContainerRuntimeError as exc:
             return CleanupReport(False, handle.container_id, str(exc))
 
-    def recover_orphans(self, *, owner: Mapping[str, str]) -> list[CleanupReport]:
-        result = self._command(["ps", "-aq", "--filter", "label=benchmark.run_id"])
-        reports: list[CleanupReport] = []
+    def recover_orphans(self, *, runtime_root: Path) -> list[dict[str, Any]]:
+        result = self._command(["ps", "-aq", "--no-trunc", "--filter", "label=benchmark.run_id"])
+        reports: list[dict[str, Any]] = []
         for container_id in result.stdout.splitlines():
             if not container_id.strip():
                 continue
-            inspect = self.inspect(container_id.strip())
-            labels = inspect.get("Config", {}).get("Labels", {}) if isinstance(inspect.get("Config"), dict) else {}
-            if all(str(labels.get(f"benchmark.{key}") or "") == str(value) for key, value in owner.items()):
+            report = {"container_id": container_id.strip(), "removed": False}
+            try:
+                inspected = self.inspect(container_id.strip())
+                labels = inspected.get("Config", {}).get("Labels") or {}
+                report["run_id"] = labels.get("benchmark.run_id", "")
+                if labels.get("benchmark.owner_host") != socket.gethostname():
+                    raise ValueError("owner host is missing or differs")
+                pid = int(labels.get("benchmark.owner_pid", "0"))
+                if pid <= 0:
+                    raise ValueError("owner PID is missing")
                 try:
-                    self._command(["rm", "-f", container_id.strip()])
-                    reports.append(CleanupReport(True, container_id.strip()))
-                except ContainerRuntimeError as exc:
-                    reports.append(CleanupReport(False, container_id.strip(), str(exc)))
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    raise ValueError("owner process is still alive")
+                mounts = [item for item in inspected.get("Mounts", []) if item.get("Destination") == "/benchmark/workspace"]
+                if len(mounts) != 1:
+                    raise ValueError("workspace mount is missing or ambiguous")
+                workspace = Path(mounts[0]["Source"])
+                if workspace.is_symlink() or not workspace.resolve().is_relative_to(runtime_root.resolve()):
+                    raise ValueError("workspace is outside managed runtime")
+                sentinel = AttemptWorkspaceManager._read_sentinel_payload(workspace)
+                identity = AttemptWorkspaceManager._identity_from_sentinel(sentinel)
+                if identity.runner_kind != "single_llm" or any(
+                    str(labels.get(f"benchmark.{key}", "")) != str(value)
+                    for key, value in identity.sentinel_fields().items()
+                ):
+                    raise ValueError("container identity does not match workspace sentinel")
+                if Path(sentinel["workspace_path"]).resolve() != workspace.resolve():
+                    raise ValueError("workspace sentinel path mismatch")
+                self._command(["rm", "-f", container_id.strip()], timeout=30)
+                report["removed"] = True
+            except (ContainerRuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
+                report["reason"] = str(exc)
+            reports.append(report)
         return reports
 
 
@@ -310,9 +348,14 @@ def materialize_container_config(
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, dict):
+            if value.get("source") == "env" and isinstance(value.get("id"), str):
+                return "${" + value["id"] + "}"
             return {key: rewrite(item) for key, item in value.items()}
         return value
 
+    payload = rewrite(payload)
+    payload.pop("secrets", None)
+    entries = payload["agents"]["list"]
     selected = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -324,7 +367,7 @@ def materialize_container_config(
             selected.append(item)
     if not selected:
         raise ContainerRuntimeError(f"OpenClaw agent is missing from config: {agent_id}", code="container_config_invalid")
-    payload["agents"] = {**(agents if isinstance(agents, dict) else {}), "list": selected}
+    payload["agents"] = {**payload["agents"], "list": selected}
 
     plugins = payload.get("plugins")
     if isinstance(plugins, dict):

@@ -1,6 +1,6 @@
 # Benchmark Infra 重构待修复问题交接文档
 
-状态：`OPEN`
+状态：`CLOSED`（实现与验收见 `infra-fix-validation.md`；下文保留交接时的问题描述）
 
 更新时间：2026-09-10
 

@@ -100,7 +100,8 @@ def _clear_attempt_python_overrides(environment: dict[str, str]) -> None:
 def _inject_attempt_python_env(environment: dict[str, str], attempt_python: Path) -> None:
     attempt_cache = environment.get("BENCHMARK_ATTEMPT_UV_CACHE", "")
     pypi_cutoff = environment.get("BENCHMARK_PYPI_CUTOFF", "")
-    attempt_python = Path(attempt_python).expanduser().resolve()
+    # Resolving a venv's interpreter symlink selects the bootstrap environment.
+    attempt_python = Path(attempt_python).expanduser().absolute()
     if not attempt_python.is_file():
         raise FileNotFoundError(f"attempt Python executable not found: {attempt_python}")
     attempt_bin = attempt_python.parent

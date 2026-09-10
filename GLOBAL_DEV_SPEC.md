@@ -64,7 +64,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt resource admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Benchmark skill inventory/routing projection, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -180,9 +180,12 @@ printed in the report.
 - The benchmark CLI and fixed-lane OpenClaw drivers accept the `adaptive`
   thinking level required by MiniMax-M3; the Benchmark Orchestrator validates
   the model-specific level before launching a run.
-- VGB `single-LLM` attempts create a fresh `scratch/venv` from the bootstrap
-  Python via `uv venv --seed --no-project`; the workspace `.venv` remains the
-  bootstrap environment for the runner and non-VGB records.
+- All Docker single-LLM attempts and host VGB attempts create a fresh
+  `scratch/venv` with `uv venv --seed --no-project`. Docker environment creation,
+  execution, dependency inventory, and cleanup are owned by
+  `benchmarking.runtime.container_attempt` inside the container; host VGB
+  lifecycle remains in `benchmarking.runtime.attempt_environment`. Host non-VGB
+  records use the workspace environment.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
@@ -217,16 +220,27 @@ For each invocation, the CLI:
    dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
    lifetime of the invocation, recovers sentinel-proven stale active workspaces,
    and writes run-scoped OpenClaw configs.
-3. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches groups in
-   waves through `benchmarking.workflow.orchestration` and
-   `benchmarking.workflow.runner_adapters`. Each record runs through either the
+3. Checks Docker daemon readiness and resolves the configured image to an
+   immutable image ID before scheduling Docker single-LLM work. Startup orphan
+   recovery requires a local dead owner PID, complete attempt ownership labels,
+   and a matching managed-workspace sentinel. Live or unverifiable containers
+   are preserved and reported; unresolved containers for the current run stop
+   startup before workspace recovery. `docker-startup.json` and the runtime
+   manifest retain startup evidence, including failures.
+4. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches single-LLM
+   records through one shared queue across selected single-LLM groups, followed
+   by ChemQA group waves. `--max-concurrent-attempts` defaults to 2 and must be
+   positive. Each queued record has an independent agent identity and runtime
+   config, so group configuration and active workspaces are not shared across
+   concurrent records. Group progress completes after all records return.
+   `--max-concurrent-groups` controls ChemQA waves only. Each record runs through either the
    single-LLM runner or the ChemQA runner, then through the registered evaluator
    when the runner result is scoreable.
-4. Uses `benchmarking.workflow.run_state` to persist each record immediately,
+5. Uses `benchmarking.workflow.run_state` to persist each record immediately,
    update run artifacts, aggregate only `scored=true` records, and support
    historical per-record resume data; the CLI writes the final results and
    runtime manifest.
-5. Starts detached automated analysis unless `--no-analysis` is selected. A
+6. Starts detached automated analysis unless `--no-analysis` is selected. A
    cancelled run never launches detached analysis.
 
 Cancellation is run-scoped and cooperative. The first signal fixes the stable
@@ -244,8 +258,16 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   agent turn inside the attempt container. It uses an attempt-local OpenClaw
   state/session root under the managed workspace; container transcript paths
   are translated back to their host archive paths before audit. Provider
-  credentials and endpoints are injected from the runner environment rather
-  than resolved through the host gateway.
+  credentials and endpoints are injected from the runner environment, with the
+  runtime `.env` as fallback. Environment SecretRefs are projected to local
+  environment substitutions instead of requiring the host gateway. Docker
+  inspect environment values are redacted in persisted diagnostics.
+- Single-LLM admission uses a FIFO cancellation-aware count limit. Each retry
+  acquires a new lease; backoff and scoring do not hold the lease. CPU, memory,
+  and PID options are per-container hard limits, not admission resource weights.
+  Failed container removal cancels further scheduling. Docker wait polls for
+  cancellation and gives the container supervisor a bounded evidence-finalizing
+  stop window before removal.
 - Bounded single-LLM attempts default to 7200 seconds (2 hours). The runner
   forwards this budget to OpenClaw as `--timeout`; the wrapper subprocess guard
   adds the 90-second finalization safety window and 30-second process margin,
@@ -257,8 +279,8 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   default), sends a same-session reminder with the remaining time.
 - Every primary or timeout-retry attempt receives a fresh sentinel-managed
   workspace and run-scoped session id.
-- Records with `eval_kind=verifier_grounded` additionally receive a fresh
-  attempt-local Python environment and uv cache. All attempts in an invocation
+- Docker records and host records with `eval_kind=verifier_grounded` receive a
+  fresh attempt-local Python environment and uv cache. All attempts in an invocation
   share its run-start PyPI cutoff, while each retry starts from a new empty
   environment. The agent may install registry packages with `uv pip`; pip
   mutations, direct URLs, local/editable sources, alternate indexes, dependency
@@ -282,13 +304,21 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - Canonical skill scripts continue through `scripts/run_skill.py`. Within a VGB
   attempt it executes them directly with `BENCHMARK_ATTEMPT_PYTHON`, without
   resolving the workspace project or implicitly installing project extras.
-- After a VGB attempt returns, the runner records dependency commands from the
+- After a Docker or host VGB attempt returns, its environment owner records dependency commands from the
   transcript, the installed distribution inventory, RECORD hashes, a hashed
   replay requirements file, the run-start PyPI cutoff, credential names, and
   allowlisted native-tool fingerprints. It removes any detected exact-denylist
   distributions, then deletes the venv, uv cache, and native-tool wrappers
   before sealing the workspace; the manifest remains in archived scratch and
   runner metadata.
+- Docker Python and skill scripts use
+  `/benchmark/workspace/scratch/venv/bin/python`; the uv cache is
+  `scratch/tmp/cache/uv`. Missing dependency evidence rejects otherwise complete
+  Docker answers. The container removes only generated plugin-skill cache links
+  into OpenClaw's immutable image extension tree, recording their targets before
+  archival; general workspace symlink validation remains unchanged.
+- Container transcript path projections are applied in memory during host
+  audit, including recovery, while raw transcripts remain unchanged.
 - The transcript is audited under the attempt access policy before the complete
   workspace is archived. A `non_evaluable` adjudication or archive failure
   rejects an otherwise complete answer; `scoreable_degraded` preserves it with
@@ -519,8 +549,12 @@ boundary. Processes still run as the same local user.
   attempt. Skill choice is left to the model; tool and skill diagnostics do not
   change answer scores.
 - Agent-invoked local skill scripts run through `scripts/run_skill.py`, which uses
-  the canonical workspace for dependency resolution and the attempt scratch
-  directory for relative artifacts.
+  the attempt Python when configured and otherwise the canonical workspace for
+  dependency resolution. Relative artifacts use the attempt scratch directory.
+- Skill diagnostics write `configured_skill_count` and `configured_skills`.
+  The deprecated skill-health implementation and writer fields are absent;
+  routing inventory and tool-use statistics remain independent of dependency
+  availability. Historical JSON may contain ignored extra health fields.
 - ChemQA terminal output is `final_answer_artifact.json` or
   `failure_artifact.json`, accompanied by `artifact_manifest.json`,
   `candidate_view.json`, validation diagnostics, and the compatibility projection

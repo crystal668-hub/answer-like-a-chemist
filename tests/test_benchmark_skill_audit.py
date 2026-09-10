@@ -54,7 +54,7 @@ def test_skill_use_audit_detects_tool_calls() -> None:
     )
 
     assert audit["skills_enabled"] is True
-    assert audit["available_skill_count"] == 2
+    assert audit["configured_skill_count"] == 2
     assert audit["tool_call_count"] == 5
     assert audit["openclaw_tool_call_count"] == 5
     assert audit["openclaw_tool_names"] == ["read", "exec", "image", "web_search", "exec"]
@@ -167,14 +167,13 @@ def test_skill_use_audit_handles_missing_tool_summary() -> None:
     assert audit["no_skill_tool_call"] is True
 
 
-def test_skill_use_audit_includes_health_summary() -> None:
+def test_skill_use_audit_reports_configured_skills() -> None:
     audit = build_skill_use_audit(
         skills_enabled=True,
         configured_skills=("rdkit",),
         runner_meta={},
         final_response_text="FINAL ANSWER: A",
-        skill_health_summary={"available_skill_count": 1, "unavailable_skill_count": 2},
     )
 
-    assert audit["skill_health_summary"]["available_skill_count"] == 1
-    assert audit["skill_health_summary"]["unavailable_skill_count"] == 2
+    assert audit["configured_skill_count"] == 1
+    assert audit["configured_skills"] == ["rdkit"]

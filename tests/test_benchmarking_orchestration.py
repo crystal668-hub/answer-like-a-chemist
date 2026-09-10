@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +30,45 @@ class Group:
 
 
 class OrchestrationTests(unittest.TestCase):
+    def test_concurrent_records_have_distinct_config_and_workspace_identity(self):
+        barrier = threading.Barrier(2)
+        snapshots = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = SimpleNamespace(active_workspace_path=lambda *, group_id, agent_id: root / group_id / agent_id)
+            config = root / "source.json"
+            original_workspace = manager.active_workspace_path(group_id=Group().id, agent_id="agent")
+            config.write_text(json.dumps({"agents": {"list": [{"id": "agent", "workspace": str(original_workspace)}]}, "policy": {"agent": {"path": str(original_workspace / "scratch")}}}))
+            def build(**kwargs):
+                data = json.loads(kwargs["config_path"].read_text())
+                agent = kwargs["agent_id"]
+                expected = manager.active_workspace_path(group_id=Group().id, agent_id=agent)
+                self.assertEqual(str(expected), data["agents"]["list"][0]["workspace"])
+                self.assertEqual(str(expected / "scratch"), data["policy"][agent]["path"])
+                snapshots.append((agent, kwargs["config_path"]))
+                class Runner:
+                    def run(self, record, group):
+                        barrier.wait(timeout=2)
+                        return RunnerResult(status=RunStatus.COMPLETED, answer=AnswerPayload(short_answer_text="A", full_response_text="A"), raw={}, runner_meta={})
+                return Runner()
+            def run(index):
+                return run_group(
+                    group=Group(), records=[BenchmarkRecord(record_id=str(index), dataset="demo", source_file="demo", prompt="Q", reference_answer="A", eval_kind="demo")],
+                    output_root=root, single_timeout=10, chemqa_timeout=10, judge=None, config_path=config, single_agent="agent", chemqa_root=root, chemqa_model_profile="unused", review_rounds=None, rebuttal_rounds=None,
+                    chemqa_slot_sets={}, experiment_specs={Group().id: SimpleNamespace(skill_allowlist=())}, build_runner_fn=build,
+                    evaluate_answer_fn=lambda *a, **k: EvaluationResult(eval_kind="demo", score=1, max_score=1, normalized_score=1, passed=True, primary_metric="score", primary_metric_direction="higher_is_better", details={}),
+                    build_error_group_record_result_fn=lambda **kw: self.fail(str(kw)), classify_subset_fn=lambda r: "demo", save_json_fn=lambda p,d: p.write_text(json.dumps(d)), slugify_fn=str,
+                    single_agent_thinking="off", workspace_manager=manager, manage_group_lifecycle=False,
+                )
+            (root / "per-record" / Group().id).mkdir(parents=True)
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(run, index) for index in range(2)]
+                results = [future.result(timeout=5) for future in futures]
+            self.assertEqual(2, len({item[0] for item in snapshots}))
+            self.assertEqual(2, len({item[1] for item in snapshots}))
+            self.assertEqual("agent", json.loads(config.read_text())["agents"]["list"][0]["id"])
+            self.assertTrue(all(result[0].scored for result in results))
+
     def test_run_group_scores_successful_runner_result(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",

@@ -12,7 +12,6 @@ def build_skill_use_audit(
     configured_skills: tuple[str, ...] | list[str],
     runner_meta: dict[str, Any],
     final_response_text: str,
-    skill_health_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     tool_summary = runner_meta.get("toolSummary") or {}
     calls = int(tool_summary.get("calls") or 0) if isinstance(tool_summary, dict) else 0
@@ -37,8 +36,8 @@ def build_skill_use_audit(
         openclaw_tool_call_count = calls
     return {
         "skills_enabled": bool(skills_enabled),
-        "available_skill_count": len(configured),
-        "available_skills": configured,
+        "configured_skill_count": len(configured),
+        "configured_skills": configured,
         "openclaw_tool_call_count": openclaw_tool_call_count,
         "openclaw_tool_names": convergence_tool_names or tool_names,
         "tool_call_count": calls,
@@ -60,7 +59,6 @@ def build_skill_use_audit(
         "model_declared_skip": declared_skip,
         "no_tool_call": bool(calls == 0),
         "no_skill_tool_call": bool(skill_tool_call_count == 0),
-        "skill_health_summary": dict(skill_health_summary or {}),
     }
 
 

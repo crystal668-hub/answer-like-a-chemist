@@ -302,7 +302,7 @@ def lookup_skill_family(family_id: str) -> dict[str, Any]:
     raise KeyError(f"unknown skill family: {family_id}")
 
 
-def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str:
+def render_top_level_skill_tree(configured_skills: set[str] | None = None) -> str:
     inventory_by_skill = {
         str(entry["skill"]): entry
         for entry in load_chemistry_skill_inventory().get("skills", [])
@@ -312,7 +312,7 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
         "Chemistry skill catalog:",
         "The catalog describes available capabilities; whether and how to use a skill is your choice.",
     ]
-    if available_skills is None:
+    if configured_skills is None:
         lines.append("All single-agent chemistry skills are listed below.")
     else:
         lines.append("The skills listed below come from the complete benchmark routing inventory.")
@@ -322,7 +322,7 @@ def render_top_level_skill_tree(available_skills: set[str] | None = None) -> str
             family_skills = [
                 str(skill)
                 for skill in family["skills"]
-                if available_skills is None or str(skill) in available_skills
+                if configured_skills is None or str(skill) in configured_skills
             ]
             if not family_skills:
                 continue

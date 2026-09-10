@@ -212,6 +212,10 @@ process.stdout.write(JSON.stringify(result ?? null));
                 "uv pip install verifier-grounded-benchmark",
                 "uv pip install --python /tmp/other-python rdkit",
                 "uv sync",
+                "uv pip install ./local-package",
+                "uv pip install .",
+                "uv pip install --editable package",
+                "uv pip install --target scratch/target rdkit",
                 "uv run --with rdkit python scratch/tmp/calc.py",
             ):
                 with self.subTest(command=command):

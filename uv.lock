@@ -664,6 +664,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "pint" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "sympy" },
@@ -885,6 +886,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'paper-parse'", specifier = "==1.27.2.2" },
     { name = "pypptx-with-oxml", marker = "extra == 'doc-export'", specifier = "==1.0.3" },
     { name = "python-docx", marker = "extra == 'doc-export'", specifier = "==1.2.0" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "quacc", marker = "extra == 'chem-workflows'", specifier = "==1.2.6" },
     { name = "rdkit", marker = "extra == 'chem'", specifier = "==2026.3.1" },
