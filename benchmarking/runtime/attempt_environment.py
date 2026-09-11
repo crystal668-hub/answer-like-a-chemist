@@ -4,8 +4,8 @@ import hashlib
 import json
 import os
 import platform
-import shutil
 import shlex
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -75,7 +75,17 @@ def create_attempt_environment(
     uv = uv_executable or shutil.which("uv")
     if not uv:
         raise FileNotFoundError("uv executable not found in PATH")
-    native_tools = _materialize_native_tools(tool_bin_dir, uv=uv)
+    native_tools = _materialize_native_tools(
+        tool_bin_dir,
+        uv=uv,
+        environment={
+            "VIRTUAL_ENV": str(venv_dir),
+            "UV_PYTHON": str(venv_dir / "bin" / "python"),
+            "UV_DEFAULT_INDEX": "https://pypi.org/simple",
+            "UV_EXCLUDE_NEWER": cutoff,
+            "UV_CACHE_DIR": str(cache_dir),
+        },
+    )
     env = os.environ.copy()
     env.update(
         {
@@ -401,7 +411,12 @@ def cleanup_partial_attempt_environment(root: Path) -> None:
         raise RuntimeError(f"Partial attempt cleanup failed: {report['errors']}")
 
 
-def _materialize_native_tools(tool_bin_dir: Path, *, uv: str) -> dict[str, str]:
+def _materialize_native_tools(
+    tool_bin_dir: Path,
+    *,
+    uv: str,
+    environment: dict[str, str] | None = None,
+) -> dict[str, str]:
     resolved: dict[str, str] = {"uv": str(Path(uv).expanduser().resolve())}
     for name in ("xtb", "node", "openclaw"):
         candidate = shutil.which(name)
@@ -409,7 +424,14 @@ def _materialize_native_tools(tool_bin_dir: Path, *, uv: str) -> dict[str, str]:
             resolved[name] = str(Path(candidate).expanduser().resolve())
     for name, target in resolved.items():
         wrapper = tool_bin_dir / name
-        wrapper.write_text(f'#!/bin/sh\nexec "{target}" "$@"\n', encoding="utf-8")
+        if name == "uv" and environment:
+            assignments = " ".join(
+                f"{key}={shlex.quote(value)}" for key, value in sorted(environment.items())
+            )
+            content = f"#!/bin/sh\nexec env {assignments} {shlex.quote(target)} \"$@\"\n"
+        else:
+            content = f'#!/bin/sh\nexec "{target}" "$@"\n'
+        wrapper.write_text(content, encoding="utf-8")
         wrapper.chmod(0o500)
     return resolved
 

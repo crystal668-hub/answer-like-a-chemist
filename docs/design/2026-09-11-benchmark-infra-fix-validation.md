@@ -63,6 +63,11 @@ The six-item handoff remains open for the outstanding real-model scenarios below
   installation test does not substitute for this scenario.
 - No benchmark-labeled containers remained after these runs. Provider failures
   preserved their diagnostic evidence and archived workspaces.
+- The minimal attempt-environment fix materializes `.runtime-bin/uv` as a
+  fixed-config wrapper. It restores the attempt venv, PyPI index, cutoff, and
+  cache after OpenClaw exec environment filtering, while preserving command
+  arguments. Regression coverage includes filtered variables and paths with
+  spaces.
 - Static checks: `ruff check --select F` on changed runtime/workflow modules and
   `git diff --check` passed. Docker timeout diagnostics omit command arguments
   so injected provider environment values are not persisted in errors.

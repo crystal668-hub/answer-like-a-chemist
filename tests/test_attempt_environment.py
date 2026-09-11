@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 from benchmarking.runtime.attempt_environment import (
+    _materialize_native_tools,
     cleanup_attempt_environment,
     create_attempt_environment,
 )
@@ -62,3 +64,43 @@ def test_cleanup_attempt_environment_removes_venv_and_cache(tmp_path: Path) -> N
     assert report == {"venv_removed": True, "cache_removed": True, "tool_bin_removed": True}
     assert not env.venv_dir.exists()
     assert not env.cache_dir.exists()
+
+
+def test_uv_wrapper_rebinds_filtered_environment_and_preserves_arguments(tmp_path: Path) -> None:
+    target = tmp_path / "bin with spaces" / "uv"
+    target.parent.mkdir()
+    target.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$VIRTUAL_ENV\" \"$UV_PYTHON\" \"$UV_DEFAULT_INDEX\" \"$UV_EXCLUDE_NEWER\" \"$UV_CACHE_DIR\" \"$1\"\n"
+    )
+    target.chmod(0o700)
+    wrapper_dir = tmp_path / "scratch with spaces" / ".runtime-bin"
+    wrapper_dir.mkdir(parents=True)
+    _materialize_native_tools(
+        wrapper_dir,
+        uv=str(target),
+        environment={
+            "VIRTUAL_ENV": str(tmp_path / "scratch with spaces" / "venv"),
+            "UV_PYTHON": str(tmp_path / "scratch with spaces" / "venv" / "bin" / "python"),
+            "UV_DEFAULT_INDEX": "https://pypi.org/simple",
+            "UV_EXCLUDE_NEWER": "2026-09-11T00:00:00Z",
+            "UV_CACHE_DIR": str(tmp_path / "scratch with spaces" / "cache"),
+        },
+    )
+    filtered = dict(os.environ)
+    for key in ("VIRTUAL_ENV", "UV_PYTHON", "UV_DEFAULT_INDEX", "UV_EXCLUDE_NEWER", "UV_CACHE_DIR"):
+        filtered.pop(key, None)
+    result = subprocess.run(
+        [str(wrapper_dir / "uv"), "pip", "install", "packaging==24.2"],
+        env=filtered,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines() == [
+        str(tmp_path / "scratch with spaces" / "venv"),
+        str(tmp_path / "scratch with spaces" / "venv" / "bin" / "python"),
+        "https://pypi.org/simple",
+        "2026-09-11T00:00:00Z",
+        str(tmp_path / "scratch with spaces" / "cache"),
+        "pip",
+    ]
