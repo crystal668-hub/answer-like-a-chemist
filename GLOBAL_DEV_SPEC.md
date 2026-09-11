@@ -567,6 +567,14 @@ boundary. Processes still run as the same local user.
 
 ### Current risks
 
+- Docker migration has known gaps in multimodal bundle path/policy projection,
+  crash recovery with uncleaned attempt environments, dependency evidence
+  completeness checks, and indirect dependency-command validation. The CLI
+  executor still holds a worker throughout record retries and scoring even
+  after admission release. Docker repeated-cancellation handling and cleanup
+  error propagation are incomplete. See
+  `docs/design/2026-09-11-benchmark-infra-open-issues-handoff.md` for evidence and
+  acceptance criteria; existing passing smoke checks do not close these gaps.
 - Attempt isolation detects and adjudicates filesystem evidence but cannot prevent
   every same-user filesystem access performed inside arbitrary subprocesses.
 - The benchmark CLI still owns argument parsing, wave scheduling, final

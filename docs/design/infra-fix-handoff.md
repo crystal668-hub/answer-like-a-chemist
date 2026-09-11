@@ -1,8 +1,8 @@
 # Benchmark Infra 重构待修复问题交接文档
 
-状态：`CLOSED`（实现与验收见 `infra-fix-validation.md`；下文保留交接时的问题描述）
+状态：`PARTIALLY COMPLETED / REOPENED`。第一轮实现见 `infra-fix-validation.md`；复审发现的六项未关闭问题以 [2026-09-11 后续交接](2026-09-11-benchmark-infra-open-issues-handoff.md) 为准。下文保留原始交接范围。
 
-更新时间：2026-09-10
+更新时间：2026-09-11
 
 适用分支：`feat/benchmark-single-llm-containerization`
 
