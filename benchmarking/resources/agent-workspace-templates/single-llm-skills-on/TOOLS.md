@@ -1,12 +1,18 @@
 # Benchmark-managed TOOLS.md
 
-Run local skill scripts through this two-step OpenClaw tool-call pattern. The
-workspace contract in `AGENTS.md` owns path and isolation rules; this file only
-specifies the invocation recipe.
+Read the selected skill's `SKILL.md` for its script path, inputs, and CLI arguments.
+If it needs input files, write them with a structured file tool under
+`scratch/requests/`.
 
-1. Use a structured file tool to write request JSON to `scratch/requests/<name>.json`.
-2. Use `exec` with this command after replacing every uppercase placeholder:
+Invoke its script with `exec`:
 
-`cd "$BENCHMARK_SKILL_SCRATCH_DIR" && mkdir -p "outputs/OUTPUT_NAME" && "${BENCHMARK_ATTEMPT_PYTHON:-python}" "$BENCHMARK_SKILL_RUNNER" --workspace-root "$BENCHMARK_PROJECT_ROOT" --execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" --script SCRIPT_PATH -- --request-json "requests/REQUEST_NAME.json" --output-dir "outputs/OUTPUT_NAME" --json`
+`cd "$BENCHMARK_SKILL_SCRATCH_DIR" && mkdir -p "outputs/OUTPUT_NAME" && python "$BENCHMARK_SKILL_RUNNER" --workspace-root "$BENCHMARK_PROJECT_ROOT" --execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" --script SCRIPT_PATH -- SCRIPT_ARGS`
 
-Use `scratch/outputs` for outputs, `scratch/notes` for notes, and `scratch/tmp` for temporary scripts needed by the current calculation. Do not execute canonical `skills/...` source directly or invent tool names.
+Replace only `OUTPUT_NAME`, `SCRIPT_PATH` (project-relative `skills/.../scripts/...py`),
+and `SCRIPT_ARGS`; keep the `$BENCHMARK_*` environment variables intact.
+Arguments after `--` belong to the selected script. For scripts that document
+them, use `--request-json "requests/REQUEST_NAME.json" --output-dir "outputs/OUTPUT_NAME" --json`;
+other scripts may require different arguments, such as `--query`.
+These paths are relative to scratch after `cd`, so omit the `scratch/` prefix.
+The wrapper selects the injected attempt Python when available, otherwise the
+workspace `uv` environment.

@@ -320,6 +320,36 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertIn("Skills and local skill scripts are unavailable", contracts["single-llm-skills-off-v1"])
         self.assertIn("Return only the requested JSON verdict", contracts["judge-v1"])
 
+    def test_skills_on_tools_recipe_is_auditable_with_role_scopes(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        template = default_workspace_templates(project_root)["single-llm-skills-on-v1"]
+        tools_text = template.files["TOOLS.md"].read_text(encoding="utf-8")
+        recipe = next(line.strip("`") for line in tools_text.splitlines() if line.startswith('`cd '))
+        script = "skills/chem-calculator/scripts/ksp_solver.py"
+        for attempt_python_enabled in (False, True):
+            with self.subTest(attempt_python_enabled=attempt_python_enabled):
+                environment = {
+                    "BENCHMARK_PROJECT_ROOT": str(project_root),
+                    "BENCHMARK_SKILL_RUNNER": str(project_root / "scripts/run_skill.py"),
+                }
+
+                def arguments(lease):
+                    environment["BENCHMARK_SKILL_SCRATCH_DIR"] = str(lease.scratch_dir)
+                    if attempt_python_enabled:
+                        environment["BENCHMARK_ATTEMPT_PYTHON"] = str(lease.scratch_dir / "venv/bin/python")
+                    return {"command": recipe.replace("OUTPUT_NAME", "demo").replace(
+                        "SCRIPT_PATH", script).replace("SCRIPT_ARGS", '--request-json "requests/demo.json" --output-dir "outputs/demo" --json')}
+
+                audit = self._audit_tool_event(
+                    tool_name="exec",
+                    arguments=arguments,
+                    result={"text": '{"available": true}'},
+                    allowed_roots=(project_root / "skills", project_root / "scripts/run_skill.py"),
+                    environment=environment,
+                )
+                self.assertEqual(audit.audit_execution_status, "complete")
+                self.assertEqual(audit.adjudication, "scoreable")
+
     def test_tool_result_outcomes_and_access_modes_are_preserved(self) -> None:
         protected = self.root / "datasets" / "track" / "tasks.jsonl"
         cases = (

@@ -20,6 +20,18 @@ PLUGIN_PATH = (
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for the OpenClaw plugin test")
 class BenchmarkWorkdirGuardTests(unittest.TestCase):
+    def test_skills_on_tools_recipe_passes_guard(self):
+        template = PLUGIN_PATH.parents[3] / "resources/agent-workspace-templates/single-llm-skills-on/TOOLS.md"
+        recipe = next(line.strip("`") for line in template.read_text().splitlines() if line.startswith('`cd '))
+        command = recipe.replace("OUTPUT_NAME", "demo").replace(
+            "SCRIPT_PATH", "skills/paper-retrieval/scripts/paper_retrieval.py"
+        ).replace("SCRIPT_ARGS", '--query "water" --output-dir "outputs/demo"')
+        with tempfile.TemporaryDirectory() as root:
+            for attempt_python in (False, True):
+                with self.subTest(attempt_python=attempt_python):
+                    self.assertIsNone(self._run_hook(
+                        workspace=Path(root), params={"command": command}, attempt_python=attempt_python))
+
     def test_readonly_input_allows_copy_out_but_rejects_mutations(self):
         with tempfile.TemporaryDirectory() as root:
             workspace = Path(root) / "workspace"

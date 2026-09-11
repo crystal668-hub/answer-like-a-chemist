@@ -612,6 +612,10 @@ boundary. Processes still run as the same local user.
 - Agent-invoked local skill scripts run through `scripts/run_skill.py`, which uses
   the attempt Python when configured and otherwise the canonical workspace for
   dependency resolution. Relative artifacts use the attempt scratch directory.
+  The skills-on `TOOLS.md` documents this wrapper invocation; arguments after
+  `--` follow each selected skill's CLI contract rather than a universal request
+  JSON interface. The role overlay retains only skill permissions and optional
+  use; shared scratch and isolation rules remain in the canonical base.
 - Skill diagnostics write `configured_skill_count` and `configured_skills`.
   The deprecated skill-health implementation and writer fields are absent;
   routing inventory and tool-use statistics remain independent of dependency
