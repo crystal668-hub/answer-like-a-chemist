@@ -247,13 +247,21 @@ For each invocation, the CLI:
    and a matching managed-workspace sentinel. Live or unverifiable containers
    are preserved and reported; unresolved containers for the current run stop
    startup before workspace recovery. `docker-startup.json` and the runtime
-   manifest retain startup evidence, including failures. Before scheduling, a
-   bounded Node DNS lookup runs in the pinned image with the attempt network
-   mode for the selected model's explicitly configured provider endpoint.
-   Resolution failure stops startup with `provider_dns_failed`, retaining the
-   hostname and resolver error in `docker-startup.json`. Proxy-configured
-   requests and providers without an explicit endpoint record a skipped check;
-   this is a DNS check, not an authenticated provider-health probe.
+   manifest retain startup evidence, including failures. Before scheduling,
+   `container_network` resolves one immutable network configuration for the
+   invocation from process environment, runtime `.env`, and system proxy
+   fallback. On macOS, loopback proxy URLs map to `host.docker.internal` with
+   their original port; Linux host networking retains loopback URLs. Lowercase
+   proxy overrides take precedence and both cases receive the same values,
+   including `NO_PROXY`. The exact configuration is passed to the preflight
+   probe and every attempt/retry, and recorded with proxy credentials redacted.
+   A bounded unauthenticated GET uses the pinned image's OpenClaw guarded model
+   fetch transport against the configured provider base URL. Proxy paths are
+   tested rather than skipped; connection, DNS, TLS, HTTP 407, and HTTP 5xx
+   failures stop startup with `provider_connectivity_failed`. HTTP 401/403/404
+   can establish connectivity but do not establish authentication or model
+   health. Providers without an explicit endpoint record a skipped check.
+   Probe results are retained as `provider_connectivity` in `docker-startup.json`.
 4. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches single-LLM
    attempts through one shared queue across selected single-LLM groups. The
    explicit legacy entrypoint uses ChemQA group waves separately. `--max-concurrent-attempts` defaults to 2 and must be
@@ -295,6 +303,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   runtime `.env` as fallback. Environment SecretRefs are projected to local
   environment substitutions instead of requiring the host gateway. Docker
   inspect environment values are redacted in persisted diagnostics.
+- Single-LLM Docker requests inherit the invocation's frozen `ContainerNetworkConfig`;
+  the runner does not independently rediscover system proxy settings. The same
+  network mode and proxy environment are used by the startup transport probe.
+  Per-attempt container manifests and the runtime manifest expose the redacted
+  network configuration. The connectivity probe adapter targets the pinned
+  OpenClaw 2026.6.9 guarded-fetch exports and must be validated on version upgrades.
 - Docker container names combine a bounded readable prefix with a SHA-256
   suffix over every attempt identity field, including invocation, group, agent,
   record, retry index, session, and template. Truncation cannot discard the

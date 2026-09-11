@@ -30,6 +30,7 @@ from benchmarking.runtime.agent_workspace import (
 )
 from benchmarking.runtime.bundles import RuntimePathProjection
 from benchmarking.runtime.cancellation import CancellationToken
+from benchmarking.runtime.container_network import ContainerNetworkConfig
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -137,23 +138,22 @@ class DockerContainerRuntime:
             raise ContainerRuntimeError("docker version returned invalid JSON", code="docker_invalid_response") from exc
         return payload if isinstance(payload, dict) else {"version": payload}
 
-    def check_dns(self, *, image: str, hostname: str, network_mode: str = "host") -> dict[str, Any]:
-        name = "benchmark-dns-" + uuid.uuid4().hex
-        script = """
-const dns = require('node:dns');
-const hostname = process.argv[1];
-const finish = result => { console.log(JSON.stringify(result)); process.exit(0); };
-setTimeout(() => finish({hostname, status: 'failed', code: 'ETIMEOUT'}), 10000);
-dns.lookup(hostname, {all: true}, (error, addresses) => finish(error
-  ? {hostname, status: 'failed', code: error.code}
-  : {hostname, status: 'ready', addresses}));
-"""
+    def check_provider_connection(
+        self, *, image: str, network: ContainerNetworkConfig, model: Mapping[str, Any],
+        request: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        name = "benchmark-network-" + uuid.uuid4().hex
+        script = (Path(__file__).parents[1] / "resources/provider-connectivity-probe.mjs").read_text()
+        args = [
+            "run", "--rm", "-i", "--name", name, "--network", network.network_mode,
+            "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m", "--entrypoint", "node",
+        ]
+        for key, _ in network.proxy_environment:
+            args += ["--env", key]
+        args += [image, "--input-type=module", "-e", script]
         try:
-            result = self._command([
-                "run", "--rm", "--name", name, "--network", network_mode,
-                "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-                "--read-only", "--entrypoint", "node", image, "-e", script, hostname,
-            ], timeout=25)
+            result = self._command(args, timeout=30, env=network.apply(os.environ), input=json.dumps({"model": dict(model), "request": dict(request)}))
         except BaseException:
             # A killed Docker client does not stop its container.
             try:
@@ -161,17 +161,17 @@ dns.lookup(hostname, {all: true}, (error, addresses) => finish(error
             except ContainerRuntimeError as cleanup_error:
                 if "No such container" not in str(cleanup_error):
                     raise ContainerRuntimeError(
-                        f"DNS probe cleanup failed: {name}", code="container_cleanup_failed",
+                        f"Network probe cleanup failed: {name}", code="container_cleanup_failed",
                         details={"container_name": name},
                     ) from cleanup_error
             raise
         try:
             report = json.loads(result.stdout)
-            if report["hostname"] != hostname or report["status"] not in {"ready", "failed"}:
-                raise ValueError("invalid DNS report")
+            if report["status"] not in {"ready", "failed"}:
+                raise ValueError("invalid connectivity report")
         except (ValueError, TypeError, KeyError) as exc:
-            raise ContainerRuntimeError("Docker DNS probe returned invalid JSON", code="docker_invalid_response") from exc
-        return {**report, "network_mode": network_mode}
+            raise ContainerRuntimeError("Docker network probe returned invalid JSON", code="docker_invalid_response") from exc
+        return report
 
     @staticmethod
     def _validate_mounts(mounts: tuple[ContainerMount, ...], allowed_source_roots: tuple[Path, ...] = ()) -> None:

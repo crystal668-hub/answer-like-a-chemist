@@ -54,6 +54,7 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
         container_cpus: float | None = None,
         container_memory_bytes: int | None = None,
         container_pids_limit: int | None = None,
+        container_network=None,
         admission_controller=None,
     ) -> None:
         self._cancellation_enabled = cancellation_token is not None
@@ -99,6 +100,7 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             container_cpus=container_cpus,
             container_memory_bytes=container_memory_bytes,
             container_pids_limit=container_pids_limit,
+            container_network=container_network,
             run_subprocess=lambda *args, **kwargs: subprocess_utils.run_owned_subprocess(
                 *args,
                 cancellation_token=self._cancellation_token,

@@ -13,7 +13,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
-from dotenv import dotenv_values
 
 from benchmarking.core.contracts import (
     AnswerPayload,
@@ -60,6 +59,7 @@ from benchmarking.runtime.error_capture import (
     capture_execution_error,
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
+from benchmarking.runtime.container_network import ContainerNetworkConfig, resolve_container_network, runtime_environment
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
@@ -508,6 +508,7 @@ class SingleLLMRunner:
         container_cpus: float | None = None,
         container_memory_bytes: int | None = None,
         container_pids_limit: int | None = None,
+        container_network: ContainerNetworkConfig | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.timeout_seconds = timeout_seconds
@@ -541,6 +542,7 @@ class SingleLLMRunner:
         self.container_cpus = container_cpus
         self.container_memory_bytes = container_memory_bytes
         self.container_pids_limit = container_pids_limit
+        self.container_network = container_network or (resolve_container_network() if self.execution_backend == "docker" else ContainerNetworkConfig())
         self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
             timeout_retry_backoff_seconds,
             max_retries=self.timeout_retries,
@@ -1407,13 +1409,14 @@ class SingleLLMRunner:
         container_command = ["/opt/benchmark/.venv/bin/python", "-m", "benchmarking.runtime.container_attempt", *container_command[1:]]
         container_env = {
             key: value
-            for key, value in {**dotenv_values(Path(os.environ.get("OPENCLAW_ENV_FILE", str(runtime_paths.openclaw_home / ".env")))), **env}.items()
+            for key, value in runtime_environment(env).items()
             if isinstance(value, str)
             if key in {"LANG", "LC_ALL", "LC_CTYPE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY", "BENCHMARK_PYPI_CUTOFF"}
             or key.endswith("_API_KEY")
             or key.endswith("_TOKEN")
             or key.endswith("_BASE_URL")
         }
+        container_env = self.container_network.apply(container_env)
         container_env.update(
             {
                 "HOME": "/home/benchmark",
@@ -1461,6 +1464,7 @@ class SingleLLMRunner:
             command=tuple(container_command),
             environment=container_env,
             mounts=tuple(mounts),
+            network_mode=self.container_network.network_mode,
             cpu_limit=self.container_cpus,
             memory_limit_bytes=self.container_memory_bytes,
             pids_limit=self.container_pids_limit,
@@ -1476,6 +1480,7 @@ class SingleLLMRunner:
                     "path_projection": projection.to_meta(),
                     "image": spec.image,
                     "network_mode": spec.network_mode,
+                    "network": self.container_network.to_meta(),
                     "mounts": [
                         {"source": str(mount.source), "target": str(mount.target), "mode": mount.mode, "kind": mount.kind}
                         for mount in spec.mounts

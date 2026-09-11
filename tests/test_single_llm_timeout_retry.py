@@ -68,6 +68,9 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         config.write_text(json.dumps({"agents": {"list": [{"id": "benchmark-single-skills-on"}]}}))
         runner = self._runner(captured_commands=[], config_path=config, timeout_once=False)
         runner.execution_backend = "docker"
+        from benchmarking.runtime.container_network import ContainerNetworkConfig
+        network = ContainerNetworkConfig((("HTTP_PROXY", "http://host.docker.internal:7892"), ("HTTPS_PROXY", "http://host.docker.internal:7892")))
+        runner.container_network = network
         token = CancellationToken()
         runner.admission_controller = AttemptAdmissionController(max_attempts=1, cancellation_token=token)
         class Runtime:
@@ -91,6 +94,11 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertFalse(result.should_score())
         self.assertTrue(result.runner_meta["workspace_isolation"]["recovery_required"])
         self.assertFalse(any(mount.kind == "input" for mount in runtime.spec.mounts))
+        self.assertEqual(runtime.spec.network_mode, network.network_mode)
+        for key, value in network.proxy_environment:
+            self.assertEqual(runtime.spec.environment[key], value)
+        manifest = Path(result.runner_meta["workspace_isolation"]["active_workspace"]) / "scratch/outputs/container-spool/container-manifest.json"
+        self.assertEqual(json.loads(manifest.read_text())["network"], network.to_meta())
         self.assertTrue(Path(result.runner_meta["workspace_isolation"]["active_workspace"]).exists())
 
     def setUp(self) -> None:

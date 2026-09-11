@@ -49,6 +49,7 @@ def make_runner_options(*, args, group, output_root, config_path, single_agent, 
         container_cpus=getattr(args, "container_cpus", None),
         container_memory_bytes=getattr(args, "container_memory_bytes", None),
         container_pids_limit=getattr(args, "container_pids_limit", None),
+        container_network=getattr(args, "container_network", None),
     )
 
 from benchmarking.runtime.agent_workspace import default_workspace_templates as workspace_templates

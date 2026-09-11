@@ -7,6 +7,11 @@
 - Baseline: source commit `e2143a1`; Docker image
   `sha256:5b968aebe2b3e5cb2678e9b3a0d3fffd6fc0cc0314b204021ba9c48036a4fa96`.
 
+Follow-up: the DNS-only startup check below was superseded by
+[shared container networking and transport preflight](2026-09-11-container-proxy-dns-followup.md)
+after the 21:32 run exposed a mismatch between system-proxy discovery and the
+actual container environment. Historical observations below remain unchanged.
+
 ## Incident Evidence
 
 The run

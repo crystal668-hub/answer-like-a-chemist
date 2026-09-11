@@ -4,7 +4,7 @@ import uuid
 from benchmarking.core.convergence import ConvergencePolicy
 
 
-def runner_options(*, group, output_root, config_path, single_agent, single_timeout, experiment_specs, single_agent_thinking, single_convergence_policy=None, single_timeout_retries=3, single_timeout_retry_backoff_seconds=(5,15,45), no_timeout=False, workspace_manager=None, cancellation_token=None, process_registry=None, pypi_cutoff=None, vgb_skill_allowlist=(), admission_controller=None, manage_group_lifecycle=True, execution_backend="docker", container_image="openclaw-benchmark-single-llm:latest", container_cpus=None, container_memory_bytes=None, container_pids_limit=None):
+def runner_options(*, group, output_root, config_path, single_agent, single_timeout, experiment_specs, single_agent_thinking, single_convergence_policy=None, single_timeout_retries=3, single_timeout_retry_backoff_seconds=(5,15,45), no_timeout=False, workspace_manager=None, cancellation_token=None, process_registry=None, pypi_cutoff=None, vgb_skill_allowlist=(), admission_controller=None, manage_group_lifecycle=True, execution_backend="docker", container_image="openclaw-benchmark-single-llm:latest", container_cpus=None, container_memory_bytes=None, container_pids_limit=None, container_network=None):
     runtime_bundle_root = output_root / "input-bundles"
     if not manage_group_lifecycle and workspace_manager is not None:
         original_agent = single_agent
@@ -52,4 +52,5 @@ def runner_options(*, group, output_root, config_path, single_agent, single_time
         container_cpus=container_cpus,
         container_memory_bytes=container_memory_bytes,
         container_pids_limit=container_pids_limit,
+        container_network=container_network,
     )

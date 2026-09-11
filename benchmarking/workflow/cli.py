@@ -58,7 +58,8 @@ from benchmarking.runtime.openclaw_env import (
     build_openclaw_subprocess_env,
     proxy_environment_report,
 )
-from benchmarking.runtime.provider_preflight import check_provider_dns
+from benchmarking.runtime.provider_preflight import check_provider_connection
+from benchmarking.runtime.container_network import resolve_container_network
 from benchmarking.runtime.vgb_bridge import load_release_config
 from benchmarking.runtime.web_search_preflight import run_web_search_preflight
 from benchmarking.scoring.evaluators.verifier_grounded import (
@@ -512,6 +513,8 @@ def main(service=None) -> int:
     ):
         runtime = DockerContainerRuntime()
         try:
+            args.container_network = resolve_container_network()
+            docker_startup["network"] = args.container_network.to_meta()
             docker_startup["daemon"] = runtime.check_ready()
             docker_startup["requested_image"] = args.container_image
             args.container_image = runtime.resolve_image_digest(args.container_image)
@@ -519,16 +522,17 @@ def main(service=None) -> int:
             docker_startup["recovery"] = runtime.recover_orphans(runtime_root=workspace_manager.runtime_root)
             if any(not item["removed"] and item.get("run_id") == run_id for item in docker_startup["recovery"]):
                 raise ContainerRuntimeError("Existing run containers could not be safely recovered")
-            docker_startup["provider_dns"] = check_provider_dns(
+            docker_startup["provider_connectivity"] = check_provider_connection(
                 runtime=runtime, image=args.container_image,
                 config_path=Path(args.openclaw_config).expanduser().resolve(), model=args.single_agent_model,
+                network=args.container_network,
             )
-            if docker_startup["provider_dns"]["status"] == "failed":
-                dns = docker_startup["provider_dns"]
+            if docker_startup["provider_connectivity"]["status"] == "failed":
+                report = docker_startup["provider_connectivity"]
                 raise ContainerRuntimeError(
-                    f"Provider DNS lookup failed inside Docker: {dns['hostname']} ({dns.get('code', 'unknown')}). "
-                    "Check the host resolver and Docker DNS forwarding before restarting the run.",
-                    code="provider_dns_failed",
+                    f"Provider connection failed inside Docker: {report['hostname']} ({report.get('code', 'unknown')}). "
+                    "Check the recorded container network and proxy before restarting the run.",
+                    code="provider_connectivity_failed",
                 )
             docker_startup["status"] = "ready"
         except ContainerRuntimeError as exc:
@@ -997,7 +1001,8 @@ def main(service=None) -> int:
         "container_runtime": {
             "backend": getattr(args, "execution_backend", "docker"),
             "image": getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
-            "network_mode": "host",
+            "network_mode": args.container_network.network_mode if getattr(args, "container_network", None) else "host",
+            "network": args.container_network.to_meta() if getattr(args, "container_network", None) else {},
             "resource_limits": {
                 "cpus": getattr(args, "container_cpus", None),
                 "memory_bytes": getattr(args, "container_memory_bytes", None),

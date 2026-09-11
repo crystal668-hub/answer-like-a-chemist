@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from benchmarking.runtime.agent_workspace import AttemptIdentity
+from benchmarking.runtime.container_network import ContainerNetworkConfig
 from benchmarking.runtime.container_runtime import (
     ContainerAttemptSpec,
     ContainerMount,
@@ -124,19 +125,22 @@ def test_container_names_preserve_full_identity_after_truncation():
     assert all(len(name) <= 190 for name in names)
 
 
-@pytest.mark.parametrize("status,extra", [("ready", {"addresses": [{"address": "192.0.2.1", "family": 4}]}), ("failed", {"code": "ENOTFOUND"})])
-def test_dns_probe_uses_container_resolver_and_preserves_result(status, extra):
+@pytest.mark.parametrize("status,extra", [("ready", {"http_status": 401}), ("failed", {"code": "ENOTFOUND"})])
+def test_network_probe_uses_frozen_environment_and_preserves_result(status, extra):
+    network = ContainerNetworkConfig((("HTTPS_PROXY", "http://user:secret@host.docker.internal:7892"),))
     def run(command, **kwargs):
         assert command[1] == "run"
         assert command[command.index("--network") + 1] == "host"
         assert command[command.index("--entrypoint") + 1] == "node"
-        assert "--rm" in command and "--env" not in command and "--mount" not in command
-        assert command[-1] == "provider.example"
-        assert kwargs["timeout"] == 25
-        return subprocess.CompletedProcess(command, 0, json.dumps({"hostname": "provider.example", "status": status, **extra}), "")
+        assert "--rm" in command and "--env" in command and "--mount" not in command
+        assert "secret" not in " ".join(command)
+        assert kwargs["env"]["HTTPS_PROXY"] == dict(network.proxy_environment)["HTTPS_PROXY"]
+        assert json.loads(kwargs["input"])["model"]["baseUrl"] == "https://provider.example"
+        assert kwargs["timeout"] == 30
+        return subprocess.CompletedProcess(command, 0, json.dumps({"status": status, **extra}), "")
 
-    report = DockerContainerRuntime(docker_executable="docker", run_subprocess=run).check_dns(image="image", hostname="provider.example")
-    assert report == {"hostname": "provider.example", "status": status, "network_mode": "host", **extra}
+    report = DockerContainerRuntime(docker_executable="docker", run_subprocess=run).check_provider_connection(image="image", network=network, model={"baseUrl": "https://provider.example"}, request={})
+    assert report == {"status": status, **extra}
 
 
 @pytest.mark.parametrize("cleanup_failure", [False, True])
@@ -151,7 +155,7 @@ def test_dns_probe_timeout_removes_owned_container(cleanup_failure):
 
     runtime = DockerContainerRuntime(docker_executable="docker", run_subprocess=run)
     with pytest.raises(ContainerRuntimeError) as error:
-        runtime.check_dns(image="image", hostname="provider.example")
+        runtime.check_provider_connection(image="image", network=ContainerNetworkConfig(), model={"baseUrl": "https://provider.example"}, request={})
     assert error.value.code == ("container_cleanup_failed" if cleanup_failure else "docker_command_timeout")
     name = commands[0][commands[0].index("--name") + 1]
     assert commands[-1] == ["docker", "rm", "-f", name]
