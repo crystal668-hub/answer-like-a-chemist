@@ -1,5 +1,12 @@
 # Autonomous Skill Discovery and Audit Implementation Plan
 
+> Historical implementation plan. The current implementation uses
+> `skills/chemistry-routing-matrix.json` version 3 as the canonical source for
+> skill IDs, exposure, capability metadata, and display taxonomy. The
+> `benchmarking.skills.tree` module now derives the compatibility tree from
+> that matrix; the hard-coded `SKILL_TREE` snippets below describe the original
+> implementation only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace deterministic record-level skill routing with full benchmark skill availability, a lightweight Hierarchical Skill Tree, model-driven skill use, and post-run audit metrics.

@@ -406,7 +406,9 @@ Agent-facing prompt policy：
 - synchronized record 中的 package public prompt 是 VGB 作答内容的唯一来源；
 - bounded 模式只在 public prompt 前添加一行 attempt time budget；
 - `--no-timeout` 模式不在 public prompt 前添加 time budget；
-- single-LLM user prompt 不注入 skill tree，不强制读取 `act-like-a-chemist`，也不添加通用解题策略；
+- single-LLM VGB user prompt may include the compact matrix-derived skill catalog
+  when skills are enabled; it does not force reading `act-like-a-chemist` or add
+  generic solving strategies;
 - user prompt 不复述 verifier 实现、单候选要求或 package prompt 已包含的 answer format；
 - skills-on/off 使用相同的 VGB base prompt，差异只来自 OpenClaw config/system context 中的 skill availability 与 skills-on workspace `TOOLS.md`；
 - primary/retry attempt 都沿用同一 base prompt，不为某个 group 追加 retry strategy guidance；

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
 from benchmarking.skills.tree import (
     benchmark_skill_allowlist,
+    benchmark_skill_routing_inventory,
     load_chemistry_skill_inventory,
     load_skill_tree,
     lookup_skill_family,
     render_top_level_skill_tree,
+    _validate_inventory,
 )
 
 
@@ -24,6 +31,7 @@ def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline
     inventory = load_chemistry_skill_inventory()
     allowlist = benchmark_skill_allowlist()
 
+    assert inventory["version"] == 3
     assert len(allowlist) == 85
     assert len(allowlist) == len(set(allowlist))
     assert allowlist == tuple(
@@ -34,6 +42,58 @@ def test_benchmark_skill_allowlist_includes_all_matrix_skills_and_paper_pipeline
     assert {"paper-retrieval", "paper-access", "paper-parse"} <= set(allowlist)
     assert {"chem-calculator", "rdkit", "opsin", "pubchem"} <= set(allowlist)
     assert not (RUNTIME_OR_ORCHESTRATION_SKILLS & set(allowlist))
+
+
+def test_matrix_display_metadata_is_complete_and_preserves_tree_order() -> None:
+    inventory = load_chemistry_skill_inventory()
+    entries = [entry for entry in inventory["skills"] if entry["single_agent_exposure"] is True]
+    assert sorted(entry["display_order"] for entry in entries) == list(range(len(entries)))
+    assert all(
+        entry.get(field)
+        for entry in entries
+        for field in (
+            "display_domain_id",
+            "display_domain_label",
+            "display_family_id",
+            "display_family_label",
+        )
+    )
+    flattened = [
+        skill
+        for domain in load_skill_tree()
+        for family in domain["families"]
+        for skill in family["skills"]
+    ]
+    assert flattened == [entry["skill"] for entry in sorted(entries, key=lambda item: item["display_order"])]
+
+
+def test_matrix_validation_rejects_missing_or_duplicate_display_metadata() -> None:
+    payload = deepcopy(load_chemistry_skill_inventory())
+    payload["skills"][0].pop("display_family_id")
+    with pytest.raises(ValueError, match="missing display fields"):
+        _validate_inventory(payload)
+
+    payload = deepcopy(load_chemistry_skill_inventory())
+    payload["skills"][1]["display_order"] = payload["skills"][0]["display_order"]
+    with pytest.raises(ValueError, match="duplicate chemistry routing matrix display_order"):
+        _validate_inventory(payload)
+
+
+def test_routing_inventory_keeps_display_projection_out_of_route_metadata() -> None:
+    inventory = load_chemistry_skill_inventory()
+    routing = benchmark_skill_routing_inventory()
+    assert len(routing["skills"]) == len(benchmark_skill_allowlist())
+    assert all(
+        not key.startswith("display_")
+        for entry in routing["skills"]
+        for key in entry["route_metadata"]
+    )
+    assert all("display_order" in entry for entry in inventory["skills"] if entry["single_agent_exposure"] is True)
+
+
+def test_tree_module_contains_no_hardcoded_skill_tree() -> None:
+    source = Path("benchmarking/skills/tree.py").read_text(encoding="utf-8")
+    assert "SKILL_TREE" not in source
 
 
 def test_skill_tree_covers_every_allowlisted_skill() -> None:

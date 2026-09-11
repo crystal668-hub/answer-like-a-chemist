@@ -1,5 +1,11 @@
 # Benchmark Result Contract and Skill Runtime Health Implementation Plan
 
+> Historical implementation plan. The current implementation uses
+> `skills/chemistry-routing-matrix.json` version 3 as the canonical source for
+> skill IDs, exposure, capability metadata, and display taxonomy. Any
+> `SKILL_TREE` references below are historical design snippets; runtime tree
+> views are derived by `benchmarking.skills.tree`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent malformed OpenClaw stdout from becoming scoreable benchmark answers, and make benchmark-advertised chemistry skills execute through a fixed workspace `uv run` runtime with startup health checks.

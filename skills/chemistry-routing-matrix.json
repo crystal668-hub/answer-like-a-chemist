@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "mode": "experimental_mid_plus",
   "description": "Experimental chemistry skill matrix for medium-or-higher value chemistry skills selected from Downloads plus existing paper-provider routes. Keep prompt rendering compact; use full SKILL.md only after a route is selected.",
   "skills": [
@@ -23,7 +23,12 @@
       "avoid_when": [
         "non-chemistry tasks",
         "skills-off benchmark runs"
-      ]
+      ],
+      "display_order": 0,
+      "display_domain_id": "chemist-sop",
+      "display_domain_label": "Chemist benchmark SOP",
+      "display_family_id": "chemistry-reasoning-sop",
+      "display_family_label": "Chemist-style reasoning, verification, and answer tracing"
     },
     {
       "skill": "open-forcefield-toolkit",
@@ -47,7 +52,12 @@
       "avoid_when": [
         "MD trajectory analysis",
         "ordinary molecular descriptors"
-      ]
+      ],
+      "display_order": 34,
+      "display_domain_id": "simulation-forcefield-md",
+      "display_domain_label": "Simulation, force fields, and molecular dynamics",
+      "display_family_id": "forcefield-parameterization",
+      "display_family_label": "Force-field assignment and parameterization"
     },
     {
       "skill": "molecular-dynamics",
@@ -70,7 +80,12 @@
       "avoid_when": [
         "standalone OpenMM setup",
         "standalone OpenFF parameterization"
-      ]
+      ],
+      "display_order": 32,
+      "display_domain_id": "simulation-forcefield-md",
+      "display_domain_label": "Simulation, force fields, and molecular dynamics",
+      "display_family_id": "md-analysis",
+      "display_family_label": "Molecular dynamics setup and trajectory analysis"
     },
     {
       "skill": "openmm",
@@ -90,7 +105,12 @@
       ],
       "avoid_when": [
         "generic MD concepts without OpenMM-specific setup"
-      ]
+      ],
+      "display_order": 33,
+      "display_domain_id": "simulation-forcefield-md",
+      "display_domain_label": "Simulation, force fields, and molecular dynamics",
+      "display_family_id": "md-analysis",
+      "display_family_label": "Molecular dynamics setup and trajectory analysis"
     },
     {
       "skill": "zinc-database",
@@ -109,7 +129,12 @@
       ],
       "avoid_when": [
         "bioactivity target queries"
-      ]
+      ],
+      "display_order": 18,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "bioactivity-databases",
+      "display_family_label": "Bioactivity, screening, and purchasable compounds"
     },
     {
       "skill": "chembl-database",
@@ -136,7 +161,12 @@
       ],
       "avoid_when": [
         "basic PubChem CID or synonym lookup"
-      ]
+      ],
+      "display_order": 17,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "bioactivity-databases",
+      "display_family_label": "Bioactivity, screening, and purchasable compounds"
     },
     {
       "skill": "tooluniverse-chemical-safety",
@@ -158,7 +188,12 @@
       ],
       "avoid_when": [
         "plain compound identity lookup"
-      ]
+      ],
+      "display_order": 19,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "tooluniverse-discovery",
+      "display_family_label": "ToolUniverse chemical safety, retrieval, and small-molecule discovery"
     },
     {
       "skill": "tooluniverse-small-molecule-discovery",
@@ -176,7 +211,12 @@
       ],
       "avoid_when": [
         "single database lookup"
-      ]
+      ],
+      "display_order": 20,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "tooluniverse-discovery",
+      "display_family_label": "ToolUniverse chemical safety, retrieval, and small-molecule discovery"
     },
     {
       "skill": "tooluniverse-chemical-compound-retrieval",
@@ -193,7 +233,12 @@
       ],
       "avoid_when": [
         "simple PubChem-only lookup"
-      ]
+      ],
+      "display_order": 21,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "tooluniverse-discovery",
+      "display_family_label": "ToolUniverse chemical safety, retrieval, and small-molecule discovery"
     },
     {
       "skill": "materials-project",
@@ -211,7 +256,12 @@
       ],
       "avoid_when": [
         "general local crystal manipulation"
-      ]
+      ],
+      "display_order": 28,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "materials-databases",
+      "display_family_label": "Materials databases and property lookup"
     },
     {
       "skill": "cod",
@@ -228,7 +278,12 @@
       ],
       "avoid_when": [
         "computed DFT material properties"
-      ]
+      ],
+      "display_order": 27,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "crystal-structure",
+      "display_family_label": "Crystal structure parsing, analysis, and editing"
     },
     {
       "skill": "oqmd",
@@ -244,7 +299,12 @@
       ],
       "avoid_when": [
         "Materials Project-specific queries"
-      ]
+      ],
+      "display_order": 29,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "materials-databases",
+      "display_family_label": "Materials databases and property lookup"
     },
     {
       "skill": "jarvis",
@@ -261,7 +321,12 @@
       ],
       "avoid_when": [
         "Materials Project mp-id lookup"
-      ]
+      ],
+      "display_order": 30,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "materials-databases",
+      "display_family_label": "Materials databases and property lookup"
     },
     {
       "skill": "pymatgen",
@@ -284,7 +349,12 @@
       "avoid_when": [
         "small-molecule SMILES descriptors",
         "quantum chemistry log parsing"
-      ]
+      ],
+      "display_order": 25,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "crystal-structure",
+      "display_family_label": "Crystal structure parsing, analysis, and editing"
     },
     {
       "skill": "ase",
@@ -305,7 +375,12 @@
       ],
       "avoid_when": [
         "CIF-only crystallographic parsing"
-      ]
+      ],
+      "display_order": 26,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "crystal-structure",
+      "display_family_label": "Crystal structure parsing, analysis, and editing"
     },
     {
       "skill": "cclib",
@@ -330,7 +405,12 @@
       "avoid_when": [
         "input-file authoring",
         "CIF/POSCAR crystal analysis"
-      ]
+      ],
+      "display_order": 46,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-output-analysis",
+      "display_family_label": "Quantum output parsing and benchmark references"
     },
     {
       "skill": "datamol",
@@ -351,7 +431,12 @@
       ],
       "avoid_when": [
         "single simple RDKit descriptor"
-      ]
+      ],
+      "display_order": 3,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "structure-toolkit",
+      "display_family_label": "Structure parsing, descriptors, fingerprints, and scaffolds"
     },
     {
       "skill": "molfeat",
@@ -372,7 +457,12 @@
       ],
       "avoid_when": [
         "basic descriptors already covered by RDKit/datamol"
-      ]
+      ],
+      "display_order": 4,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "structure-toolkit",
+      "display_family_label": "Structure parsing, descriptors, fingerprints, and scaffolds"
     },
     {
       "skill": "rdkit",
@@ -400,7 +490,12 @@
         "OpenFF parameterization",
         "CIF crystal analysis",
         "bioactivity database queries"
-      ]
+      ],
+      "display_order": 2,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "structure-toolkit",
+      "display_family_label": "Structure parsing, descriptors, fingerprints, and scaffolds"
     },
     {
       "skill": "opsin",
@@ -417,7 +512,12 @@
       ],
       "avoid_when": [
         "common names or synonyms"
-      ]
+      ],
+      "display_order": 5,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "name-resolution",
+      "display_family_label": "Chemical name and identifier resolution"
     },
     {
       "skill": "pubchem",
@@ -438,7 +538,12 @@
       "avoid_when": [
         "ChEMBL bioactivity",
         "ZINC purchasability"
-      ]
+      ],
+      "display_order": 6,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "name-resolution",
+      "display_family_label": "Chemical name and identifier resolution"
     },
     {
       "skill": "chem-calculator",
@@ -465,7 +570,12 @@
       "avoid_when": [
         "materials phase diagrams",
         "database facts"
-      ]
+      ],
+      "display_order": 1,
+      "display_domain_id": "calculation-math",
+      "display_domain_label": "Calculation and formula math",
+      "display_family_id": "deterministic-chemistry-calculation",
+      "display_family_label": "Deterministic chemistry calculation"
     },
     {
       "skill": "q-chem",
@@ -484,7 +594,12 @@
       ],
       "avoid_when": [
         "output parsing only; use cclib"
-      ]
+      ],
+      "display_order": 36,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-orca",
@@ -503,7 +618,12 @@
       ],
       "avoid_when": [
         "output parsing only; use cclib"
-      ]
+      ],
+      "display_order": 37,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-gaussian",
@@ -522,7 +642,12 @@
       ],
       "avoid_when": [
         "output parsing only; use cclib"
-      ]
+      ],
+      "display_order": 38,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-pyscf",
@@ -541,7 +666,12 @@
       ],
       "avoid_when": [
         "package output parsing"
-      ]
+      ],
+      "display_order": 39,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-xtb",
@@ -559,7 +689,12 @@
       ],
       "avoid_when": [
         "OpenFF force field parameterization"
-      ]
+      ],
+      "display_order": 40,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "xtb-cli",
@@ -583,7 +718,12 @@
       "avoid_when": [
         "HPC scheduler templates; use hpc-xtb",
         "ordinary formula or unit arithmetic; use chem-calculator"
-      ]
+      ],
+      "display_order": 45,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "local-xtb-cli",
+      "display_family_label": "Local xTB CLI calculations and property extraction"
     },
     {
       "skill": "hpc-vasp",
@@ -603,7 +743,12 @@
       ],
       "avoid_when": [
         "general Materials Project lookup"
-      ]
+      ],
+      "display_order": 41,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-nwchem",
@@ -619,7 +764,12 @@
       ],
       "avoid_when": [
         "generic quantum output parsing"
-      ]
+      ],
+      "display_order": 42,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-cp2k",
@@ -636,7 +786,12 @@
       ],
       "avoid_when": [
         "classical OpenMM MD"
-      ]
+      ],
+      "display_order": 43,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "hpc-quantum-espresso",
@@ -655,7 +810,12 @@
       ],
       "avoid_when": [
         "VASP-specific input"
-      ]
+      ],
+      "display_order": 44,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-inputs",
+      "display_family_label": "Quantum chemistry input preparation and engine guidance"
     },
     {
       "skill": "qc-output-analysis",
@@ -672,7 +832,12 @@
       ],
       "avoid_when": [
         "standard cclib-supported parsing"
-      ]
+      ],
+      "display_order": 47,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-output-analysis",
+      "display_family_label": "Quantum output parsing and benchmark references"
     },
     {
       "skill": "cccbdb",
@@ -689,7 +854,12 @@
       ],
       "avoid_when": [
         "new quantum calculation setup"
-      ]
+      ],
+      "display_order": 48,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-output-analysis",
+      "display_family_label": "Quantum output parsing and benchmark references"
     },
     {
       "skill": "molssi-qca",
@@ -706,7 +876,12 @@
       ],
       "avoid_when": [
         "ChEMBL/PubChem database queries"
-      ]
+      ],
+      "display_order": 49,
+      "display_domain_id": "quantum-hpc",
+      "display_domain_label": "Quantum chemistry, HPC engines, and parsed outputs",
+      "display_family_id": "quantum-output-analysis",
+      "display_family_label": "Quantum output parsing and benchmark references"
     },
     {
       "skill": "pubchem-database",
@@ -723,7 +898,12 @@
       ],
       "avoid_when": [
         "basic existing PubChem route is enough"
-      ]
+      ],
+      "display_order": 7,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "compound-profile",
+      "display_family_label": "Compound public records and profiles"
     },
     {
       "skill": "pdb-database",
@@ -741,7 +921,12 @@
       ],
       "avoid_when": [
         "predicted AlphaFold-only structure"
-      ]
+      ],
+      "display_order": 22,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "biological-databases",
+      "display_family_label": "Protein, pathway, and structure databases"
     },
     {
       "skill": "alphafold-database",
@@ -759,7 +944,12 @@
       ],
       "avoid_when": [
         "experimental PDB structure lookup"
-      ]
+      ],
+      "display_order": 23,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "biological-databases",
+      "display_family_label": "Protein, pathway, and structure databases"
     },
     {
       "skill": "reactome-database",
@@ -776,7 +966,12 @@
       ],
       "avoid_when": [
         "compound bioactivity"
-      ]
+      ],
+      "display_order": 24,
+      "display_domain_id": "bioactivity-safety-discovery",
+      "display_domain_label": "Bioactivity, safety, and discovery databases",
+      "display_family_id": "biological-databases",
+      "display_family_label": "Protein, pathway, and structure databases"
     },
     {
       "skill": "pubmed-database",
@@ -793,7 +988,12 @@
       ],
       "avoid_when": [
         "broad multi-database review"
-      ]
+      ],
+      "display_order": 13,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "literature-databases",
+      "display_family_label": "Bibliographic databases"
     },
     {
       "skill": "openalex-database",
@@ -810,7 +1010,12 @@
       ],
       "avoid_when": [
         "PubMed-specific biomedical search"
-      ]
+      ],
+      "display_order": 14,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "literature-databases",
+      "display_family_label": "Bibliographic databases"
     },
     {
       "skill": "cif",
@@ -828,7 +1033,12 @@
       ],
       "avoid_when": [
         "full crystal analysis; use pymatgen"
-      ]
+      ],
+      "display_order": 52,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "chemical-file-formats",
+      "display_family_label": "Chemical and crystallographic file formats"
     },
     {
       "skill": "jcamp-dx",
@@ -844,7 +1054,12 @@
       ],
       "avoid_when": [
         "interpreting spectrum chemistry without file-format issue"
-      ]
+      ],
+      "display_order": 51,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "spectra-analysis",
+      "display_family_label": "Spectral formats and spectral interpretation"
     },
     {
       "skill": "cml",
@@ -860,7 +1075,12 @@
       ],
       "avoid_when": [
         "simple SMILES/InChI"
-      ]
+      ],
+      "display_order": 53,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "chemical-file-formats",
+      "display_family_label": "Chemical and crystallographic file formats"
     },
     {
       "skill": "spectral-analysis",
@@ -879,7 +1099,12 @@
       ],
       "avoid_when": [
         "quantum output frequency parsing"
-      ]
+      ],
+      "display_order": 50,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "spectra-analysis",
+      "display_family_label": "Spectral formats and spectral interpretation"
     },
     {
       "skill": "crystal-viewer",
@@ -896,7 +1121,12 @@
       ],
       "avoid_when": [
         "numeric crystal analysis"
-      ]
+      ],
+      "display_order": 55,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "structure-visualization",
+      "display_family_label": "Crystal and structure visualization"
     },
     {
       "skill": "xtal2png",
@@ -913,7 +1143,12 @@
       ],
       "avoid_when": [
         "ordinary visualization"
-      ]
+      ],
+      "display_order": 56,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "structure-visualization",
+      "display_family_label": "Crystal and structure visualization"
     },
     {
       "skill": "doped-perovskite-structure-analysis",
@@ -930,7 +1165,12 @@
       ],
       "avoid_when": [
         "general CIF parsing"
-      ]
+      ],
+      "display_order": 31,
+      "display_domain_id": "materials-crystals",
+      "display_domain_label": "Materials, crystals, and solid-state data",
+      "display_family_id": "specialist-materials",
+      "display_family_label": "Specialist materials workflows"
     },
     {
       "skill": "mace",
@@ -947,7 +1187,12 @@
       ],
       "avoid_when": [
         "generic force-field parameterization"
-      ]
+      ],
+      "display_order": 57,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "chgnet",
@@ -963,7 +1208,12 @@
       ],
       "avoid_when": [
         "classical OpenMM MD"
-      ]
+      ],
+      "display_order": 58,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "mattersim",
@@ -978,7 +1228,12 @@
       ],
       "avoid_when": [
         "non-ML DFT workflow"
-      ]
+      ],
+      "display_order": 59,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "schnet",
@@ -994,7 +1249,12 @@
       ],
       "avoid_when": [
         "materials crystal graph prediction"
-      ]
+      ],
+      "display_order": 60,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "nequip",
@@ -1010,7 +1270,12 @@
       ],
       "avoid_when": [
         "non-ML simulation setup"
-      ]
+      ],
+      "display_order": 61,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "orb",
@@ -1026,7 +1291,12 @@
       ],
       "avoid_when": [
         "OpenFF SMIRNOFF"
-      ]
+      ],
+      "display_order": 62,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "reann",
@@ -1042,7 +1312,12 @@
       ],
       "avoid_when": [
         "general ML property prediction"
-      ]
+      ],
+      "display_order": 63,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "torchmd-net",
@@ -1059,7 +1334,12 @@
       ],
       "avoid_when": [
         "classical MD analysis"
-      ]
+      ],
+      "display_order": 64,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "ml-potentials",
+      "display_family_label": "Atomistic ML potentials"
     },
     {
       "skill": "mattergen",
@@ -1075,7 +1355,12 @@
       ],
       "avoid_when": [
         "retrieve known structure"
-      ]
+      ],
+      "display_order": 65,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "generative-materials",
+      "display_family_label": "Generative crystal and materials models"
     },
     {
       "skill": "diffcsp",
@@ -1091,7 +1376,12 @@
       ],
       "avoid_when": [
         "known structure analysis"
-      ]
+      ],
+      "display_order": 66,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "generative-materials",
+      "display_family_label": "Generative crystal and materials models"
     },
     {
       "skill": "crystalflow",
@@ -1107,7 +1397,12 @@
       ],
       "avoid_when": [
         "known structure analysis"
-      ]
+      ],
+      "display_order": 67,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "generative-materials",
+      "display_family_label": "Generative crystal and materials models"
     },
     {
       "skill": "chemprop",
@@ -1124,7 +1419,12 @@
       ],
       "avoid_when": [
         "hand descriptors only"
-      ]
+      ],
+      "display_order": 68,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "molecular-ml",
+      "display_family_label": "Molecular ML models"
     },
     {
       "skill": "matformer",
@@ -1139,7 +1439,12 @@
       ],
       "avoid_when": [
         "composition-only models"
-      ]
+      ],
+      "display_order": 69,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "matminer",
@@ -1155,7 +1460,12 @@
       ],
       "avoid_when": [
         "single formula arithmetic"
-      ]
+      ],
+      "display_order": 70,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "matbench",
@@ -1171,7 +1481,12 @@
       ],
       "avoid_when": [
         "new model training outside benchmark"
-      ]
+      ],
+      "display_order": 71,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "modnet",
@@ -1186,7 +1501,12 @@
       ],
       "avoid_when": [
         "deep crystal graph route is explicit"
-      ]
+      ],
+      "display_order": 72,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "crabnet",
@@ -1202,7 +1522,12 @@
       ],
       "avoid_when": [
         "structure-based materials model"
-      ]
+      ],
+      "display_order": 73,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "xenonpy",
@@ -1217,7 +1542,12 @@
       ],
       "avoid_when": [
         "Matminer-specific featurization"
-      ]
+      ],
+      "display_order": 74,
+      "display_domain_id": "ml-generative-modeling",
+      "display_domain_label": "ML potentials, generative modeling, and property prediction",
+      "display_family_id": "materials-ml",
+      "display_family_label": "Materials ML datasets and models"
     },
     {
       "skill": "optimade",
@@ -1232,7 +1562,12 @@
       ],
       "avoid_when": [
         "single provider API"
-      ]
+      ],
+      "display_order": 75,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "materials-api-interoperability",
+      "display_family_label": "Materials API interoperability"
     },
     {
       "skill": "optimade-python-tools",
@@ -1248,7 +1583,12 @@
       ],
       "avoid_when": [
         "plain OPTIMADE concept"
-      ]
+      ],
+      "display_order": 76,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "materials-api-interoperability",
+      "display_family_label": "Materials API interoperability"
     },
     {
       "skill": "aiida",
@@ -1264,7 +1604,12 @@
       ],
       "avoid_when": [
         "simple local calculation"
-      ]
+      ],
+      "display_order": 77,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "atomate",
@@ -1279,7 +1624,12 @@
       ],
       "avoid_when": [
         "generic FireWorks workflow"
-      ]
+      ],
+      "display_order": 78,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "fireworks",
@@ -1295,7 +1645,12 @@
       ],
       "avoid_when": [
         "workflow package not FireWorks"
-      ]
+      ],
+      "display_order": 79,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "custodian",
@@ -1311,7 +1666,12 @@
       ],
       "avoid_when": [
         "manual input setup"
-      ]
+      ],
+      "display_order": 80,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "quacc",
@@ -1326,7 +1686,12 @@
       ],
       "avoid_when": [
         "AiiDA-specific workflow"
-      ]
+      ],
+      "display_order": 81,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "pyiron",
@@ -1341,7 +1706,12 @@
       ],
       "avoid_when": [
         "non-pyiron workflow"
-      ]
+      ],
+      "display_order": 82,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "qmflows",
@@ -1356,7 +1726,12 @@
       ],
       "avoid_when": [
         "single package input"
-      ]
+      ],
+      "display_order": 83,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "qmforge",
@@ -1372,7 +1747,12 @@
       ],
       "avoid_when": [
         "text-only output parsing"
-      ]
+      ],
+      "display_order": 84,
+      "display_domain_id": "workflow-automation",
+      "display_domain_label": "Workflow automation and interoperable infrastructure",
+      "display_family_id": "workflow-engines",
+      "display_family_label": "Workflow engines and job orchestration"
     },
     {
       "skill": "blue-obelisk",
@@ -1388,7 +1768,12 @@
       ],
       "avoid_when": [
         "specific format/tool route exists"
-      ]
+      ],
+      "display_order": 54,
+      "display_domain_id": "spectra-formats-visualization",
+      "display_domain_label": "Spectra, chemical formats, and visualization",
+      "display_family_id": "chemical-file-formats",
+      "display_family_label": "Chemical and crystallographic file formats"
     },
     {
       "skill": "chemistry-query",
@@ -1405,7 +1790,12 @@
       ],
       "avoid_when": [
         "existing provider route is more specific"
-      ]
+      ],
+      "display_order": 8,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "compound-profile",
+      "display_family_label": "Compound public records and profiles"
     },
     {
       "skill": "medchem",
@@ -1423,7 +1813,12 @@
       ],
       "avoid_when": [
         "bioactivity database query"
-      ]
+      ],
+      "display_order": 9,
+      "display_domain_id": "molecular-structure-identity",
+      "display_domain_label": "Molecular structure, identity, and cheminformatics",
+      "display_family_id": "medchem-filters",
+      "display_family_label": "Medicinal chemistry filters and drug-likeness checks"
     },
     {
       "skill": "atb",
@@ -1439,7 +1834,12 @@
       ],
       "avoid_when": [
         "OpenFF SMIRNOFF parameterization"
-      ]
+      ],
+      "display_order": 35,
+      "display_domain_id": "simulation-forcefield-md",
+      "display_domain_label": "Simulation, force fields, and molecular dynamics",
+      "display_family_id": "forcefield-parameterization",
+      "display_family_label": "Force-field assignment and parameterization"
     },
     {
       "skill": "literature-review",
@@ -1455,7 +1855,12 @@
       ],
       "avoid_when": [
         "single paper retrieval"
-      ]
+      ],
+      "display_order": 15,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "review-synthesis",
+      "display_family_label": "Literature review and synthesis"
     },
     {
       "skill": "paper-retrieval",
@@ -1476,7 +1881,12 @@
       "avoid_when": [
         "OpenAlex-only or PubMed-only database query",
         "already downloaded local paper"
-      ]
+      ],
+      "display_order": 10,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "paper-pipeline",
+      "display_family_label": "Paper retrieval, access, and parsing"
     },
     {
       "skill": "paper-access",
@@ -1497,7 +1907,12 @@
       "avoid_when": [
         "remote paper search",
         "local fulltext parsing"
-      ]
+      ],
+      "display_order": 11,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "paper-pipeline",
+      "display_family_label": "Paper retrieval, access, and parsing"
     },
     {
       "skill": "paper-parse",
@@ -1518,7 +1933,12 @@
       "avoid_when": [
         "remote paper search",
         "PDF download"
-      ]
+      ],
+      "display_order": 12,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "paper-pipeline",
+      "display_family_label": "Paper retrieval, access, and parsing"
     },
     {
       "skill": "synthesize-literature",
@@ -1533,7 +1953,12 @@
       ],
       "avoid_when": [
         "simple citation lookup"
-      ]
+      ],
+      "display_order": 16,
+      "display_domain_id": "literature-evidence",
+      "display_domain_label": "Literature evidence and paper processing",
+      "display_family_id": "review-synthesis",
+      "display_family_label": "Literature review and synthesis"
     }
   ]
 }

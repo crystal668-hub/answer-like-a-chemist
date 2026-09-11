@@ -2,246 +2,89 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = ROOT / "skills" / "chemistry-routing-matrix.json"
-
-
-SKILL_TREE: tuple[dict[str, Any], ...] = (
-    {
-        "id": "chemist-sop",
-        "label": "Chemist benchmark SOP",
-        "families": (
-            {
-                "id": "chemistry-reasoning-sop",
-                "label": "Chemist-style reasoning, verification, and answer tracing",
-                "skills": ("act-like-a-chemist",),
-            },
-        ),
-    },
-    {
-        "id": "calculation-math",
-        "label": "Calculation and formula math",
-        "families": (
-            {
-                "id": "deterministic-chemistry-calculation",
-                "label": "Deterministic chemistry calculation",
-                "skills": ("chem-calculator",),
-            },
-        ),
-    },
-    {
-        "id": "molecular-structure-identity",
-        "label": "Molecular structure, identity, and cheminformatics",
-        "families": (
-            {
-                "id": "structure-toolkit",
-                "label": "Structure parsing, descriptors, fingerprints, and scaffolds",
-                "skills": ("rdkit", "datamol", "molfeat"),
-            },
-            {
-                "id": "name-resolution",
-                "label": "Chemical name and identifier resolution",
-                "skills": ("opsin", "pubchem"),
-            },
-            {
-                "id": "compound-profile",
-                "label": "Compound public records and profiles",
-                "skills": ("pubchem-database", "chemistry-query"),
-            },
-            {
-                "id": "medchem-filters",
-                "label": "Medicinal chemistry filters and drug-likeness checks",
-                "skills": ("medchem",),
-            },
-        ),
-    },
-    {
-        "id": "literature-evidence",
-        "label": "Literature evidence and paper processing",
-        "families": (
-            {
-                "id": "paper-pipeline",
-                "label": "Paper retrieval, access, and parsing",
-                "skills": ("paper-retrieval", "paper-access", "paper-parse"),
-            },
-            {
-                "id": "literature-databases",
-                "label": "Bibliographic databases",
-                "skills": ("pubmed-database", "openalex-database"),
-            },
-            {
-                "id": "review-synthesis",
-                "label": "Literature review and synthesis",
-                "skills": ("literature-review", "synthesize-literature"),
-            },
-        ),
-    },
-    {
-        "id": "bioactivity-safety-discovery",
-        "label": "Bioactivity, safety, and discovery databases",
-        "families": (
-            {
-                "id": "bioactivity-databases",
-                "label": "Bioactivity, screening, and purchasable compounds",
-                "skills": ("chembl-database", "zinc-database"),
-            },
-            {
-                "id": "tooluniverse-discovery",
-                "label": "ToolUniverse chemical safety, retrieval, and small-molecule discovery",
-                "skills": (
-                    "tooluniverse-chemical-safety",
-                    "tooluniverse-small-molecule-discovery",
-                    "tooluniverse-chemical-compound-retrieval",
-                ),
-            },
-            {
-                "id": "biological-databases",
-                "label": "Protein, pathway, and structure databases",
-                "skills": ("pdb-database", "alphafold-database", "reactome-database"),
-            },
-        ),
-    },
-    {
-        "id": "materials-crystals",
-        "label": "Materials, crystals, and solid-state data",
-        "families": (
-            {
-                "id": "crystal-structure",
-                "label": "Crystal structure parsing, analysis, and editing",
-                "skills": ("pymatgen", "ase", "cod"),
-            },
-            {
-                "id": "materials-databases",
-                "label": "Materials databases and property lookup",
-                "skills": ("materials-project", "oqmd", "jarvis"),
-            },
-            {
-                "id": "specialist-materials",
-                "label": "Specialist materials workflows",
-                "skills": ("doped-perovskite-structure-analysis",),
-            },
-        ),
-    },
-    {
-        "id": "simulation-forcefield-md",
-        "label": "Simulation, force fields, and molecular dynamics",
-        "families": (
-            {
-                "id": "md-analysis",
-                "label": "Molecular dynamics setup and trajectory analysis",
-                "skills": ("molecular-dynamics", "openmm"),
-            },
-            {
-                "id": "forcefield-parameterization",
-                "label": "Force-field assignment and parameterization",
-                "skills": ("open-forcefield-toolkit", "atb"),
-            },
-        ),
-    },
-    {
-        "id": "quantum-hpc",
-        "label": "Quantum chemistry, HPC engines, and parsed outputs",
-        "families": (
-            {
-                "id": "quantum-inputs",
-                "label": "Quantum chemistry input preparation and engine guidance",
-                "skills": (
-                    "q-chem",
-                    "hpc-orca",
-                    "hpc-gaussian",
-                    "hpc-pyscf",
-                    "hpc-xtb",
-                    "hpc-vasp",
-                    "hpc-nwchem",
-                    "hpc-cp2k",
-                    "hpc-quantum-espresso",
-                ),
-            },
-            {
-                "id": "local-xtb-cli",
-                "label": "Local xTB CLI calculations and property extraction",
-                "skills": ("xtb-cli",),
-            },
-            {
-                "id": "quantum-output-analysis",
-                "label": "Quantum output parsing and benchmark references",
-                "skills": ("cclib", "qc-output-analysis", "cccbdb", "molssi-qca"),
-            },
-        ),
-    },
-    {
-        "id": "spectra-formats-visualization",
-        "label": "Spectra, chemical formats, and visualization",
-        "families": (
-            {
-                "id": "spectra-analysis",
-                "label": "Spectral formats and spectral interpretation",
-                "skills": ("spectral-analysis", "jcamp-dx"),
-            },
-            {
-                "id": "chemical-file-formats",
-                "label": "Chemical and crystallographic file formats",
-                "skills": ("cif", "cml", "blue-obelisk"),
-            },
-            {
-                "id": "structure-visualization",
-                "label": "Crystal and structure visualization",
-                "skills": ("crystal-viewer", "xtal2png"),
-            },
-        ),
-    },
-    {
-        "id": "ml-generative-modeling",
-        "label": "ML potentials, generative modeling, and property prediction",
-        "families": (
-            {
-                "id": "ml-potentials",
-                "label": "Atomistic ML potentials",
-                "skills": ("mace", "chgnet", "mattersim", "schnet", "nequip", "orb", "reann", "torchmd-net"),
-            },
-            {
-                "id": "generative-materials",
-                "label": "Generative crystal and materials models",
-                "skills": ("mattergen", "diffcsp", "crystalflow"),
-            },
-            {
-                "id": "molecular-ml",
-                "label": "Molecular ML models",
-                "skills": ("chemprop",),
-            },
-            {
-                "id": "materials-ml",
-                "label": "Materials ML datasets and models",
-                "skills": ("matformer", "matminer", "matbench", "modnet", "crabnet", "xenonpy"),
-            },
-        ),
-    },
-    {
-        "id": "workflow-automation",
-        "label": "Workflow automation and interoperable infrastructure",
-        "families": (
-            {
-                "id": "materials-api-interoperability",
-                "label": "Materials API interoperability",
-                "skills": ("optimade", "optimade-python-tools"),
-            },
-            {
-                "id": "workflow-engines",
-                "label": "Workflow engines and job orchestration",
-                "skills": ("aiida", "atomate", "fireworks", "custodian", "quacc", "pyiron", "qmflows", "qmforge"),
-            },
-        ),
-    },
+EXPECTED_INVENTORY_VERSION = 3
+RUNTIME_OR_ORCHESTRATION_SKILLS = {"benchmark-cleanroom", "debateclaw-v1", "chemqa-review"}
+DISPLAY_FIELDS = (
+    "display_order",
+    "display_domain_id",
+    "display_domain_label",
+    "display_family_id",
+    "display_family_label",
 )
+DISPLAY_FIELDS_SET = set(DISPLAY_FIELDS)
+
+
+def _require_nonempty_string(entry: dict[str, Any], key: str) -> str:
+    value = str(entry.get(key) or "").strip()
+    if not value:
+        raise ValueError(f"chemistry routing matrix entry {entry.get('skill')!r} requires {key}")
+    return value
+
+
+def _validate_inventory(payload: dict[str, Any]) -> None:
+    if payload.get("version") != EXPECTED_INVENTORY_VERSION:
+        raise ValueError(
+            f"unsupported chemistry routing matrix version: {payload.get('version')!r}; "
+            f"expected {EXPECTED_INVENTORY_VERSION}"
+        )
+    entries = payload.get("skills")
+    if not isinstance(entries, list):
+        raise ValueError("chemistry routing matrix skills must be a list")
+
+    skill_ids: set[str] = set()
+    display_orders: set[int] = set()
+    domain_labels: dict[str, str] = {}
+    family_labels: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("chemistry routing matrix skill entries must be objects")
+        skill = _require_nonempty_string(entry, "skill")
+        if skill in skill_ids:
+            raise ValueError(f"duplicate chemistry routing matrix skill: {skill}")
+        skill_ids.add(skill)
+        if entry.get("single_agent_exposure") is not True:
+            continue
+        if skill in RUNTIME_OR_ORCHESTRATION_SKILLS:
+            raise ValueError(f"runtime/orchestration skill exposed to single agent: {skill}")
+        missing = [key for key in DISPLAY_FIELDS if key not in entry]
+        if missing:
+            raise ValueError(f"chemistry routing matrix skill {skill!r} missing display fields: {', '.join(missing)}")
+        order = entry.get("display_order")
+        if isinstance(order, bool) or not isinstance(order, int) or order < 0:
+            raise ValueError(f"chemistry routing matrix skill {skill!r} has invalid display_order")
+        if order in display_orders:
+            raise ValueError(f"duplicate chemistry routing matrix display_order: {order}")
+        display_orders.add(order)
+        domain_id = _require_nonempty_string(entry, "display_domain_id")
+        domain_label = _require_nonempty_string(entry, "display_domain_label")
+        family_id = _require_nonempty_string(entry, "display_family_id")
+        family_label = _require_nonempty_string(entry, "display_family_label")
+        if domain_id in domain_labels and domain_labels[domain_id] != domain_label:
+            raise ValueError(f"inconsistent label for display domain {domain_id!r}")
+        if family_id in family_labels and family_labels[family_id] != family_label:
+            raise ValueError(f"inconsistent label for display family {family_id!r}")
+        domain_labels[domain_id] = domain_label
+        family_labels[family_id] = family_label
+
+    exposed_count = sum(1 for entry in entries if isinstance(entry, dict) and entry.get("single_agent_exposure") is True)
+    if display_orders != set(range(exposed_count)):
+        raise ValueError("chemistry routing matrix display_order must be contiguous from zero")
 
 
 @lru_cache(maxsize=1)
 def load_chemistry_skill_inventory() -> dict[str, Any]:
-    return json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    payload = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("chemistry routing matrix must be an object")
+    _validate_inventory(payload)
+    return payload
 
 
 def benchmark_skill_allowlist() -> tuple[str, ...]:
@@ -271,12 +114,16 @@ def benchmark_skill_routing_inventory() -> dict[str, Any]:
                 "route_metadata": {
                     key: value
                     for key, value in entry.items()
-                    if key not in {"skill", "single_agent_exposure"}
+                    if key not in {"skill", "single_agent_exposure", *DISPLAY_FIELDS_SET}
                 },
                 "source_path": f"skills/{skill_id}",
                 "container_source_path": f"/opt/benchmark/skills/{skill_id}",
                 "manifest_digest": hashlib.sha256(
-                    json.dumps(entry, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                    json.dumps(
+                        {key: value for key, value in entry.items() if key not in DISPLAY_FIELDS_SET},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
                 ).hexdigest(),
             }
         )
@@ -290,12 +137,55 @@ def benchmark_skill_routing_inventory() -> dict[str, Any]:
 
 
 def load_skill_tree() -> tuple[dict[str, Any], ...]:
-    return SKILL_TREE
+    domains: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    families: dict[tuple[str, str], dict[str, Any]] = {}
+    entries = sorted(
+        (
+            entry
+            for entry in load_chemistry_skill_inventory().get("skills", [])
+            if entry.get("single_agent_exposure") is True
+        ),
+        key=lambda entry: entry["display_order"],
+    )
+    for entry in entries:
+        domain_id = entry["display_domain_id"]
+        family_id = entry["display_family_id"]
+        if domain_id not in domains:
+            domains[domain_id] = {
+                "id": domain_id,
+                "label": entry["display_domain_label"],
+                "families": [],
+            }
+        family_key = (domain_id, family_id)
+        if family_key not in families:
+            family = {
+                "id": family_id,
+                "label": entry["display_family_label"],
+                "skills": [],
+            }
+            families[family_key] = family
+            domains[domain_id]["families"].append(family)
+        families[family_key]["skills"].append(str(entry["skill"]))
+    return tuple(
+        {
+            "id": domain["id"],
+            "label": domain["label"],
+            "families": tuple(
+                {
+                    "id": family["id"],
+                    "label": family["label"],
+                    "skills": tuple(family["skills"]),
+                }
+                for family in domain["families"]
+            ),
+        }
+        for domain in domains.values()
+    )
 
 
 def lookup_skill_family(family_id: str) -> dict[str, Any]:
     normalized = str(family_id or "").strip().lower()
-    for domain in SKILL_TREE:
+    for domain in load_skill_tree():
         for family in domain["families"]:
             if str(family["id"]).lower() == normalized:
                 return family
@@ -316,23 +206,22 @@ def render_top_level_skill_tree(configured_skills: set[str] | None = None) -> st
         lines.append("All single-agent chemistry skills are listed below.")
     else:
         lines.append("The skills listed below come from the complete benchmark routing inventory.")
-    for domain in SKILL_TREE:
-        rendered_families: list[tuple[dict[str, Any], list[str]]] = []
+    for domain in load_skill_tree():
+        rendered_families = []
         for family in domain["families"]:
             family_skills = [
                 str(skill)
                 for skill in family["skills"]
                 if configured_skills is None or str(skill) in configured_skills
             ]
-            if not family_skills:
-                continue
-            rendered_families.append((family, family_skills))
+            if family_skills:
+                rendered_families.append((family, family_skills))
         if not rendered_families:
             continue
         lines.append(f"- Domain `{domain['id']}`: {domain['label']}")
         for family, family_skills in rendered_families:
             lines.append(f"  - Family `{family['id']}`: {family['label']}")
             for skill in family_skills:
-                summary = str(inventory_by_skill.get(skill, {}).get("route_summary") or "").strip()
+                summary = str(inventory_by_skill[skill].get("route_summary") or "").strip()
                 lines.append(f"    - `{skill}`: {summary}")
     return "\n".join(lines)

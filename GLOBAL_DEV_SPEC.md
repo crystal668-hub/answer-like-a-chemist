@@ -65,7 +65,7 @@ runbooks.
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
-| `benchmarking/skills/` | Benchmark skill inventory/routing projection, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
+| `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and synchronized dataset/subset facets across filters, run summaries, and record details. |
@@ -129,9 +129,13 @@ stable `EvaluationResult` shape and execution-error construction;
 - `skills/benchmark-cleanroom/` owns cleanup manifests, runtime leases, and
   benchmark-owned process termination.
 - Chemistry provider skills live as independent bundles under `skills/`.
-  `skills/chemistry-routing-matrix.json` is the machine-readable capability and
-  exposure inventory; it is projected directly for skills-on runs and is not
-  health-filtered or a deterministic router.
+  `skills/chemistry-routing-matrix.json` is the sole machine-readable source
+  for skill IDs, capability metadata, single-agent exposure, and skills-on
+  display taxonomy. Matrix version 3 entries include display order, domain, and
+  family metadata. `benchmarking.skills.tree` derives the compatibility tree,
+  family lookup, and compact prompt catalog from that matrix; it contains no
+  hard-coded skill list. The matrix is projected directly for skills-on runs
+  and is not health-filtered or a deterministic router.
 - The RDKit skill exposes neutral, explicit conformer force-field selection:
   its generic conformer entrypoint requires `MMFF` or `UFF`, and dedicated MMFF
   and UFF scripts implement each family without cross-family fallback. Every
@@ -602,6 +606,9 @@ boundary. Processes still run as the same local user.
   runtime and may install dependencies through the registry allowlist during an
   attempt. Skill choice is left to the model; tool and skill diagnostics do not
   change answer scores.
+- The skills-on prompt catalog is a presentation projection of the same matrix;
+  its domain/family grouping and route summaries do not define a separate
+  exposure or routing source.
 - Agent-invoked local skill scripts run through `scripts/run_skill.py`, which uses
   the attempt Python when configured and otherwise the canonical workspace for
   dependency resolution. Relative artifacts use the attempt scratch directory.
