@@ -247,7 +247,13 @@ For each invocation, the CLI:
    and a matching managed-workspace sentinel. Live or unverifiable containers
    are preserved and reported; unresolved containers for the current run stop
    startup before workspace recovery. `docker-startup.json` and the runtime
-   manifest retain startup evidence, including failures.
+   manifest retain startup evidence, including failures. Before scheduling, a
+   bounded Node DNS lookup runs in the pinned image with the attempt network
+   mode for the selected model's explicitly configured provider endpoint.
+   Resolution failure stops startup with `provider_dns_failed`, retaining the
+   hostname and resolver error in `docker-startup.json`. Proxy-configured
+   requests and providers without an explicit endpoint record a skipped check;
+   this is a DNS check, not an authenticated provider-health probe.
 4. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches single-LLM
    attempts through one shared queue across selected single-LLM groups. The
    explicit legacy entrypoint uses ChemQA group waves separately. `--max-concurrent-attempts` defaults to 2 and must be
@@ -289,6 +295,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   runtime `.env` as fallback. Environment SecretRefs are projected to local
   environment substitutions instead of requiring the host gateway. Docker
   inspect environment values are redacted in persisted diagnostics.
+- Docker container names combine a bounded readable prefix with a SHA-256
+  suffix over every attempt identity field, including invocation, group, agent,
+  record, retry index, session, and template. Truncation cannot discard the
+  identity suffix. Ownership and recovery still use labels and workspace
+  sentinels, including for containers created with older names.
 - Single-LLM admission uses a FIFO cancellation-aware count limit. Each retry
   acquires a new lease; backoff and scoring do not hold the lease. CPU, memory,
   and PID options are per-container hard limits, not admission resource weights.

@@ -8,6 +8,7 @@ injectable and testable.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import socket
 import stat
 import subprocess
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -135,6 +137,42 @@ class DockerContainerRuntime:
             raise ContainerRuntimeError("docker version returned invalid JSON", code="docker_invalid_response") from exc
         return payload if isinstance(payload, dict) else {"version": payload}
 
+    def check_dns(self, *, image: str, hostname: str, network_mode: str = "host") -> dict[str, Any]:
+        name = "benchmark-dns-" + uuid.uuid4().hex
+        script = """
+const dns = require('node:dns');
+const hostname = process.argv[1];
+const finish = result => { console.log(JSON.stringify(result)); process.exit(0); };
+setTimeout(() => finish({hostname, status: 'failed', code: 'ETIMEOUT'}), 10000);
+dns.lookup(hostname, {all: true}, (error, addresses) => finish(error
+  ? {hostname, status: 'failed', code: error.code}
+  : {hostname, status: 'ready', addresses}));
+"""
+        try:
+            result = self._command([
+                "run", "--rm", "--name", name, "--network", network_mode,
+                "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+                "--read-only", "--entrypoint", "node", image, "-e", script, hostname,
+            ], timeout=25)
+        except BaseException:
+            # A killed Docker client does not stop its container.
+            try:
+                self._command(["rm", "-f", name])
+            except ContainerRuntimeError as cleanup_error:
+                if "No such container" not in str(cleanup_error):
+                    raise ContainerRuntimeError(
+                        f"DNS probe cleanup failed: {name}", code="container_cleanup_failed",
+                        details={"container_name": name},
+                    ) from cleanup_error
+            raise
+        try:
+            report = json.loads(result.stdout)
+            if report["hostname"] != hostname or report["status"] not in {"ready", "failed"}:
+                raise ValueError("invalid DNS report")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ContainerRuntimeError("Docker DNS probe returned invalid JSON", code="docker_invalid_response") from exc
+        return {**report, "network_mode": network_mode}
+
     @staticmethod
     def _validate_mounts(mounts: tuple[ContainerMount, ...], allowed_source_roots: tuple[Path, ...] = ()) -> None:
         allowed = {
@@ -171,7 +209,9 @@ class DockerContainerRuntime:
         labels = {**{str(k): str(v) for k, v in spec.labels.items()}, **_identity_labels(spec.identity),
                   "benchmark.owner_pid": str(os.getpid()), "benchmark.owner_host": socket.gethostname()}
         raw_name = "-".join((spec.identity.run_id, spec.identity.record_id, str(spec.identity.attempt_index), spec.identity.session_id))
-        name = "benchmark-" + re.sub(r"[^a-zA-Z0-9_.-]+", "-", raw_name).strip("-.")[:180]
+        identity_json = json.dumps(spec.identity.sentinel_fields(), sort_keys=True, separators=(",", ":"))
+        identity_digest = hashlib.sha256(identity_json.encode("utf-8")).hexdigest()[:16]
+        name = "benchmark-" + re.sub(r"[^a-zA-Z0-9_.-]+", "-", raw_name).strip("-.")[:163] + "-" + identity_digest
         args = ["create", "--name", name, "--network", spec.network_mode, "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m"]
         if spec.cpu_limit is not None:
             args += ["--cpus", str(spec.cpu_limit)]

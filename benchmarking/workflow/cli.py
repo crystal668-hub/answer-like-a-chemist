@@ -58,6 +58,7 @@ from benchmarking.runtime.openclaw_env import (
     build_openclaw_subprocess_env,
     proxy_environment_report,
 )
+from benchmarking.runtime.provider_preflight import check_provider_dns
 from benchmarking.runtime.vgb_bridge import load_release_config
 from benchmarking.runtime.web_search_preflight import run_web_search_preflight
 from benchmarking.scoring.evaluators.verifier_grounded import (
@@ -516,11 +517,22 @@ def main(service=None) -> int:
             args.container_image = runtime.resolve_image_digest(args.container_image)
             docker_startup["image_id"] = args.container_image
             docker_startup["recovery"] = runtime.recover_orphans(runtime_root=workspace_manager.runtime_root)
-            docker_startup["status"] = "ready"
             if any(not item["removed"] and item.get("run_id") == run_id for item in docker_startup["recovery"]):
                 raise ContainerRuntimeError("Existing run containers could not be safely recovered")
+            docker_startup["provider_dns"] = check_provider_dns(
+                runtime=runtime, image=args.container_image,
+                config_path=Path(args.openclaw_config).expanduser().resolve(), model=args.single_agent_model,
+            )
+            if docker_startup["provider_dns"]["status"] == "failed":
+                dns = docker_startup["provider_dns"]
+                raise ContainerRuntimeError(
+                    f"Provider DNS lookup failed inside Docker: {dns['hostname']} ({dns.get('code', 'unknown')}). "
+                    "Check the host resolver and Docker DNS forwarding before restarting the run.",
+                    code="provider_dns_failed",
+                )
+            docker_startup["status"] = "ready"
         except ContainerRuntimeError as exc:
-            docker_startup.update(status="failed", error=str(exc))
+            docker_startup.update(status="failed", error=str(exc), error_code=exc.code)
             raise _BenchmarkError(f"Docker startup failed: {exc}") from exc
         finally:
             run_state.save_json(output_root / "docker-startup.json", docker_startup)

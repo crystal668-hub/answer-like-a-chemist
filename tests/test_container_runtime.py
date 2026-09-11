@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,72 @@ def test_create_builds_hardened_docker_command(tmp_path: Path) -> None:
     assert "--cap-drop" in command and "ALL" in command
     assert "--pids-limit" in command and "64" in command
     assert "--network" in command and "host" in command
+
+
+def test_container_names_preserve_full_identity_after_truncation():
+    names = []
+
+    def run(command, **kwargs):
+        if command[1] == "create":
+            names.append(command[command.index("--name") + 1])
+            return subprocess.CompletedProcess(command, 0, "container-id\n", "")
+        return subprocess.CompletedProcess(command, 0, '[{"Image":"sha256:image"}]', "")
+
+    runtime = DockerContainerRuntime(docker_executable="docker", run_subprocess=run)
+    original = replace(
+        identity(),
+        run_id="verifier-grounded-property-calculation-easy-qwen3-8-flash-20260911-210118",
+        record_id="property_calculation_basic_003_diethyl_ether_aqueous_solvation_free_energy",
+        group_id="single_llm_skills_on",
+        session_id="benchmark-single_llm_skills_on-property-calculation-basic-003-session",
+    )
+    variants = [
+        original,
+        replace(original, group_id="single_llm_skills_off", session_id=original.session_id.replace("skills_on", "skills_off")),
+        replace(original, invocation_id="another-invocation"),
+        replace(original, attempt_index=1),
+        replace(original, session_id=original.session_id + "-retry1"),
+        replace(original, agent_id="another-agent"),
+        replace(original, record_id=original.record_id + "-different"),
+    ]
+    for item in [*variants, original]:
+        runtime.create(ContainerAttemptSpec(item, "image", ("run",)))
+    assert len(set(names[:-1])) == len(variants)
+    assert names[0] == names[-1]
+    assert all(len(name) <= 190 for name in names)
+
+
+@pytest.mark.parametrize("status,extra", [("ready", {"addresses": [{"address": "192.0.2.1", "family": 4}]}), ("failed", {"code": "ENOTFOUND"})])
+def test_dns_probe_uses_container_resolver_and_preserves_result(status, extra):
+    def run(command, **kwargs):
+        assert command[1] == "run"
+        assert command[command.index("--network") + 1] == "host"
+        assert command[command.index("--entrypoint") + 1] == "node"
+        assert "--rm" in command and "--env" not in command and "--mount" not in command
+        assert command[-1] == "provider.example"
+        assert kwargs["timeout"] == 25
+        return subprocess.CompletedProcess(command, 0, json.dumps({"hostname": "provider.example", "status": status, **extra}), "")
+
+    report = DockerContainerRuntime(docker_executable="docker", run_subprocess=run).check_dns(image="image", hostname="provider.example")
+    assert report == {"hostname": "provider.example", "status": status, "network_mode": "host", **extra}
+
+
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+def test_dns_probe_timeout_removes_owned_container(cleanup_failure):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[1] == "run":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, int(cleanup_failure), "", "daemon unavailable" if cleanup_failure else "")
+
+    runtime = DockerContainerRuntime(docker_executable="docker", run_subprocess=run)
+    with pytest.raises(ContainerRuntimeError) as error:
+        runtime.check_dns(image="image", hostname="provider.example")
+    assert error.value.code == ("container_cleanup_failed" if cleanup_failure else "docker_command_timeout")
+    name = commands[0][commands[0].index("--name") + 1]
+    assert commands[-1] == ["docker", "rm", "-f", name]
 
 
 def test_materialize_container_config_uses_attempt_local_agent_state(tmp_path: Path) -> None:

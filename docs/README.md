@@ -47,13 +47,14 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 迁移遗留问题交接文档](handoff/2026-09-11-benchmark-infra-open-issues-handoff.md)
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 
-## report (3)
+## report (4)
 
 Observed results, validation, and supporting evidence.
 
 - [最新 8 道专家题及 qwen3.7-max 表现报告](report/2026-07-21-qwen3.7-max-latest-8-expert-tasks.md)
 - [Benchmark Infra Follow-up Validation](report/2026-09-11-benchmark-infra-fix-validation.md)
 - [Benchmark Infra Fix Validation](report/infra-fix-validation.md)
+- [Provider DNS and Container Name Validation](report/2026-09-11-provider-dns-container-name-validation.md): DNS incident evidence, naming fix, and startup-check verification.
 
 ## guide (1)
 
