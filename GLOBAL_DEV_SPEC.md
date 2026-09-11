@@ -189,7 +189,8 @@ printed in the report.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
-  identity and sanitized public dataset snapshots.
+  identity and sanitized public dataset snapshots. The current pinned VGB
+  runtime is v0.9.2.
 
 ## 3. Core Execution Flows
 
