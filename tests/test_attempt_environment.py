@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -8,6 +9,7 @@ from benchmarking.runtime.attempt_environment import (
     _materialize_native_tools,
     cleanup_attempt_environment,
     create_attempt_environment,
+    dependency_install_events,
 )
 
 
@@ -104,3 +106,108 @@ def test_uv_wrapper_rebinds_filtered_environment_and_preserves_arguments(tmp_pat
         str(tmp_path / "scratch with spaces" / "cache"),
         "pip",
     ]
+
+
+def test_dependency_install_events_follow_background_process_result(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    rows = [
+        {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "install",
+                        "name": "exec",
+                        "arguments": {"command": "uv pip install rdkit"},
+                    }
+                ],
+            }
+        },
+        {
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "install",
+                "toolName": "exec",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Command still running (session tidy-canyon, pid 52).",
+                    }
+                ],
+            }
+        },
+        {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "poll",
+                        "name": "process",
+                        "arguments": {"action": "poll", "sessionId": "tidy-canyon"},
+                    }
+                ],
+            }
+        },
+        {
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "poll",
+                "toolName": "process",
+                "content": [{"type": "text", "text": "Process exited with code 2."}],
+            }
+        },
+    ]
+    transcript.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    assert dependency_install_events(transcript) == [
+        {
+            "tool_call_id": "install",
+            "command": "uv pip install rdkit",
+            "call_line": 1,
+            "result_line": 4,
+            "outcome": "failed",
+        }
+    ]
+
+
+def test_dependency_install_events_leave_unresolved_background_command_pending(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "session.jsonl"
+    rows = [
+        {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "install",
+                        "name": "exec",
+                        "arguments": {"command": "uv pip install rdkit"},
+                    }
+                ],
+            }
+        },
+        {
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "install",
+                "toolName": "exec",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Command still running (session tidy-canyon, pid 52).",
+                    }
+                ],
+            }
+        },
+    ]
+    transcript.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    assert dependency_install_events(transcript)[0]["outcome"] == "pending"

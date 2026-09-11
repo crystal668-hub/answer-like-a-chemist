@@ -349,7 +349,8 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   attempt it executes them directly with `BENCHMARK_ATTEMPT_PYTHON`, without
   resolving the workspace project or implicitly installing project extras.
 - After a Docker or host VGB attempt returns, its environment owner records dependency commands from the
-  transcript, the installed distribution inventory, RECORD hashes, a hashed
+  transcript, including the terminal `process` result of background execs, the
+  installed distribution inventory, RECORD hashes, a hashed
   replay requirements file, the run-start PyPI cutoff, credential names, and
   allowlisted native-tool fingerprints. It removes any detected exact-denylist
   distributions, then deletes the venv, uv cache, and native-tool wrappers
@@ -357,7 +358,9 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   runner metadata.
 - Docker Python and skill scripts use
   `/benchmark/workspace/scratch/venv/bin/python`; the uv cache is
-  `scratch/tmp/cache/uv`. Dependency manifests use schema version 2 and independently
+  `scratch/tmp/cache/uv`. Container configs set `tools.exec.pathPrepend` to the
+  attempt `.runtime-bin`, so OpenClaw login shells resolve the fixed-config uv
+  wrapper after their profile initialization. Dependency manifests use schema version 2 and independently
   validate attempt identity, actual interpreter prefix/executable, registry cutoff,
   freeze/inventory agreement, RECORD presence/hashes, replay lock content/hashes,
   and dependency policy. Docker and host VGB share this scoring contract: invalid
@@ -635,7 +638,9 @@ boundary. Processes still run as the same local user.
 ### Current risks
 
 - Docker migration fixes and acceptance evidence are tracked in
-  `docs/report/2026-09-11-benchmark-infra-fix-validation.md`. Dependency replay
+  `docs/report/2026-09-11-benchmark-infra-fix-validation.md`; the six-item
+  handoff is closed after latest-image real-model and scheduler acceptance.
+  Dependency replay
   unavailability is explicitly diagnostic degradation, while invalid inventory,
   policy violations, and isolation failures remain non-scoreable. The command
   guard remains a cooperative-agent policy, not an arbitrary shell sandbox.

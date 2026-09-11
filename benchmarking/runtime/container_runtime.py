@@ -7,12 +7,12 @@ injectable and testable.
 
 from __future__ import annotations
 
-import json
 import fcntl
+import json
 import os
-import socket
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import time
@@ -21,9 +21,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
-from benchmarking.runtime.agent_workspace import AttemptIdentity, AttemptWorkspaceManager, workspace_slug
-from benchmarking.runtime.cancellation import CancellationToken
+from benchmarking.runtime.agent_workspace import (
+    AttemptIdentity,
+    AttemptWorkspaceManager,
+    workspace_slug,
+)
 from benchmarking.runtime.bundles import RuntimePathProjection
+from benchmarking.runtime.cancellation import CancellationToken
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -436,6 +440,26 @@ def materialize_container_config(
     if not selected:
         raise ContainerRuntimeError(f"OpenClaw agent is missing from config: {agent_id}", code="container_config_invalid")
     payload["agents"] = {**payload["agents"], "list": selected}
+
+    tools = payload.setdefault("tools", {})
+    if not isinstance(tools, dict):
+        raise ContainerRuntimeError("OpenClaw config tools is invalid", code="container_config_invalid")
+    exec_config = tools.setdefault("exec", {})
+    if not isinstance(exec_config, dict):
+        raise ContainerRuntimeError("OpenClaw config tools.exec is invalid", code="container_config_invalid")
+    existing_path_prepend = exec_config.get("pathPrepend", [])
+    if not isinstance(existing_path_prepend, list) or not all(
+        isinstance(item, str) for item in existing_path_prepend
+    ):
+        raise ContainerRuntimeError(
+            "OpenClaw config tools.exec.pathPrepend is invalid",
+            code="container_config_invalid",
+        )
+    attempt_tool_bin = "/benchmark/workspace/scratch/.runtime-bin"
+    exec_config["pathPrepend"] = [
+        attempt_tool_bin,
+        *(item for item in existing_path_prepend if item != attempt_tool_bin),
+    ]
 
     plugins = payload.get("plugins")
     if isinstance(plugins, dict):

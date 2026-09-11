@@ -1,7 +1,7 @@
-import subprocess
 import json
 import os
 import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,7 +32,7 @@ def test_docker_commands_always_have_bounded_outer_timeout(operation):
 
 
 def test_repeated_cancellation_skips_grace_wait():
-    from benchmarking.runtime.cancellation import CancellationToken, CancellationReason
+    from benchmarking.runtime.cancellation import CancellationReason, CancellationToken
     from benchmarking.runtime.container_runtime import ContainerAttemptHandle
     commands = []
     def run(cmd, **kwargs):
@@ -93,7 +93,8 @@ def test_create_builds_hardened_docker_command(tmp_path: Path) -> None:
 def test_materialize_container_config_uses_attempt_local_agent_state(tmp_path: Path) -> None:
     source = tmp_path / "runtime.json"
     source.write_text(
-        '{"agents":{"list":[{"id":"agent","workspace":"/host/work","agentDir":"/host/agent"}]}}',
+        '{"agents":{"list":[{"id":"agent","workspace":"/host/work","agentDir":"/host/agent"}]},'
+        '"tools":{"exec":{"pathPrepend":["/host/work/bin"]}}}',
         encoding="utf-8",
     )
     destination = tmp_path / "container.json"
@@ -109,6 +110,10 @@ def test_materialize_container_config_uses_attempt_local_agent_state(tmp_path: P
     entry = payload["agents"]["list"][0]
     assert entry["workspace"] == "/benchmark/workspace"
     assert entry["agentDir"] == "/benchmark/session/agents/agent/agent"
+    assert payload["tools"]["exec"]["pathPrepend"] == [
+        "/benchmark/workspace/scratch/.runtime-bin",
+        "/benchmark/workspace/bin",
+    ]
 
 
 @pytest.mark.parametrize("response", ['"sha256:bad"', 'null', '[]', 'invalid'])
@@ -155,7 +160,11 @@ def test_secret_refs_and_policy_paths_are_projected_without_secret_values(tmp_pa
 
 @pytest.mark.parametrize("variant,removed", [("stale", True), ("alive", False), ("identity", False), ("missing", False), ("host", False)])
 def test_orphan_recovery_requires_complete_stale_ownership(tmp_path, monkeypatch, variant, removed):
-    from benchmarking.runtime.agent_workspace import SENTINEL_KIND, SENTINEL_FILENAME, SCHEMA_VERSION
+    from benchmarking.runtime.agent_workspace import (
+        SCHEMA_VERSION,
+        SENTINEL_FILENAME,
+        SENTINEL_KIND,
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     sentinel = {"kind": SENTINEL_KIND, "schema_version": SCHEMA_VERSION, **identity().sentinel_fields(), "workspace_path": str(workspace)}

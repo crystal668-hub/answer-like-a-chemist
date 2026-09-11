@@ -11,7 +11,11 @@ import pytest
 
 from benchmarking.runtime.agent_workspace import AttemptIdentity
 from benchmarking.runtime.cancellation import CancellationReason, CancellationToken
-from benchmarking.runtime.container_runtime import ContainerAttemptSpec, ContainerMount, DockerContainerRuntime
+from benchmarking.runtime.container_runtime import (
+    ContainerAttemptSpec,
+    ContainerMount,
+    DockerContainerRuntime,
+)
 
 IMAGE = os.environ.get("BENCHMARK_TEST_CONTAINER_IMAGE")
 pytestmark = pytest.mark.skipif(not IMAGE, reason="set BENCHMARK_TEST_CONTAINER_IMAGE for real Docker checks")
@@ -28,7 +32,7 @@ def test_real_attempt_environment(mode):
     code = (
         "import subprocess,sys,json; from pathlib import Path; "
         "assert sys.prefix == '/benchmark/workspace/scratch/venv'; "
-        "subprocess.run(['uv','pip','install','packaging==24.2'],check=True); "
+        "subprocess.run(['sh','-lc','export PATH=\"/benchmark/workspace/scratch/.runtime-bin:$PATH\"; uv pip install packaging==24.2'],check=True); "
         "p=subprocess.run(['uv','pip','freeze'],check=True,capture_output=True,text=True); "
         "Path('/benchmark/workspace/scratch/actual-freeze.json').write_text(json.dumps(p.stdout.splitlines()))"
         if mode == "install" else "import time; time.sleep(90)"
@@ -67,7 +71,11 @@ def test_real_attempt_environment(mode):
 
 
 def test_real_orphan_recovery_preserves_live_owner():
-    from benchmarking.runtime.agent_workspace import SENTINEL_FILENAME, SENTINEL_KIND, SCHEMA_VERSION
+    from benchmarking.runtime.agent_workspace import (
+        SCHEMA_VERSION,
+        SENTINEL_FILENAME,
+        SENTINEL_KIND,
+    )
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
     root = Path("state/benchmark-runs/temporary/infra-contract/no-llm") / f"infra-contract-no-llm-{stamp}"
     root.mkdir(parents=True)

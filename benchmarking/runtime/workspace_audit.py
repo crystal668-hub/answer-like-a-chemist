@@ -199,6 +199,9 @@ def _operation_outcome(message: Mapping[str, Any] | None) -> str:
     match = re.search(r"Command exited with code\s+(-?\d+)", text)
     if match and int(match.group(1)) != 0:
         return "failed"
+    match = re.search(r"Process exited with code\s+(-?\d+)", text)
+    if match and int(match.group(1)) != 0:
+        return "failed"
     return "succeeded"
 
 

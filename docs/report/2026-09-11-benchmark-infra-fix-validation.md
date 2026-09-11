@@ -1,7 +1,8 @@
 # Benchmark Infra Follow-up Validation
 
-Status: implementation complete; external-provider acceptance partially blocked.
-The six-item handoff remains open for the outstanding real-model scenarios below.
+Status: implementation complete; required acceptance complete.
+Historical provider failures remain retained as failed evidence and are not used
+as passing substitutes.
 
 ## Approved Contract Changes
 
@@ -25,17 +26,26 @@ The six-item handoff remains open for the outstanding real-model scenarios below
 ## Validation
 
 - Initial targeted baseline: 51 passed, 14 subtests passed.
-- Final full suite: `uv run pytest -q` completed with 875 passed, 9 skipped,
-  5 pre-existing SWIG warnings, and 160 subtests passed. The nine opt-in Docker
+- Final full suite: `uv run pytest -q` completed with 890 passed, 9 skipped,
+  5 pre-existing SWIG warnings, and 164 subtests passed. The nine opt-in Docker
   tests are run separately. Docker timeout-redaction/runtime regressions: 25 passed.
-- Rebuilt Docker image: `openclaw-benchmark-single-llm:infra-fix`.
-  Verified image ID: `sha256:324d38d06dad05575367213cf8b22bedfa29d7802cd1ad847998dedecb397853`.
-  This verified agent image is also tagged `openclaw-benchmark-single-llm:latest`.
+- Rebuilt Docker image from the current service-directory migration checkout:
+  `openclaw-benchmark-single-llm:latest` (manifest digest
+  `sha256:5b968aebe2b3e5cb2678e9b3a0d3fffd6fc0cc0314b204021ba9c48036a4fa96`).
+  The image contains `benchmarking/service/single/openclaw_wrapper.py` and
+  `uv 0.8.17`; this is the image used for all acceptance below.
   The final host-only cancellation-before-retry change is covered by the full
   suite and `test_cancellation_after_attempt_returns_its_original_error_before_retry`.
 - Combined real Docker suites: 9 passed. The first multimodal test
   execution had a JavaScript syntax error in the test fixture; fixed and rerun.
   Failed artifacts remain retained.
+- The current-checkout `latest` image rerun of
+  `tests/test_container_attempt_integration.py` and
+  `tests/test_infra_docker_acceptance.py` passed all nine cases in 27.03 seconds.
+  An earlier image iteration produced a timeout-case partial dependency manifest
+  because its replay lock was temporarily unavailable; that failed artifact is
+  retained under `infra-contract-no-llm-20260911T122638248365` and its exact
+  retry passed in 9.72 seconds.
 - The final-image rerun had 8 passed and one pip-seeding failure caused by a
   PyPI TLS handshake EOF, with cleanup complete. Rerunning that exact installation
   case passed in 3.30 seconds. Thus all nine scenarios have passing evidence for
@@ -56,18 +66,42 @@ The six-item handoff remains open for the outstanding real-model scenarios below
   `state/benchmark-runs/temporary/infra-vgb/gpt-5.6-sol/infra-vgb-gpt-5.6-sol-20260911-01`.
   Scored 0.9733333333 using pinned 0.9.2 host verifier, complete dependency evidence,
   clean audit, and successful archive. No additional dependency installation occurred.
-- VGB RDKit installation/scoring attempt:
-  `state/benchmark-runs/temporary/infra-vgb-rdkit/gpt-5.6-sol/infra-vgb-rdkit-gpt-5.6-sol-20260911-01`.
-  Provider connection failed before any tools ran. Model-directed installation
-  followed by scoring remains unverified; the separate real Docker package
-  installation test does not substitute for this scenario.
+- SuperChem real-model acceptance:
+  `state/benchmark-runs/temporary/infra-superchem/gpt-6-astra/infra-superchem-gpt-6-astra-20260911-01`.
+  Both skills-off and skills-on Docker records completed with actual question/image
+  reads, clean archives, and pinned verifier results (score `0.0` for each).
+  Earlier gpt-5.6-sol connection/timeout runs remain retained as failed evidence.
+- VGB RDKit installation/scoring acceptance:
+  `state/benchmark-runs/temporary/infra-vgb-rdkit/gpt-5.6-sol/infra-vgb-rdkit-gpt-5.6-sol-20260911-1250`.
+  The model executed `uv pip install rdkit` from `$BENCHMARK_SKILL_SCRATCH_DIR`,
+  then used `/benchmark/workspace/scratch/venv/bin/python` to import RDKit and
+  solve the task. The archived schema-2 dependency manifest reports
+  `dependency_evidence.status=complete`, with freeze, inventory, RECORD hashes,
+  replay lock, and dependency audit all complete. The host pinned verifier scored
+  `0.9484085646807822`; the attempt was archived and its container removed.
+  Freeze and inventory contain `rdkit==2026.3.6`, `numpy==2.5.3`, and
+  `pillow==12.3.0`, each with RECORD evidence; the model also installed
+  `selfies==2.2.0`. Earlier `...-1139` and `...-1142`
+  runs exposed, respectively, a provider overload and a login-shell PATH defect;
+  both are retained as failed evidence and neither is counted as acceptance.
+- INFRA-05 real scheduler evidence:
+  `state/benchmark-runs/temporary/infra-throughput/no-llm/infra-throughput-no-llm-20260911-1150`.
+  The throughput scenario ran six records across two groups with two attempt
+  workers, round-robin starts, a slow score, and two retry backoffs; attempt
+  execution continued while scoring was active and attempt artifacts were
+  persisted before the run ended. The cancellation scenario triggered a
+  synthetic SIGINT during active attempts and recorded zero post-cancel starts.
+  `summary.json` and `events.jsonl` contain the timing and persistence evidence.
 - No benchmark-labeled containers remained after these runs. Provider failures
   preserved their diagnostic evidence and archived workspaces.
 - The minimal attempt-environment fix materializes `.runtime-bin/uv` as a
   fixed-config wrapper. It restores the attempt venv, PyPI index, cutoff, and
   cache after OpenClaw exec environment filtering, while preserving command
-  arguments. Regression coverage includes filtered variables and paths with
-  spaces.
+  arguments. Container configs use OpenClaw's `tools.exec.pathPrepend` so login
+  shells resolve that wrapper after resetting PATH. Dependency install audit also
+  follows background exec session IDs to their final process results instead of
+  treating `Command still running` as success. Regression coverage includes
+  filtered variables, paths with spaces, and asynchronous failure attribution.
 - Static checks: `ruff check --select F` on changed runtime/workflow modules and
   `git diff --check` passed. Docker timeout diagnostics omit command arguments
   so injected provider environment values are not persisted in errors.
@@ -76,11 +110,11 @@ All Docker contract artifacts live under `state/benchmark-runs/temporary/` in
 the `infra-contract/no-llm` and `infra-acceptance/no-llm` trees. No formal datasets,
 historical scores, release pin, live provider settings, or credentials were changed.
 
-## Remaining Acceptance
+## Closure
 
-- Repeat SuperChem skills-on/off with a working provider and obtain final scored
-  answers, retaining actual image-read, audit, dependency, and cleanup evidence.
-- Complete a VGB attempt that actually installs a permitted package and then
-  scores through the isolated host verifier.
-- Do not close the original handoff based only on the automated suites or the
-  successful HLE/property examples.
+The required real-model, latest-image Docker contract, and INFRA-05 scheduler
+acceptance are complete. No benchmark-labeled containers or active workspace
+locks from these acceptance runs remain. Historical runtime directories and
+their retained evidence are unchanged. Provider, PyPI, and image-registry failures that
+occurred during earlier attempts remain preserved in their original run trees;
+they are explicitly not reclassified as passes.

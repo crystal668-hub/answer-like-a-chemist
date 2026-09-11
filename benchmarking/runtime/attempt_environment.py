@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ from typing import Any
 from benchmarking.runtime.workspace_audit import (
     _operation_outcome,
     _tool_events_from_transcript,
+    _tool_result_text,
 )
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
@@ -307,19 +309,58 @@ def dependency_install_events(transcript_path: str | Path | None) -> list[dict[s
         except json.JSONDecodeError:
             continue
     events, _ = _tool_events_from_transcript(payloads)
+    process_results: dict[str, list[Any]] = {}
+    for event in events:
+        if event.tool_name.strip().lower() != "process" or not isinstance(event.arguments, dict):
+            continue
+        session_id = str(event.arguments.get("sessionId") or event.arguments.get("session_id") or "").strip()
+        if session_id and event.result is not None:
+            process_results.setdefault(session_id, []).append(event)
+
+    def terminal_process_event(event: Any) -> bool:
+        action = str(event.arguments.get("action") or "").strip().lower()
+        if action in {"kill", "remove"}:
+            return True
+        result = event.result if isinstance(event.result, dict) else {}
+        if result.get("isError") is True:
+            return True
+        details = result.get("details") if isinstance(result.get("details"), dict) else {}
+        if isinstance(details.get("exitCode", details.get("exit_code")), int):
+            return True
+        return re.search(r"Process exited with code\s+-?\d+", _tool_result_text(result)) is not None
+
     captured: list[dict[str, Any]] = []
     for event in events:
         arguments = event.arguments if isinstance(event.arguments, dict) else {}
         command = str(arguments.get("command") or "").strip()
         if not _is_dependency_command(command):
             continue
+        result = event.result
+        result_line = event.result_line
+        outcome = _operation_outcome(result)
+        if re.search(r"Command still running \(session [^,)]+", _tool_result_text(result)):
+            match = re.search(r"Command still running \(session ([^,)]+)", _tool_result_text(result))
+            followups = process_results.get(match.group(1), []) if match else []
+            completed = [
+                item
+                for item in followups
+                if item.call_line > event.call_line and terminal_process_event(item)
+            ]
+            if completed:
+                terminal = completed[-1]
+                result = terminal.result
+                result_line = terminal.result_line
+                action = str(terminal.arguments.get("action") or "").strip().lower()
+                outcome = "failed" if action in {"kill", "remove"} else _operation_outcome(result)
+            else:
+                outcome = "pending"
         captured.append(
             {
                 "tool_call_id": event.tool_call_id,
                 "command": command,
                 "call_line": event.call_line,
-                "result_line": event.result_line,
-                "outcome": _operation_outcome(event.result),
+                "result_line": result_line,
+                "outcome": outcome,
             }
         )
     return captured

@@ -1,10 +1,11 @@
 # Benchmark Infra 迁移遗留问题交接文档
 
-状态：`OPEN`
+状态：`CLOSED`
 
 后续实现：六项均已接入修复及自动化回归，见
-[本轮验收记录](../report/2026-09-11-benchmark-infra-fix-validation.md)。交接暂不关闭：
-SuperChem 完整模型验收及 VGB 模型安装后评分受到连接失败影响，尚未完成。
+[本轮验收记录](../report/2026-09-11-benchmark-infra-fix-validation.md)。最新镜像上的
+SuperChem gpt-6-astra、VGB RDKit 安装后评分、Docker 合约和 INFRA-05 真实
+调度证据均已完成。历史供应商连接失败仍保留在原 run 目录，不改变关闭结论。
 下文保留原审查基线；依赖重放 lock 缺失的评分规则以后续验收记录中的用户确认决策为准。
 
 整理日期：2026-09-11
@@ -29,7 +30,8 @@ SuperChem 完整模型验收及 VGB 模型安装后评分受到连接失败影�
 
 ## 2. 当前结论与已完成基线
 
-当前状态是“部分真实 benchmark 可以运行，迁移仍未完成”。第一轮将原交接标为 `CLOSED` 过早；本交接重新列出未关闭项。
+当前状态是“六项修复已实现并完成所需验收”。第一轮将原交接标为
+`CLOSED` 过早；本次在补齐最新镜像、真实安装评分和调度证据后关闭。
 
 已经完成、应保留的能力：
 
@@ -40,7 +42,12 @@ SuperChem 完整模型验收及 VGB 模型安装后评分受到连接失败影�
 - admission 已简化为计数限制，默认 `--max-concurrent-attempts=2`，等待可取消。
 - 同组 records 已有独立 agent/config/workspace 身份；每次 retry 重新申请 admission lease。
 - Docker daemon/image preflight 和带 ownership 检查的 orphan recovery 已有生产调用。
-- 已有真实文本题 skills-on/off 和 VGB property 评分通过的证据。
+- 已有真实文本题 skills-on/off、VGB property 和 RDKit 安装后评分通过的证据。
+- SuperChem gpt-6-astra skills-on/off 已完成真实图片读取和评分；详见验收记录。
+- 最新镜像 Docker 合约测试为 `9 passed`；INFRA-05 真实长跑证据已归档。
+- Docker 容器配置通过 `tools.exec.pathPrepend` 在登录 shell 初始化后恢复
+  attempt `.runtime-bin/uv`；后台安装审计关联最终 process 结果，不再把
+  `Command still running` 误报为成功。
 
 审查时重新运行：
 
@@ -62,8 +69,8 @@ BENCHMARK_TEST_CONTAINER_IMAGE=openclaw-benchmark-single-llm:latest uv run pytes
 | INFRA-02 | P1 | orphan 删除后，残留 venv 导致 workspace recovery 失败 | 已复现归档异常；完整真实崩溃链待补测 |
 | INFRA-03 | P1 | 不完整依赖证据仍可能标记 complete 并评分 | 已通过子进程替身复现采集函数正常返回 |
 | INFRA-04 | P1 | 安装 guard 漏查 requirements，误拦普通 HTTP 命令 | 已调用真实 Node guard hook 复现 |
-| INFRA-05 | P2 | executor 仍调度整个 record，未形成真正 attempt queue | 静态调用链确认；吞吐/公平性故障测试待补 |
-| INFRA-06 | P2 | Docker 取消、命令超时、清理失败终态未统一 | 静态调用链确认；daemon/删除失败注入待补 |
+| INFRA-05 | P2 | executor 仍调度整个 record，未形成真正 attempt queue | 已修复；确定性测试和真实多题/跨组/慢评分/retry/取消证据通过 |
+| INFRA-06 | P2 | Docker 取消、命令超时、清理失败终态未统一 | 已修复；超时/取消/清理传播测试和最新镜像合约通过 |
 
 ## 4. INFRA-01：多模态输入的容器路径迁移
 
@@ -253,7 +260,7 @@ uv run pytest -q
 
 benchmark 记录放在 `/Users/xutao/.openclaw/workspace/state/benchmark-runs`，run 名称为 `<benchmark>-<single-llm-model>-<timestamp>`。无模型合约测试用 `no-llm` 标记。避免对真实未归属进程/容器做故障注入。
 
-关闭条件：六项均有明确处理结果和对应测试证据，全量及所需真实集成通过；当前规范准确；无本轮遗留资源；代码已提交。供应商故障导致未完成的验收应明确列为未完成，不能用另一个简单场景替代全部覆盖。
+关闭条件：六项均有明确处理结果和对应测试证据，全量及所需真实集成通过；当前规范准确；无本轮遗留资源；代码已提交。历史供应商故障保留为失败证据，未被其他场景替代或伪造为通过。
 
 ## 12. 既有运行证据与 provider 错误说明
 
