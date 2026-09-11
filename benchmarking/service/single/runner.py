@@ -1262,7 +1262,7 @@ class SingleLLMRunner:
             time_budget_seconds=None if self.no_timeout else self.convergence_policy.timeout_seconds,
         )
         initial_session_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{uuid.uuid4().hex[:8]}"
-        wrapper_path = Path(__file__).resolve().parents[2] / "runtime" / "single_llm_openclaw_wrapper.py"
+        wrapper_path = Path(__file__).with_name("openclaw_wrapper.py")
         env = os.environ.copy()
         env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
         attempt_history: list[dict[str, Any]] = []
@@ -1400,7 +1400,7 @@ class SingleLLMRunner:
             record=record,
             session_id=session_id,
             prompt=prompt,
-            wrapper_path=Path("/opt/benchmark/benchmarking/runtime/single_llm_openclaw_wrapper.py"),
+            wrapper_path=Path("/opt/benchmark/benchmarking/service/single/openclaw_wrapper.py"),
             config_path=Path("/benchmark/config/openclaw.json"),
             python_executable="/opt/benchmark/.venv/bin/python",
         )

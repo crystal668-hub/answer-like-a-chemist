@@ -32,8 +32,6 @@ class BenchmarkConvergenceTests(unittest.TestCase):
                 "timeout_seconds": 900,
                 "stop_fraction": 0.2,
                 "finalization_safety_seconds": 90,
-                "max_unchanged_status_polls": 2,
-                "max_recovery_attempts": 2,
             },
             policy.to_meta(),
         )

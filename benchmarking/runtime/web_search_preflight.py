@@ -21,10 +21,6 @@ DEFAULT_PREFLIGHT_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF_SECONDS = (5.0, 10.0)
 
 
-def _wrapper_path() -> Path:
-    return Path(__file__).resolve().parent / "single_llm_openclaw_wrapper.py"
-
-
 def _parse_jsonish(text: str) -> Any:
     stripped = str(text or "").strip()
     if not stripped:
@@ -142,6 +138,7 @@ def evaluate_web_search_transcript(transcript_path: Path) -> dict[str, Any]:
 def run_web_search_preflight(
     *,
     agent_id: str,
+    wrapper_path: Path,
     config_path: Path,
     current_python_path: str,
     run_subprocess: RunSubprocess,
@@ -164,7 +161,7 @@ def run_web_search_preflight(
         session_id = f"web-search-preflight-{uuid.uuid4().hex[:10]}"
         command = [
             current_python_path,
-            str(_wrapper_path()),
+            str(wrapper_path),
             "--agent",
             agent_id,
             "--config-file",

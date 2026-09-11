@@ -18,3 +18,12 @@ class ExperimentSpec:
             if stripped:
                 return stripped
         return self.single_agent_id
+
+
+@dataclass(frozen=True)
+class ExperimentGroup:
+    id: str
+    label: str
+    runner: str
+    websearch: bool
+    skills_enabled: bool = True

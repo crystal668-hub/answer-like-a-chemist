@@ -66,7 +66,7 @@ runbooks.
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Benchmark skill inventory/routing projection, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
-| `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, prompts, wave/group orchestration, runner adapters, and ChemQA response reconstruction. |
+| `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
 | `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and synchronized dataset/subset facets across filters, run summaries, and record details. |
 
@@ -84,8 +84,14 @@ Benchmark workflow responsibilities follow the same ownership rule:
 `benchmarking.workflow.experiments` owns group definitions and effective specs,
 `benchmarking.workflow.dataset_selection` owns discovery, filtering, sampling,
 and output-root classification, `benchmarking.workflow.run_state` owns persisted
-results and run metadata, and `benchmarking.workflow.runner_adapters` binds the
-generic runners to runtime bundles, cleanroom, sessions, and workspace policy.
+results and run metadata, and `benchmarking.workflow.runner_adapters` lazily selects business runners.
+`benchmarking.service.single` owns active experiments, prompts, runner assembly,
+per-record configuration, and the OpenClaw wrapper.
+`benchmarking.service.chemdebate` owns frozen ChemQA experiments, prompts,
+protocol status, artifact reconstruction, slot provisioning, cleanroom binding,
+and role templates. Shared record orchestration receives a runner-options
+factory; the configuration pool receives a business configuration builder.
+The two business modules do not import each other.
 `benchmarking.runtime.subprocess_utils` owns shared subprocess and stdout helpers,
 `benchmarking.runtime.error_capture` owns execution-error evidence extraction,
 provider/config error classification, and preservation of original upstream
@@ -101,7 +107,7 @@ execution and the shared attempt/retry/scoring scheduler,
 `benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
 isolated process bridge, and public package API calls. The scoring evaluator
 only maps benchmark records and verifier results.
-`benchmarking.runtime.cleanroom.CleanroomRuntime` is the cleanroom dependency
+`benchmarking.service.chemdebate.cleanroom.CleanroomRuntime` is the cleanroom dependency
 binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
 Scoring responsibilities are split by dependency direction:
@@ -212,10 +218,13 @@ The implemented default experiment groups are:
 - `single_llm_skills_on`: one OpenClaw agent with the complete benchmark skill
   routing inventory.
 - `single_llm_skills_off`: one OpenClaw agent with an explicit empty skill list.
-- `chemqa_skills_on`: the fixed-lane ChemQA workflow with the benchmark skill
-  allowlist.
 
-All three current group definitions disable generic web search and web fetch.
+ChemQA is excluded from the default catalog. Its frozen legacy entrypoint is
+`uv run python -m benchmarking.service.chemdebate.cli`; persisted runner and group
+identifiers remain `chemqa` and `chemqa_skills_on`. No new features or future
+OpenClaw compatibility updates are planned for this business.
+
+Both active group definitions disable generic web search and web fetch.
 For each invocation, the CLI:
 
 1. Uses `benchmarking.workflow.dataset_selection` to discover or accept JSONL
@@ -234,8 +243,8 @@ For each invocation, the CLI:
    startup before workspace recovery. `docker-startup.json` and the runtime
    manifest retain startup evidence, including failures.
 4. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches single-LLM
-   attempts through one shared queue across selected single-LLM groups, followed
-   by ChemQA group waves. `--max-concurrent-attempts` defaults to 2 and must be
+   attempts through one shared queue across selected single-LLM groups. The
+   explicit legacy entrypoint uses ChemQA group waves separately. `--max-concurrent-attempts` defaults to 2 and must be
    positive. Each queued record has an independent agent identity and runtime
    config, so group configuration and active workspaces are not shared across
    concurrent records. Group progress completes after all records return.
@@ -316,7 +325,7 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   registry, cutoff, cache, and configuration overrides are rejected. Ordinary
   HTTP command arguments are not classified as dependency operations.
 - The runner materializes the role contract, attaches current scratch paths,
-  invokes `benchmarking.runtime.single_llm_openclaw_wrapper`, validates OpenClaw
+  invokes `benchmarking.service.single.openclaw_wrapper`, validates OpenClaw
   JSON stdout, and enforces the eval-aware candidate-answer contract.
 - The canonical workspace contract requires agent-created Python virtual
   environments under `scratch/` to use `python3 -m venv --copies venv`.
@@ -383,7 +392,7 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   protected-root references remain non-evaluable or contaminated according to
   the normal audit rules.
 
-### ChemQA runner
+### ChemQA runner (legacy, frozen)
 
 - Each attempt prepares one coordinator workspace and five role workspaces as an
   all-or-fail lease set.

@@ -1,3 +1,6 @@
+from benchmarking.service.chemdebate.provisioning import actual_slot_ids, provision_slot_workspace
+from benchmarking.service.single.config import build_runner_config as single_config
+from benchmarking.service.chemdebate.config import build_runner_config as chemdebate_config
 import json
 import tempfile
 import unittest
@@ -15,13 +18,11 @@ from benchmarking.runtime.config_pool import (
     ConfigPool,
     RuntimeConfigContext,
     RuntimeConfigError,
-    actual_slot_ids,
     build_run_scoped_config_payload,
 )
 from benchmarking.runtime.provisioning import (
     ProvisionedAgent,
     ProvisionedExperiment,
-    provision_slot_workspace,
 )
 from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.skills.tree import benchmark_skill_allowlist
@@ -310,7 +311,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={"chemqa_skills_on": "A"},
+                runner_config_builder=single_config,
                 experiment_specs={
                     "single_llm_skills_on": ExperimentSpec(
                         id="single_llm_skills_on",
@@ -380,7 +381,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={},
+                runner_config_builder=single_config,
                 experiment_specs={
                     "single_llm_skills_off": ExperimentSpec(
                         id="single_llm_skills_off",
@@ -421,7 +422,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={},
+                runner_config_builder=single_config,
                 experiment_specs={
                     "single_llm_skills_off": ExperimentSpec(
                         id="single_llm_skills_off",
@@ -465,7 +466,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={"chemqa_skills_on": "A"},
+                runner_config_builder=chemdebate_config,
                 experiment_specs={
                     "chemqa_skills_on": ExperimentSpec(
                         id="chemqa_skills_on",
@@ -519,7 +520,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={},
+                runner_config_builder=single_config,
                 experiment_specs={
                     "single_llm_skills_on": ExperimentSpec(
                         id="single_llm_skills_on",
@@ -567,7 +568,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={},
+                runner_config_builder=single_config,
                 experiment_specs={
                     "single_llm_skills_on": ExperimentSpec(
                         id="single_llm_skills_on",
@@ -622,7 +623,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             context = RuntimeConfigContext(
                 agents_root=root / "agents",
                 judge_agent_id="benchmark-judge",
-                chemqa_slot_sets={},
+                runner_config_builder=single_config,
                 experiment_specs=specs,
                 benchmark_skills_root=root / "workspace" / "skills",
             )

@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from benchmarking.core.convergence import ConvergencePolicy
-from benchmarking.workflow.runners.chemqa import ChemQARunner
+from benchmarking.service.chemdebate.convergence import ChemQAConvergencePolicy as ConvergencePolicy
+from benchmarking.service.chemdebate.runner import ChemQARunner
 
 
 class ChemQAConvergenceTests(unittest.TestCase):

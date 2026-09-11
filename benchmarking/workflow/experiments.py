@@ -1,108 +1,20 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-from benchmarking.core.experiments import ExperimentSpec
-from benchmarking.skills.tree import benchmark_skill_allowlist
+"""Active experiment catalog. Legacy execution uses its own entrypoint."""
+from benchmarking.core.defaults import (
+    DEFAULT_SINGLE_AGENT, DEFAULT_SINGLE_AGENT_MODEL, DEFAULT_JUDGE_AGENT,
+    DEFAULT_JUDGE_MODEL, THINKING_LEVEL_CHOICES, DEFAULT_SINGLE_AGENT_THINKING,
+    DEFAULT_JUDGE_AGENT_THINKING, BENCHMARK_SKILLS_ALLOWLIST, BASELINE_AGENT_IDS, JUDGE_AGENT_ID,
+)
+from benchmarking.core.experiments import ExperimentGroup
+from benchmarking.service.single.experiments import EXPERIMENT_GROUPS, EXPERIMENT_SPECS
 from benchmarking.workflow.errors import BenchmarkError
 
-DEFAULT_SINGLE_AGENT = "benchmark-single-skills-off"
-DEFAULT_SINGLE_AGENT_MODEL = "qwen3.5-plus"
-DEFAULT_JUDGE_AGENT = "benchmark-judge"
-DEFAULT_JUDGE_MODEL = "openai/gpt-5.5"
-DEFAULT_CHEMQA_PRESET = "chemqa-review@1"
-DEFAULT_CHEMQA_MODEL_PROFILE = "chemqa-review-su8-coord-qwen-ds-kimi-glm-minimax"
-THINKING_LEVEL_CHOICES = (
-    "off",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "adaptive",
-)
-DEFAULT_SINGLE_AGENT_THINKING = "high"
-DEFAULT_JUDGE_AGENT_THINKING = "high"
-BENCHMARK_SKILLS_ALLOWLIST = list(benchmark_skill_allowlist())
-CHEMQA_SLOT_SETS = {
-    "chemqa_skills_on": "A",
-}
-BASELINE_AGENT_IDS = {
-    "single_llm_skills_on": "benchmark-single-skills-on",
-    "single_llm_skills_off": "benchmark-single-skills-off",
-}
-JUDGE_AGENT_ID = "benchmark-judge"
 
-
-@dataclass(frozen=True)
-class ExperimentGroup:
-    id: str
-    label: str
-    runner: str
-    websearch: bool
-    skills_enabled: bool = True
-
-
-EXPERIMENT_GROUPS: dict[str, ExperimentGroup] = {
-    "single_llm_skills_on": ExperimentGroup(
-        id="single_llm_skills_on",
-        label="单一 LLM + benchmark skills allowlist",
-        runner="single_llm",
-        websearch=False,
-        skills_enabled=True,
-    ),
-    "single_llm_skills_off": ExperimentGroup(
-        id="single_llm_skills_off",
-        label="单一 LLM + 禁用 skills",
-        runner="single_llm",
-        websearch=False,
-        skills_enabled=False,
-    ),
-    "chemqa_skills_on": ExperimentGroup(
-        id="chemqa_skills_on",
-        label="ChemQA fixed-lane review + benchmark skills allowlist",
-        runner="chemqa",
-        websearch=False,
-        skills_enabled=True,
-    ),
-}
-
-EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
-    "single_llm_skills_on": ExperimentSpec(
-        id="single_llm_skills_on",
-        label=EXPERIMENT_GROUPS["single_llm_skills_on"].label,
-        runner_kind="single_llm",
-        websearch_enabled=False,
-        skills_enabled=True,
-        single_agent_id=BASELINE_AGENT_IDS["single_llm_skills_on"],
-        skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
-    ),
-    "single_llm_skills_off": ExperimentSpec(
-        id="single_llm_skills_off",
-        label=EXPERIMENT_GROUPS["single_llm_skills_off"].label,
-        runner_kind="single_llm",
-        websearch_enabled=False,
-        skills_enabled=False,
-        single_agent_id=BASELINE_AGENT_IDS["single_llm_skills_off"],
-        skill_allowlist=(),
-    ),
-    "chemqa_skills_on": ExperimentSpec(
-        id="chemqa_skills_on",
-        label=EXPERIMENT_GROUPS["chemqa_skills_on"].label,
-        runner_kind="chemqa",
-        websearch_enabled=False,
-        skills_enabled=True,
-        slot_set=CHEMQA_SLOT_SETS["chemqa_skills_on"],
-        skill_allowlist=tuple(BENCHMARK_SKILLS_ALLOWLIST),
-    ),
-}
-
-
-def select_group_ids(raw: str) -> list[str]:
+def select_group_ids(raw: str, *, groups=None) -> list[str]:
+    catalog = EXPERIMENT_GROUPS if groups is None else groups
     group_ids = [item.strip() for item in raw.split(",") if item.strip()]
-    unknown = [item for item in group_ids if item not in EXPERIMENT_GROUPS]
+    unknown = [item for item in group_ids if item not in catalog]
     if unknown:
-        raise BenchmarkError(f"Unknown group ids: {', '.join(unknown)}")
+        raise BenchmarkError(f"Unknown or inactive group ids: {', '.join(unknown)}. ChemQA is legacy; use benchmarking.service.chemdebate.cli explicitly.")
     if not group_ids:
         raise BenchmarkError("No experiment groups selected.")
     return group_ids

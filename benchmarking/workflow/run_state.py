@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import hashlib
 import json
 import re
@@ -128,7 +129,7 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
         }
     if "skills_enabled" not in payload:
         group = EXPERIMENT_GROUPS.get(str(payload.get("group_id") or ""))
-        payload["skills_enabled"] = bool(getattr(group, "skills_enabled", False))
+        payload["skills_enabled"] = bool(getattr(group, "skills_enabled", str(payload.get("group_id") or "") == "chemqa_skills_on"))
     return GroupRecordResult(**payload)
 
 
@@ -143,11 +144,12 @@ def resolve_aggregate_group_ids(
         return list(selected_group_ids)
     present = set(selected_group_ids)
     per_record_root = output_root / "per-record"
-    for group_id in EXPERIMENT_GROUPS:
-        group_dir = per_record_root / group_id
-        if group_dir.is_dir() and any(group_dir.glob("*.json")):
-            present.add(group_id)
-    return [group_id for group_id in EXPERIMENT_GROUPS if group_id in present]
+    if per_record_root.is_dir():
+        for group_dir in per_record_root.iterdir():
+            if group_dir.is_dir() and not group_dir.is_symlink() and any(group_dir.glob("*.json")):
+                present.add(group_dir.name)
+    active = [group_id for group_id in EXPERIMENT_GROUPS if group_id in present]
+    return active + sorted(present - set(active))
 
 
 
@@ -294,3 +296,14 @@ def automated_evaluation_skipped(output_root: Path) -> dict[str, Any]:
         "output_root": str(output_root),
         **analysis_paths(output_root),
     }
+
+
+def describe_result_group(group_id, results, catalog):
+    """Read historical group identity without registering an obsolete runtime."""
+    if group_id in catalog:
+        return asdict(catalog[group_id])
+    for result in results:
+        if result.group_id == group_id:
+            return {"id": group_id, "label": result.group_label, "runner": result.runner,
+                    "websearch": result.websearch, "skills_enabled": result.skills_enabled}
+    raise ValueError(f"No persisted metadata for group {group_id!r}")

@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import time
 import traceback
-import json
-import uuid
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.core.status import build_result_axes_from_runner
 from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationToken
@@ -109,68 +106,18 @@ def run_group(
     group: Any,
     records: list[Any],
     output_root: Path,
-    single_timeout: int,
-    chemqa_timeout: int,
     judge: Any,
-    config_path: Path,
-    single_agent: str,
-    chemqa_root: Path,
-    chemqa_model_profile: str,
-    review_rounds: int | None,
-    rebuttal_rounds: int | None,
-    chemqa_slot_sets: dict[str, str],
-    experiment_specs: dict[str, Any],
+    runner_options_factory: Callable[[], dict[str, Any]],
     build_runner_fn: Callable[..., Any],
     evaluate_answer_fn: Callable[..., Any],
     build_error_group_record_result_fn: Callable[..., GroupRecordResult],
     classify_subset_fn: Callable[[Any], str],
     save_json_fn: Callable[[Path, Any], None],
     slugify_fn: Callable[..., str],
-    single_convergence_policy: ConvergencePolicy | None = None,
-    chemqa_convergence_policy: ConvergencePolicy | None = None,
-    single_timeout_retries: int = 3,
-    single_timeout_retry_backoff_seconds: tuple[int | float, ...] | list[int | float] = (5, 15, 45),
-    single_agent_thinking: str,
-    no_timeout: bool = False,
-    workspace_manager: Any | None = None,
     progress_writer: Any | None = None,
     cancellation_token: CancellationToken | None = None,
-    process_registry: Any | None = None,
-    pypi_cutoff: str | None = None,
-    vgb_skill_allowlist: tuple[str, ...] | list[str] = (),
-    admission_controller: Any | None = None,
     manage_group_lifecycle: bool = True,
-    execution_backend: str = "docker",
-    container_image: str = "openclaw-benchmark-single-llm:latest",
-    container_cpus: float | None = None,
-    container_memory_bytes: int | None = None,
-    container_pids_limit: int | None = None,
 ) -> list[GroupRecordResult]:
-    runtime_bundle_root = output_root / "input-bundles"
-    if group.runner == "single_llm" and not manage_group_lifecycle and workspace_manager is not None:
-        original_agent = single_agent
-        single_agent = f"{single_agent[:51]}-{uuid.uuid4().hex[:12]}"
-        original_workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=original_agent)
-        new_workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=single_agent)
-        source = json.loads(config_path.read_text())
-
-        def rewrite(value):
-            if isinstance(value, str):
-                if value == str(original_workspace) or value.startswith(str(original_workspace) + "/"):
-                    return str(new_workspace) + value[len(str(original_workspace)):]
-                if value == original_agent:
-                    return single_agent
-                return value.replace("/" + original_agent + "/", "/" + single_agent + "/")
-            if isinstance(value, list):
-                return [rewrite(item) for item in value]
-            if isinstance(value, dict):
-                return {rewrite(key): rewrite(item) for key, item in value.items()}
-            return value
-
-        config_path = output_root / "runtime-config" / f"{single_agent}.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        save_json_fn(config_path, rewrite(source))
-
     def mark_cancelling() -> None:
         if progress_writer is None or cancellation_token is None:
             return
@@ -195,48 +142,7 @@ def run_group(
             progress_writer.group_cancelled(group.id)
         return group_results
     try:
-        if group.runner == "chemqa":
-            runner = build_runner_fn(
-                runner_kind=group.runner,
-                chemqa_root=chemqa_root,
-                timeout_seconds=chemqa_timeout,
-                config_path=config_path,
-                slot_set=chemqa_slot_sets[group.id],
-                review_rounds=review_rounds,
-                rebuttal_rounds=rebuttal_rounds,
-                model_profile=chemqa_model_profile,
-                runtime_bundle_root=runtime_bundle_root,
-                launch_workspace_root=output_root / "chemqa-launch",
-                convergence_policy=chemqa_convergence_policy or ConvergencePolicy(timeout_seconds=chemqa_timeout),
-                workspace_manager=workspace_manager,
-                cancellation_token=cancellation_token,
-                process_registry=process_registry,
-            )
-        else:
-            runner = build_runner_fn(
-                runner_kind=group.runner,
-                agent_id=single_agent,
-                timeout_seconds=single_timeout,
-                config_path=config_path,
-                runtime_bundle_root=runtime_bundle_root,
-                configured_skills=tuple(experiment_specs[group.id].skill_allowlist or ()),
-                vgb_configured_skills=tuple(vgb_skill_allowlist) if group.skills_enabled else (),
-                convergence_policy=single_convergence_policy or ConvergencePolicy(timeout_seconds=single_timeout),
-                timeout_retries=single_timeout_retries,
-                timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
-                benchmark_agent_thinking=single_agent_thinking,
-                no_timeout=no_timeout,
-                workspace_manager=workspace_manager,
-                cancellation_token=cancellation_token,
-                process_registry=process_registry,
-                pypi_cutoff=pypi_cutoff,
-                admission_controller=admission_controller,
-                execution_backend=execution_backend,
-                container_image=container_image,
-                container_cpus=container_cpus,
-                container_memory_bytes=container_memory_bytes,
-                container_pids_limit=container_pids_limit,
-            )
+        runner = build_runner_fn(runner_kind=group.runner, **runner_options_factory())
     except Exception as exc:
         if cancellation_token is not None and cancellation_token.is_cancelled:
             mark_cancelling()
@@ -310,7 +216,7 @@ def run_group(
             axes = build_result_axes_from_runner(run_result)
             if run_result.should_score():
                 answer_text = run_result.answer.full_response_text or run_result.answer.short_answer_text
-                if group.runner == "single_llm" and isinstance(run_result, RunnerResult):
+                if isinstance(run_result, RunnerResult):
                     result_path = persist_runner_result(output_root / "scoring-pending" / group.id /
                                                        f"{slugify_fn(record.record_id)}.json", run_result)
                     run_result = None

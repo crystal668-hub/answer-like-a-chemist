@@ -19,18 +19,20 @@ from benchmarking.runtime.config_pool import (
 from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import (
-    CHEMQA_SLOT_SETS,
     EXPERIMENT_SPECS,
     JUDGE_AGENT_ID,
     ExperimentGroup,
 )
 
 
-def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = None) -> RuntimeConfigContext:
+def runtime_config_context(experiment_specs: dict[str, ExperimentSpec] | None = None, *, runner_config_builder=None) -> RuntimeConfigContext:
+    if runner_config_builder is None:
+        from benchmarking.service.single.config import build_runner_config
+        runner_config_builder = build_runner_config
     return RuntimeConfigContext(
         agents_root=runtime_paths.agents_root,
         judge_agent_id=JUDGE_AGENT_ID,
-        chemqa_slot_sets=CHEMQA_SLOT_SETS,
+        runner_config_builder=runner_config_builder,
         experiment_specs=experiment_specs or EXPERIMENT_SPECS,
         benchmark_skills_root=runtime_paths.skills_root,
     )
@@ -99,6 +101,7 @@ def build_run_scoped_config_payload(
     judge_model: str,
     workspace_manager: AttemptWorkspaceManager | None = None,
     single_agent_id_override: str | None = None,
+    context: RuntimeConfigContext | None = None,
 ) -> dict[str, Any]:
     workspace_manager = workspace_manager or AttemptWorkspaceManager(
         runtime_root=runtime_paths.benchmark_runtime_root / "runs",
@@ -114,7 +117,7 @@ def build_run_scoped_config_payload(
     try:
         return _build_run_scoped_config_payload(
             base_payload,
-            context=runtime_config_context(),
+            context=context or runtime_config_context(),
             group=group,
             single_agent_model=single_agent_model,
             judge_model=judge_model,

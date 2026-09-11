@@ -161,8 +161,6 @@ class ConvergencePolicy:
     timeout_seconds: int
     stop_fraction: float = 0.2
     finalization_safety_seconds: int = 90
-    max_unchanged_status_polls: int = 2
-    max_recovery_attempts: int = 2
 
     def to_meta(self) -> dict[str, Any]:
         return asdict(self)

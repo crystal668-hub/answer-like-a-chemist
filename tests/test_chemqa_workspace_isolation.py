@@ -1,3 +1,4 @@
+from benchmarking.service.chemdebate.execution import workspace_templates as default_workspace_templates
 import json
 import tempfile
 import types
@@ -11,11 +12,10 @@ from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
-    default_workspace_templates,
 )
 from benchmarking.runtime.session_isolation import inspect_postflight_session
 from benchmarking.runtime.workspace_policy import ContaminationAudit, ProtectedRoot
-from benchmarking.workflow.runner_adapters import ChemQARunner
+from benchmarking.service.chemdebate.adapter import ChemQARunner
 
 
 @dataclass(frozen=True)

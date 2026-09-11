@@ -44,22 +44,11 @@ BENCHMARK_WORKDIR_GUARD_PLUGIN_ROOT = (
 class RuntimeConfigContext:
     agents_root: Path
     judge_agent_id: str
-    chemqa_slot_sets: Mapping[str, str]
+    runner_config_builder: Any
     experiment_specs: Mapping[str, ExperimentSpec]
     benchmark_skills_root: Path
 
 
-def actual_slot_ids(slot_set: str) -> dict[str, str]:
-    normalized = str(slot_set).strip()
-    prefix = f"debate{normalized}"
-    return {
-        "debate-coordinator": f"{prefix}-coordinator",
-        "debate-1": f"{prefix}-1",
-        "debate-2": f"{prefix}-2",
-        "debate-3": f"{prefix}-3",
-        "debate-4": f"{prefix}-4",
-        "debate-5": f"{prefix}-5",
-    }
 
 
 def _render_run_config_or_raise(
@@ -146,7 +135,6 @@ def build_run_scoped_config_payload(
         workspace=judge_workspace,
         agent_dir=judge_agent_dir,
     )
-    runner_agents: list[ProvisionedAgent] = []
     spec = context.experiment_specs.get(
         group.id,
         ExperimentSpec(
@@ -175,99 +163,11 @@ def build_run_scoped_config_payload(
         _enable_benchmark_workdir_guard(payload, agent_policies={judge.agent_id: judge_policy})
         return payload
 
-    if group.runner == "single_llm":
-        agent_id = spec.resolve_single_agent_id(single_agent_id_override)
-        if not agent_id:
-            raise RuntimeConfigError(f"Experiment group `{group.id}` missing single-agent id in experiment spec.")
-        workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=agent_id)
-        agent_dir = context.agents_root / agent_id / "agent"
-        ensure_basic_agent_dirs(agent_dir)
-        runner_agents.append(
-            ProvisionedAgent(
-                agent_id=agent_id,
-                workspace=workspace,
-                agent_dir=agent_dir,
-            )
-        )
-        single_spec = ExperimentSpec(
-            id=spec.id,
-            label=spec.label,
-            runner_kind=spec.runner_kind,
-            websearch_enabled=spec.websearch_enabled,
-            skills_enabled=spec.skills_enabled,
-            single_agent_id=agent_id,
-            slot_set=spec.slot_set,
-            skill_allowlist=spec.skill_allowlist,
-        )
-        payload = _render_run_config_or_raise(
-            base_payload=base_payload,
-            spec=single_spec,
-            provisioned=ProvisionedExperiment(judge=judge, runner_agents=tuple(runner_agents)),
-            judge_model=judge_model,
-            runner_model=single_agent_model,
-        )
-        skill_scopes = (
-            context.benchmark_skills_root,
-            context.benchmark_skills_root.parent / "scripts" / "run_skill.py",
-        ) if single_spec.skills_enabled else ()
-        if single_spec.skills_enabled:
-            _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
-        policies = {
-            runner.agent_id: build_workspace_access_policy(
-                active_workspace=runner.workspace,
-                role="single_llm",
-                skills_enabled=single_spec.skills_enabled,
-                protected_roots=workspace_manager.protected_roots,
-                skill_read_scopes=skill_scopes,
-            )
-            for runner in runner_agents
-        }
-        _enable_benchmark_workdir_guard(payload, agent_policies=policies)
-        return payload
-
-    slot_set = spec.slot_set or context.chemqa_slot_sets[group.id]
-    slot_map = actual_slot_ids(slot_set)
-    for actual_slot_id in slot_map.values():
-        workspace = workspace_manager.active_workspace_path(group_id=group.id, agent_id=actual_slot_id)
-        agent_dir = context.agents_root / actual_slot_id / "agent"
-        ensure_basic_agent_dirs(agent_dir)
-        runner_agents.append(
-            ProvisionedAgent(
-                agent_id=actual_slot_id,
-                workspace=workspace,
-                agent_dir=agent_dir,
-            )
-        )
-    chemqa_spec = ExperimentSpec(
-        id=spec.id,
-        label=spec.label,
-        runner_kind=spec.runner_kind,
-        websearch_enabled=spec.websearch_enabled,
-        skills_enabled=spec.skills_enabled,
-        slot_set=slot_set,
-        skill_allowlist=spec.skill_allowlist,
+    return context.runner_config_builder(
+        base_payload=base_payload, context=context, group=group, spec=spec, judge=judge,
+        single_agent_model=single_agent_model, judge_model=judge_model,
+        workspace_manager=workspace_manager, single_agent_id_override=single_agent_id_override,
     )
-    payload = _render_run_config_or_raise(
-        base_payload=base_payload,
-        spec=chemqa_spec,
-        provisioned=ProvisionedExperiment(judge=judge, runner_agents=tuple(runner_agents)),
-        judge_model=judge_model,
-        runner_model=single_agent_model,
-    )
-    if chemqa_spec.skills_enabled:
-        _ensure_benchmark_skills_extra_dir(payload, context.benchmark_skills_root)
-    policies = {
-        runner.agent_id: build_workspace_access_policy(
-            active_workspace=runner.workspace,
-            role="chemqa",
-            skills_enabled=chemqa_spec.skills_enabled,
-            protected_roots=workspace_manager.protected_roots,
-            skill_read_scopes=(context.benchmark_skills_root,) if chemqa_spec.skills_enabled else (),
-        )
-        for runner in runner_agents
-    }
-    _enable_benchmark_workdir_guard(payload, agent_policies=policies)
-    return payload
 
 
 class ConfigPool:
@@ -297,8 +197,8 @@ class ConfigPool:
         self._config_dir.mkdir(parents=True, exist_ok=True)
         self._group_paths: dict[str, Path] = {}
         self._judge_path: Path | None = None
-        discovered_single = self._discover_agent_model("debate-1") or "openai/gpt-5.5"
-        discovered_judge = self._discover_agent_model("debate-coordinator") or "openai/gpt-5.5"
+        discovered_single = self._discover_agent_model("benchmark-single-skills-off") or "openai/gpt-5.5"
+        discovered_judge = self._discover_agent_model(context.judge_agent_id) or "openai/gpt-5.5"
         self._single_agent_model = str(single_agent_model or discovered_single).strip() or discovered_single
         self._judge_model = str(judge_model or discovered_judge).strip() or discovered_judge
         self._single_agent_id_override = single_agent_id_override

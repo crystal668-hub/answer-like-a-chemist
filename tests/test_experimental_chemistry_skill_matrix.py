@@ -232,7 +232,7 @@ def test_top_level_skill_tree_is_grouped_not_full_skill_docs() -> None:
 
 def test_single_agent_skills_on_prompt_exposes_neutral_skill_tree() -> None:
     from benchmarking.core.datasets import BenchmarkRecord
-    from benchmarking.workflow.prompts import build_single_llm_prompt
+    from benchmarking.service.single.prompts import build_single_llm_prompt
 
     record = BenchmarkRecord(
         record_id="route-cif",
@@ -300,7 +300,7 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
 
 def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
     from benchmarking.core.datasets import BenchmarkRecord
-    from benchmarking.workflow.prompts import build_single_llm_prompt
+    from benchmarking.service.single.prompts import build_single_llm_prompt
 
     record = BenchmarkRecord(
         record_id="skills-off",

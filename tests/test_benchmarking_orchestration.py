@@ -1,4 +1,5 @@
 from __future__ import annotations
+from benchmarking.service.single.orchestration import runner_options as single_runner_options
 
 import tempfile
 import unittest
@@ -53,13 +54,29 @@ class OrchestrationTests(unittest.TestCase):
                 return Runner()
             def run(index):
                 return run_group(
-                    group=Group(), records=[BenchmarkRecord(record_id=str(index), dataset="demo", source_file="demo", prompt="Q", reference_answer="A", eval_kind="demo")],
-                    output_root=root, single_timeout=10, chemqa_timeout=10, judge=None, config_path=config, single_agent="agent", chemqa_root=root, chemqa_model_profile="unused", review_rounds=None, rebuttal_rounds=None,
-                    chemqa_slot_sets={}, experiment_specs={Group().id: SimpleNamespace(skill_allowlist=())}, build_runner_fn=build,
-                    evaluate_answer_fn=lambda *a, **k: EvaluationResult(eval_kind="demo", score=1, max_score=1, normalized_score=1, passed=True, primary_metric="score", primary_metric_direction="higher_is_better", details={}),
-                    build_error_group_record_result_fn=lambda **kw: self.fail(str(kw)), classify_subset_fn=lambda r: "demo", save_json_fn=lambda p,d: p.write_text(json.dumps(d)), slugify_fn=str,
-                    single_agent_thinking="off", workspace_manager=manager, manage_group_lifecycle=False,
-                )
+        group=Group(),
+        records=[BenchmarkRecord(record_id=str(index), dataset="demo", source_file="demo", prompt="Q", reference_answer="A", eval_kind="demo")],
+        output_root=root,
+        judge=None,
+        build_runner_fn=build,
+        evaluate_answer_fn=lambda *a, **k: EvaluationResult(eval_kind="demo", score=1, max_score=1, normalized_score=1, passed=True, primary_metric="score", primary_metric_direction="higher_is_better", details={}),
+        build_error_group_record_result_fn=lambda **kw: self.fail(str(kw)),
+        classify_subset_fn=lambda r: "demo",
+        save_json_fn=lambda p,d: p.write_text(json.dumps(d)),
+        slugify_fn=str,
+        manage_group_lifecycle=False,
+        runner_options_factory=lambda: single_runner_options(
+            group=Group(),
+            output_root=root,
+            single_timeout=10,
+            config_path=config,
+            single_agent="agent",
+            experiment_specs={Group().id: SimpleNamespace(skill_allowlist=())},
+            single_agent_thinking="off",
+            workspace_manager=manager,
+            manage_group_lifecycle=False,
+        ),
+    )
             (root / "per-record" / Group().id).mkdir(parents=True)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [executor.submit(run, index) for index in range(2)]
@@ -137,20 +154,23 @@ class OrchestrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             saved: list[Path] = []
             results = run_group(
-                group=group,
-                records=[record],
-                output_root=Path(tmpdir),
-                single_timeout=10,
-                chemqa_timeout=10,
-                judge=object(),
-                config_path=Path(tmpdir) / "cfg.json",
-                single_agent="agent-1",
-                chemqa_root=Path(tmpdir),
-                chemqa_model_profile="unused",
-                review_rounds=None,
-                rebuttal_rounds=None,
-                chemqa_slot_sets={},
-                experiment_specs={
+        group=group,
+        records=[record],
+        output_root=Path(tmpdir),
+        judge=object(),
+        build_runner_fn=build_runner_fn,
+        evaluate_answer_fn=evaluate_answer_fn,
+        build_error_group_record_result_fn=build_error_entry,
+        classify_subset_fn=lambda _record: "chembench",
+        save_json_fn=lambda path, payload: (saved.append(path), path.parent.mkdir(parents=True, exist_ok=True), path.write_text(str(payload), encoding="utf-8")),
+        slugify_fn=lambda value, **_kwargs: str(value),
+        runner_options_factory=lambda: single_runner_options(
+            group=group,
+            output_root=Path(tmpdir),
+            single_timeout=10,
+            config_path=Path(tmpdir) / "cfg.json",
+            single_agent="agent-1",
+            experiment_specs={
                     group.id: ExperimentSpec(
                         id=group.id,
                         label=group.label,
@@ -160,14 +180,9 @@ class OrchestrationTests(unittest.TestCase):
                         single_agent_id="agent-1",
                     )
                 },
-                build_runner_fn=build_runner_fn,
-                evaluate_answer_fn=evaluate_answer_fn,
-                build_error_group_record_result_fn=build_error_entry,
-                classify_subset_fn=lambda _record: "chembench",
-                save_json_fn=lambda path, payload: (saved.append(path), path.parent.mkdir(parents=True, exist_ok=True), path.write_text(str(payload), encoding="utf-8")),
-                slugify_fn=lambda value, **_kwargs: str(value),
-                single_agent_thinking="minimal",
-            )
+            single_agent_thinking="minimal",
+        ),
+    )
 
         self.assertEqual(1, len(results))
         entry = results[0]
@@ -221,31 +236,12 @@ class OrchestrationTests(unittest.TestCase):
             output_root = Path(tmpdir)
             progress_writer = ProgressWriter(output_root, total_records=1, groups=[group.id])
             run_group(
-                group=group,
-                records=[record],
-                output_root=output_root,
-                single_timeout=10,
-                chemqa_timeout=10,
-                judge=object(),
-                config_path=output_root / "cfg.json",
-                single_agent="agent-1",
-                chemqa_root=output_root,
-                chemqa_model_profile="unused",
-                review_rounds=None,
-                rebuttal_rounds=None,
-                chemqa_slot_sets={},
-                experiment_specs={
-                    group.id: ExperimentSpec(
-                        id=group.id,
-                        label=group.label,
-                        runner_kind=group.runner,
-                        websearch_enabled=group.websearch,
-                        skills_enabled=group.skills_enabled,
-                        single_agent_id="agent-1",
-                    )
-                },
-                build_runner_fn=lambda **_kwargs: StubRunner(),
-                evaluate_answer_fn=lambda *_args, **_kwargs: EvaluationResult(
+        group=group,
+        records=[record],
+        output_root=output_root,
+        judge=object(),
+        build_runner_fn=lambda **_kwargs: StubRunner(),
+        evaluate_answer_fn=lambda *_args, **_kwargs: EvaluationResult(
                     eval_kind="chembench_open_ended",
                     score=1.0,
                     max_score=1.0,
@@ -255,16 +251,33 @@ class OrchestrationTests(unittest.TestCase):
                     primary_metric_direction="higher_is_better",
                     details={},
                 ),
-                build_error_group_record_result_fn=build_error_entry,
-                classify_subset_fn=lambda _record: "chembench",
-                save_json_fn=lambda path, payload: (
+        build_error_group_record_result_fn=build_error_entry,
+        classify_subset_fn=lambda _record: "chembench",
+        save_json_fn=lambda path, payload: (
                     path.parent.mkdir(parents=True, exist_ok=True),
                     path.write_text(str(payload), encoding="utf-8"),
                 ),
-                slugify_fn=lambda value, **_kwargs: str(value),
-                single_agent_thinking="minimal",
-                progress_writer=progress_writer,
-            )
+        slugify_fn=lambda value, **_kwargs: str(value),
+        progress_writer=progress_writer,
+        runner_options_factory=lambda: single_runner_options(
+            group=group,
+            output_root=output_root,
+            single_timeout=10,
+            config_path=output_root / "cfg.json",
+            single_agent="agent-1",
+            experiment_specs={
+                    group.id: ExperimentSpec(
+                        id=group.id,
+                        label=group.label,
+                        runner_kind=group.runner,
+                        websearch_enabled=group.websearch,
+                        skills_enabled=group.skills_enabled,
+                        single_agent_id="agent-1",
+                    )
+                },
+            single_agent_thinking="minimal",
+        ),
+    )
             events = (output_root / "progress" / "events.jsonl").read_text(encoding="utf-8")
 
         self.assertIn('"type": "group_started"', events)
@@ -305,20 +318,27 @@ class OrchestrationTests(unittest.TestCase):
             output_root = Path(tmpdir)
             progress_writer = ProgressWriter(output_root, total_records=1, groups=[group.id])
             run_group(
-                group=group,
-                records=[record],
-                output_root=output_root,
-                single_timeout=10,
-                chemqa_timeout=10,
-                judge=object(),
-                config_path=output_root / "cfg.json",
-                single_agent="agent-1",
-                chemqa_root=output_root,
-                chemqa_model_profile="unused",
-                review_rounds=None,
-                rebuttal_rounds=None,
-                chemqa_slot_sets={},
-                experiment_specs={
+        group=group,
+        records=[record],
+        output_root=output_root,
+        judge=object(),
+        build_runner_fn=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+        evaluate_answer_fn=lambda *_args, **_kwargs: None,
+        build_error_group_record_result_fn=build_error_entry,
+        classify_subset_fn=lambda _record: "chembench",
+        save_json_fn=lambda path, payload: (
+                    path.parent.mkdir(parents=True, exist_ok=True),
+                    path.write_text(str(payload), encoding="utf-8"),
+                ),
+        slugify_fn=lambda value, **_kwargs: str(value),
+        progress_writer=progress_writer,
+        runner_options_factory=lambda: single_runner_options(
+            group=group,
+            output_root=output_root,
+            single_timeout=10,
+            config_path=output_root / "cfg.json",
+            single_agent="agent-1",
+            experiment_specs={
                     group.id: ExperimentSpec(
                         id=group.id,
                         label=group.label,
@@ -328,18 +348,9 @@ class OrchestrationTests(unittest.TestCase):
                         single_agent_id="agent-1",
                     )
                 },
-                build_runner_fn=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
-                evaluate_answer_fn=lambda *_args, **_kwargs: None,
-                build_error_group_record_result_fn=build_error_entry,
-                classify_subset_fn=lambda _record: "chembench",
-                save_json_fn=lambda path, payload: (
-                    path.parent.mkdir(parents=True, exist_ok=True),
-                    path.write_text(str(payload), encoding="utf-8"),
-                ),
-                slugify_fn=lambda value, **_kwargs: str(value),
-                single_agent_thinking="minimal",
-                progress_writer=progress_writer,
-            )
+            single_agent_thinking="minimal",
+        ),
+    )
             state = (output_root / "progress" / "state.json").read_text(encoding="utf-8")
 
         self.assertIn('"status": "failed"', state)
@@ -400,20 +411,26 @@ class OrchestrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             results = run_group(
-                group=group,
-                records=[record],
-                output_root=Path(tmpdir),
-                single_timeout=10,
-                chemqa_timeout=10,
-                judge=object(),
-                config_path=Path(tmpdir) / "cfg.json",
-                single_agent="agent-1",
-                chemqa_root=Path(tmpdir),
-                chemqa_model_profile="unused",
-                review_rounds=None,
-                rebuttal_rounds=None,
-                chemqa_slot_sets={},
-                experiment_specs={
+        group=group,
+        records=[record],
+        output_root=Path(tmpdir),
+        judge=object(),
+        build_runner_fn=build_runner_fn,
+        evaluate_answer_fn=evaluate_answer_fn,
+        build_error_group_record_result_fn=build_error_entry,
+        classify_subset_fn=lambda _record: "superchem",
+        save_json_fn=lambda path, payload: (
+                    path.parent.mkdir(parents=True, exist_ok=True),
+                    path.write_text(str(payload), encoding="utf-8"),
+                ),
+        slugify_fn=lambda value, **_kwargs: str(value),
+        runner_options_factory=lambda: single_runner_options(
+            group=group,
+            output_root=Path(tmpdir),
+            single_timeout=10,
+            config_path=Path(tmpdir) / "cfg.json",
+            single_agent="agent-1",
+            experiment_specs={
                     group.id: ExperimentSpec(
                         id=group.id,
                         label=group.label,
@@ -423,17 +440,9 @@ class OrchestrationTests(unittest.TestCase):
                         single_agent_id="agent-1",
                     )
                 },
-                build_runner_fn=build_runner_fn,
-                evaluate_answer_fn=evaluate_answer_fn,
-                build_error_group_record_result_fn=build_error_entry,
-                classify_subset_fn=lambda _record: "superchem",
-                save_json_fn=lambda path, payload: (
-                    path.parent.mkdir(parents=True, exist_ok=True),
-                    path.write_text(str(payload), encoding="utf-8"),
-                ),
-                slugify_fn=lambda value, **_kwargs: str(value),
-                single_agent_thinking="minimal",
-            )
+            single_agent_thinking="minimal",
+        ),
+    )
 
         self.assertEqual(1, len(results))
         entry = results[0]

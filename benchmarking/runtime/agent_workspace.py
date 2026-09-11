@@ -1668,9 +1668,4 @@ def default_workspace_templates(project_root: Path) -> dict[str, WorkspaceTempla
             agents_base=base_contract,
             agents_overlay=resource_root / "judge" / "AGENTS.overlay.md",
         ),
-        "chemqa-role-v1": WorkspaceTemplate(
-            template_id="chemqa-role-v1",
-            agents_base=base_contract,
-            agents_overlay=resource_root / "chemqa-role" / "AGENTS.overlay.md",
-        ),
     }

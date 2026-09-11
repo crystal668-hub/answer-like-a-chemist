@@ -22,7 +22,6 @@ if str(_SOURCE_ROOT) not in sys.path:
 
 from benchmarking.analysis.launcher import launch_automated_evaluation
 from benchmarking.core.answer_processing import normalize_answer_tracks
-from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.datasets import BenchmarkRecord as _BenchmarkRecord
 from benchmarking.core.datasets import classify_subset
 from benchmarking.core.reporting import (
@@ -49,7 +48,6 @@ from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
-    default_workspace_templates,
 )
 from benchmarking.runtime.cancellation import (
     CancellationReason,
@@ -81,7 +79,6 @@ from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.workflow.errors import BenchmarkError as _BenchmarkError
 
 DEFAULT_BENCHMARK_ROOT = runtime_paths.benchmarks_root
-DEFAULT_CHEMQA_ROOT = runtime_paths.skills_root / "chemqa-review"
 DEFAULT_OPENCLAW_CONFIG = runtime_paths.openclaw_config
 DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
 
@@ -116,10 +113,11 @@ def restore_signal_handlers(previous_handlers: dict[signal.Signals, Any]) -> Non
 
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run three-group skills benchmark experiments.")
+def parse_args(service=None) -> argparse.Namespace:
+    if service is None:
+        from benchmarking.service.single import execution as service
+    parser = argparse.ArgumentParser(description=f"Run {service.NAME} benchmark experiments ({service.STATUS}).")
     parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="formal-benchmarks/ 根目录")
-    parser.add_argument("--chemqa-root", default=str(DEFAULT_CHEMQA_ROOT), help="chemqa-review skill 根目录")
     parser.add_argument("--openclaw-config", default=str(DEFAULT_OPENCLAW_CONFIG), help="基础 OpenClaw 配置文件")
     parser.add_argument(
         "--output-dir",
@@ -137,8 +135,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--groups",
-        default=",".join(experiments.EXPERIMENT_GROUPS.keys()),
-        help="要运行的实验组，逗号分隔。默认三组全跑",
+        default=",".join(service.experiments.EXPERIMENT_GROUPS),
+        help="要运行的实验组，逗号分隔。默认运行当前业务的实验组",
     )
     parser.add_argument(
         "--datasets",
@@ -191,11 +189,6 @@ def parse_args() -> argparse.Namespace:
         choices=experiments.THINKING_LEVEL_CHOICES,
         help="单一 LLM baseline OpenClaw thinking level，默认 high",
     )
-    parser.add_argument(
-        "--chemqa-model-profile",
-        default=experiments.DEFAULT_CHEMQA_MODEL_PROFILE,
-        help="ChemQA fixed-lane review 所用 model profile，默认使用当前 benchmark 固定 profile",
-    )
     parser.add_argument("--judge-agent", default=experiments.DEFAULT_JUDGE_AGENT, help="rubric / 语义评测所用 judge agent id")
     parser.add_argument(
         "--judge-model",
@@ -230,46 +223,20 @@ def parse_args() -> argparse.Namespace:
         default="5,15,45",
         help="单一 LLM timeout 重试前等待秒数，逗号分隔，默认 5,15,45",
     )
-    parser.add_argument("--chemqa-timeout", type=int, default=1800, help="ChemQA fixed-lane review 每题超时秒数")
     parser.add_argument("--judge-timeout", type=int, default=300, help="Judge 每次评测超时秒数")
-    parser.add_argument(
-        "--max-unchanged-status-polls",
-        type=int,
-        default=2,
-        help="ChemQA convergence limit for unchanged status polls",
-    )
-    parser.add_argument(
-        "--max-recovery-attempts",
-        type=int,
-        default=2,
-        help="ChemQA convergence limit for recovery attempts",
-    )
-    parser.add_argument(
-        "--max-concurrent-groups",
-        type=int,
-        default=2,
-        help="Maximum concurrent ChemQA groups per wave (default: 2)",
-    )
-    parser.add_argument(
-        "--inter-wave-delay-seconds",
-        type=int,
-        default=10,
-        help="相邻波次之间的等待秒数，默认 10，用于给系统释放资源的窗口",
-    )
     parser.add_argument("--execution-backend", choices=("host", "docker"), default="docker", help="single-LLM execution backend")
     parser.add_argument("--container-image", default="openclaw-benchmark-single-llm:latest", help="Docker image for single-LLM attempts")
     parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
     parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")
     parser.add_argument("--container-pids-limit", type=int, help="PID limit per single-LLM container")
     parser.add_argument("--max-concurrent-attempts", type=int, default=2, help="Maximum admitted single-LLM attempts (default: 2)")
-    parser.add_argument("--review-rounds", type=int, help="ChemQA review rounds 覆盖值")
-    parser.add_argument("--rebuttal-rounds", type=int, help="ChemQA rebuttal rounds 覆盖值")
     parser.add_argument("--list-datasets", action="store_true", help="列出可发现的数据集文件后退出")
     parser.add_argument(
         "--print-selected-records",
         action="store_true",
         help="打印本次实际选中的题目清单后退出",
     )
+    service.add_arguments(parser)
     args = parser.parse_args()
     if args.max_concurrent_attempts < 1:
         parser.error("--max-concurrent-attempts must be positive")
@@ -334,13 +301,15 @@ def run_benchmark_web_search_preflight(
     group_ids: list[str],
     config_pool: runtime_config_pool.ConfigPool,
     args: argparse.Namespace,
+    catalog=experiments,
+    wrapper_path: Path | None = None,
 ) -> dict[str, Any]:
     reports: dict[str, Any] = {}
     for group_id in group_ids:
-        group = experiments.EXPERIMENT_GROUPS[group_id]
+        group = catalog.EXPERIMENT_GROUPS[group_id]
         if not group.websearch:
             continue
-        spec = experiments.EXPERIMENT_SPECS.get(group_id)
+        spec = catalog.EXPERIMENT_SPECS.get(group_id)
         agent_id = (
             spec.resolve_single_agent_id(args.single_agent_id_override)
             if spec is not None and group.runner == "single_llm"
@@ -386,7 +355,11 @@ def run_benchmark_web_search_preflight(
                 "BENCHMARK_SKILL_RUNNER": str(runtime_paths.project_root / "scripts" / "run_skill.py"),
             }
         )
+        if wrapper_path is None:
+            from benchmarking.service.single import openclaw_wrapper
+            wrapper_path = Path(openclaw_wrapper.__file__)
         report = run_web_search_preflight(
+            wrapper_path=wrapper_path,
             agent_id=effective_agent_id,
             config_path=config_path,
             current_python_path=subprocess_utils.current_python(),
@@ -439,29 +412,19 @@ def run_benchmark_web_search_preflight(
 
 
 
-def main() -> int:
-    args = parse_args()
+def main(service=None) -> int:
+    args = parse_args() if service is None else parse_args(service)
+    if service is None:
+        from benchmarking.service.single import execution as service
+    catalog = service.experiments
     single_timeout_retries = max(0, int(getattr(args, "single_timeout_retries", 3)))
     single_timeout_retry_backoff_seconds = parse_retry_backoff_seconds(
         str(getattr(args, "single_timeout_retry_backoff_seconds", "5,15,45")),
         max_retries=single_timeout_retries,
     )
     timeout_mode = "no_timeout" if bool(getattr(args, "no_timeout", False)) else "bounded"
-    single_convergence_policy = ConvergencePolicy(
-        timeout_seconds=args.single_timeout,
-        max_unchanged_status_polls=args.max_unchanged_status_polls,
-        max_recovery_attempts=args.max_recovery_attempts,
-    )
-    chemqa_convergence_policy = ConvergencePolicy(
-        timeout_seconds=args.chemqa_timeout,
-        max_unchanged_status_polls=args.max_unchanged_status_polls,
-        max_recovery_attempts=args.max_recovery_attempts,
-    )
-    convergence_policy_meta = {
-        "single_llm": single_convergence_policy.to_meta(),
-        "chemqa": chemqa_convergence_policy.to_meta(),
-    }
-    group_ids = experiments.select_group_ids(args.groups)
+    convergence_policy_meta = service.convergence_metadata(args)
+    group_ids = experiments.select_group_ids(args.groups, groups=catalog.EXPERIMENT_GROUPS)
     dataset_files = dataset_selection.select_dataset_files(args)
     if args.list_datasets:
         dataset_selection.print_dataset_listing(dataset_files)
@@ -536,7 +499,7 @@ def main() -> int:
         output_root=output_root,
         run_id=run_id,
         invocation_id=invocation_id,
-        templates=default_workspace_templates(runtime_paths.project_root),
+        templates=service.workspace_templates(runtime_paths.project_root),
         protected_roots=runtime_config.build_production_protected_roots(
             runtime_root=runtime_paths.benchmark_runtime_root / "runs",
             output_root=output_root,
@@ -544,7 +507,7 @@ def main() -> int:
     )
     docker_startup = {}
     if getattr(args, "execution_backend", "docker") == "docker" and any(
-        experiments.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in group_ids
+        catalog.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in group_ids
     ):
         runtime = DockerContainerRuntime()
         try:
@@ -584,12 +547,12 @@ def main() -> int:
 
     skill_routing_inventory = benchmark_skill_routing_inventory()
     run_state.save_json(output_root / "skill-routing-inventory.json", skill_routing_inventory)
-    effective_experiment_specs = experiments.EXPERIMENT_SPECS
+    effective_experiment_specs = catalog.EXPERIMENT_SPECS
 
     config_pool = runtime_config_pool.ConfigPool(
         base_config_path=Path(args.openclaw_config).expanduser().resolve(),
         output_root=output_root,
-        context=runtime_config.runtime_config_context(experiment_specs=effective_experiment_specs),
+        context=runtime_config.runtime_config_context(experiment_specs=effective_experiment_specs, runner_config_builder=service.build_runner_config),
         run_id=run_id,
         invocation_id=invocation_id,
         workspace_manager=workspace_manager,
@@ -601,6 +564,7 @@ def main() -> int:
         group_ids=[group_id for group_id in group_ids if pending_records_by_group[group_id]],
         config_pool=config_pool,
         args=args,
+        catalog=catalog,
     )
     run_state.save_json(output_root / "web-search-preflight.json", web_search_preflight)
     judge = judge_runtime.JudgeClient(
@@ -612,9 +576,7 @@ def main() -> int:
         cancellation_token=cancellation_token,
         process_registry=process_registry,
     )
-    single_groups = [key for key in group_ids if experiments.EXPERIMENT_GROUPS[key].runner == "single_llm"]
-    other_groups = [key for key in group_ids if key not in single_groups]
-    group_waves = ([single_groups] if single_groups else []) + build_group_waves(other_groups, max_concurrent_groups=args.max_concurrent_groups)
+    group_waves = service.group_waves(group_ids, args)
     progress_writer = ProgressWriter(
         output_root,
         total_records=sum(len(group_records) for group_records in pending_records_by_group.values()),
@@ -641,16 +603,12 @@ def main() -> int:
     )
     execute_group = partial(
         _orchestration.run_group,
-        chemqa_slot_sets=experiments.CHEMQA_SLOT_SETS,
         build_runner_fn=runner_adapters.build_runner,
         evaluate_answer_fn=evaluate_invocation_record,
         build_error_group_record_result_fn=build_error_result,
         classify_subset_fn=classify_subset,
         save_json_fn=run_state.save_json,
         slugify_fn=run_state.slugify,
-        pypi_cutoff=pypi_cutoff,
-        vgb_skill_allowlist=tuple(experiments.BENCHMARK_SKILLS_ALLOWLIST),
-        admission_controller=admission_controller,
     )
 
     group_results: dict[str, list[_GroupRecordResult]] = {}
@@ -669,7 +627,7 @@ def main() -> int:
                 inter_wave_delay_seconds=args.inter_wave_delay_seconds,
             )
             attempt_limit = getattr(args, "max_concurrent_attempts", 2)
-            single_queue = all(experiments.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in wave_group_ids)
+            single_queue = service.USES_ATTEMPT_QUEUE
             from benchmarking.workflow.attempt_queue import AttemptQueueExecutor
             with (AttemptQueueExecutor(attempt_limit, cancellation_token) if single_queue else
                   ThreadPoolExecutor(max_workers=max(1, len(wave_group_ids)))) as executor:
@@ -677,7 +635,7 @@ def main() -> int:
                 for group_id in wave_group_ids:
                     if cancellation_token.is_cancelled:
                         break
-                    group = experiments.EXPERIMENT_GROUPS[group_id]
+                    group = catalog.EXPERIMENT_GROUPS[group_id]
                     group_records = pending_records_by_group[group_id]
                     if not group_records:
                         group_results[group_id] = []
@@ -717,37 +675,21 @@ def main() -> int:
                     )
                     for records_batch in batches:
                         future = executor.submit(
-                        execute_group,
-                        group=group,
-                        records=records_batch,
-                        output_root=output_root,
-                        single_timeout=args.single_timeout,
-                        chemqa_timeout=args.chemqa_timeout,
-                        judge=judge,
-                        config_path=config_path,
-                        single_agent=single_agent,
-                        chemqa_root=Path(args.chemqa_root).expanduser().resolve(),
-                        chemqa_model_profile=args.chemqa_model_profile,
-                        review_rounds=args.review_rounds,
-                        rebuttal_rounds=args.rebuttal_rounds,
-                        single_convergence_policy=single_convergence_policy,
-                        chemqa_convergence_policy=chemqa_convergence_policy,
-                        single_timeout_retries=single_timeout_retries,
-                        single_timeout_retry_backoff_seconds=single_timeout_retry_backoff_seconds,
-                        single_agent_thinking=args.single_agent_thinking,
-                        no_timeout=bool(getattr(args, "no_timeout", False)),
-                        workspace_manager=workspace_manager,
-                        experiment_specs=effective_experiment_specs,
-                        progress_writer=progress_writer,
-                        cancellation_token=cancellation_token,
-                        process_registry=process_registry,
-                        admission_controller=admission_controller,
-                        manage_group_lifecycle=not single_queue,
-                        execution_backend=getattr(args, "execution_backend", "docker"),
-                        container_image=getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
-                        container_cpus=getattr(args, "container_cpus", None),
-                        container_memory_bytes=getattr(args, "container_memory_bytes", None),
-                        container_pids_limit=getattr(args, "container_pids_limit", None),
+                            execute_group,
+                            group=group,
+                            records=records_batch,
+                            output_root=output_root,
+                            judge=judge,
+                            progress_writer=progress_writer,
+                            cancellation_token=cancellation_token,
+                            manage_group_lifecycle=not single_queue,
+                            runner_options_factory=partial(service.make_runner_options,
+                                args=args, group=group, output_root=output_root,
+                                config_path=config_path, single_agent=single_agent,
+                                workspace_manager=workspace_manager, cancellation_token=cancellation_token,
+                                process_registry=process_registry, pypi_cutoff=pypi_cutoff,
+                                admission_controller=admission_controller,
+                            ),
                         )
                         future_map[future] = (group_id, records_batch)
 
@@ -756,7 +698,7 @@ def main() -> int:
                     try:
                         group_results.setdefault(group_id, []).extend(future.result())
                     except Exception as exc:
-                        group = experiments.EXPERIMENT_GROUPS[group_id]
+                        group = catalog.EXPERIMENT_GROUPS[group_id]
                         error_message = f"Group `{group_id}` failed before returning results: {exc}"
                         failure_results = materialize_failure_results(
                             group=group,
@@ -775,7 +717,7 @@ def main() -> int:
             completed_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if single_queue:
                 for group_id in wave_group_ids:
-                    if experiments.EXPERIMENT_GROUPS[group_id].websearch and dict((web_search_preflight.get("reports") or {}).get(group_id) or {}).get("available") is not True:
+                    if catalog.EXPERIMENT_GROUPS[group_id].websearch and dict((web_search_preflight.get("reports") or {}).get(group_id) or {}).get("available") is not True:
                         continue
                     if cancellation_token.is_cancelled:
                         progress_writer.group_cancelled(group_id)
@@ -813,7 +755,7 @@ def main() -> int:
                     }
                 )
         try:
-            runner_adapters.run_pending_cleanroom_cleanup()
+            service.cleanup()
         except Exception as exc:
             if not cancellation_token.is_cancelled:
                 raise
@@ -841,7 +783,7 @@ def main() -> int:
             )
         for group_id in group_ids:
             existing = {item.record_id for item in group_results.get(group_id, [])}
-            group = experiments.EXPERIMENT_GROUPS[group_id]
+            group = catalog.EXPERIMENT_GROUPS[group_id]
             for record in pending_records_by_group[group_id]:
                 if record.record_id in existing:
                     continue
@@ -960,8 +902,8 @@ def main() -> int:
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
-        "groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in aggregate_group_ids],
-        "run_groups": [asdict(experiments.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
+        "groups": [run_state.describe_result_group(group_id, results, catalog.EXPERIMENT_GROUPS) for group_id in aggregate_group_ids],
+        "run_groups": [asdict(catalog.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "web_search_preflight": web_search_preflight,
         "convergence_policy": convergence_policy_meta,
         "single_timeout_retry": {
@@ -986,7 +928,7 @@ def main() -> int:
         },
         "records": len(records),
         "execution_plan": {
-            "mode": "single-llm-queue-and-chemqa-waves",
+            "mode": service.SCHEDULING_MODE,
             "attempt_queue": {"unit": "attempt", "group_order": "round_robin", "record_order": "fifo", "scoring_workers": 1},
             "max_concurrent_groups": args.max_concurrent_groups,
             "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
@@ -1015,7 +957,7 @@ def main() -> int:
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
         "execution_plan": {
-            "mode": "single-llm-queue-and-chemqa-waves",
+            "mode": service.SCHEDULING_MODE,
             "attempt_queue": {"unit": "attempt", "group_order": "round_robin", "record_order": "fifo", "scoring_workers": 1},
             "max_concurrent_groups": args.max_concurrent_groups,
             "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
@@ -1068,21 +1010,20 @@ def main() -> int:
         },
         "groups": {
             group_id: {
-                "group": asdict(experiments.EXPERIMENT_GROUPS[group_id]),
-                "config_path": str(config_pool.config_for_group(experiments.EXPERIMENT_GROUPS[group_id])),
+                "group": asdict(catalog.EXPERIMENT_GROUPS[group_id]),
+                "config_path": str(config_pool.config_for_group(catalog.EXPERIMENT_GROUPS[group_id])),
                 "effective_skill_allowlist": list(effective_experiment_specs[group_id].skill_allowlist or ()),
-                "slot_set": experiments.CHEMQA_SLOT_SETS.get(group_id),
+                **service.group_metadata(group_id, args),
                 "single_agent": (
                     effective_experiment_specs[group_id].resolve_single_agent_id(args.single_agent_id_override)
-                    if group_id in effective_experiment_specs and experiments.EXPERIMENT_GROUPS[group_id].runner == "single_llm"
+                    if group_id in effective_experiment_specs and catalog.EXPERIMENT_GROUPS[group_id].runner == "single_llm"
                     else None
                 ),
                 "single_agent_model": args.single_agent_model,
                 "single_agent_thinking": (
-                    args.single_agent_thinking if experiments.EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None
+                    args.single_agent_thinking if catalog.EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None
                 ),
-                "no_timeout": bool(getattr(args, "no_timeout", False)) if experiments.EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None,
-                "chemqa_model_profile": args.chemqa_model_profile if experiments.EXPERIMENT_GROUPS[group_id].runner == "chemqa" else None,
+                "no_timeout": bool(getattr(args, "no_timeout", False)) if catalog.EXPERIMENT_GROUPS[group_id].runner == "single_llm" else None,
                 "selected_record_count": len(records),
                 "pending_record_count": len(pending_records_by_group[group_id]),
                 "skipped_existing_record_count": len(records) - len(pending_records_by_group[group_id]),

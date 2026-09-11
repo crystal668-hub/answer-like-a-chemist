@@ -120,6 +120,7 @@ def test_run_web_search_preflight_passes_proxy_env_and_reads_transcript(tmp_path
         )
 
     report = run_web_search_preflight(
+        wrapper_path=Path("/test/openclaw_wrapper.py"),
         agent_id="benchmark-single-skills-on",
         config_path=tmp_path / "openclaw.json",
         current_python_path="/venv/bin/python",
@@ -198,6 +199,7 @@ def test_run_web_search_preflight_retries_transient_fetch_failure(tmp_path: Path
         )
 
     report = run_web_search_preflight(
+        wrapper_path=Path("/test/openclaw_wrapper.py"),
         agent_id="benchmark-single-skills-on",
         config_path=tmp_path / "openclaw.json",
         current_python_path="/venv/bin/python",
@@ -268,6 +270,7 @@ def test_run_web_search_preflight_uses_exponential_backoff_for_three_failures(tm
         )
 
     report = run_web_search_preflight(
+        wrapper_path=Path("/test/openclaw_wrapper.py"),
         agent_id="benchmark-single-skills-on",
         config_path=tmp_path / "openclaw.json",
         current_python_path="/venv/bin/python",
@@ -327,6 +330,7 @@ def test_run_web_search_preflight_does_not_sleep_after_first_success(tmp_path: P
         )
 
     report = run_web_search_preflight(
+        wrapper_path=Path("/test/openclaw_wrapper.py"),
         agent_id="benchmark-single-skills-on",
         config_path=tmp_path / "openclaw.json",
         current_python_path="/venv/bin/python",

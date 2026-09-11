@@ -1,4 +1,11 @@
 from __future__ import annotations
+from benchmarking.service.chemdebate.convergence import ChemQAConvergencePolicy
+from benchmarking.service.chemdebate import experiments as legacy_experiments
+from benchmarking.service.chemdebate import execution as legacy_execution
+from benchmarking.service.single.orchestration import runner_options as single_runner_options
+from benchmarking.service.chemdebate.orchestration import runner_options as legacy_runner_options
+from benchmarking.service.chemdebate.config import build_runner_config as legacy_config
+from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
 import base64
 import io
@@ -42,16 +49,14 @@ from benchmarking.core.reporting import (
 from benchmarking.core.reporting import (
     build_error_group_record_result as shared_build_error_group_record_result,
 )
-from benchmarking.core.status import (
-    is_chemqa_terminal_status,
-    normalize_chemqa_run_status,
-)
+from benchmarking.service.chemdebate.status import is_chemqa_terminal_status
+from benchmarking.service.chemdebate.status import normalize_chemqa_run_status
 from benchmarking.runtime import bundles as runtime_bundles
 from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import judge as judge_runtime
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
-from benchmarking.runtime.cleanroom import CleanroomRuntime
+from benchmarking.service.chemdebate.cleanroom import CleanroomRuntime
 from benchmarking.runtime.workspace_policy import ContaminationAudit
 from benchmarking.scoring import registry as scoring_evaluation
 from benchmarking.scoring.evaluators import chembench, frontierscience, superchem
@@ -64,6 +69,7 @@ from benchmarking.skills.tree import (
     load_chemistry_skill_inventory,
 )
 from benchmarking.workflow import cli as benchmark_test
+from benchmarking.service.single import adapter as single_adapter
 from benchmarking.workflow import (
     dataset_selection,
     experiments,
@@ -72,12 +78,12 @@ from benchmarking.workflow import (
     runner_adapters,
     runtime_config,
 )
-from benchmarking.workflow.chemqa_response import (
+from benchmarking.service.chemdebate.response import (
     build_chemqa_full_response,
     build_chemqa_response_from_submission,
 )
 from benchmarking.workflow.errors import BenchmarkError
-from benchmarking.workflow.prompts import build_single_llm_prompt
+from benchmarking.service.single.prompts import build_single_llm_prompt
 
 
 @contextmanager
@@ -125,18 +131,21 @@ def materialize_failure_results_for_test(**kwargs: object) -> list[GroupRecordRe
 
 
 def run_group_for_test(**kwargs: object) -> list[GroupRecordResult]:
-    experiment_specs = kwargs.pop("experiment_specs", experiments.EXPERIMENT_SPECS)
-    kwargs.setdefault("single_agent_thinking", experiments.DEFAULT_SINGLE_AGENT_THINKING)
+    import inspect
+    group = kwargs["group"]
+    builder = legacy_runner_options if group.runner == "chemqa" else single_runner_options
+    options = {key: value for key, value in kwargs.items() if key in inspect.signature(builder).parameters}
+    options.setdefault("experiment_specs", experiments.EXPERIMENT_SPECS)
+    options.setdefault("single_agent_thinking", experiments.DEFAULT_SINGLE_AGENT_THINKING)
+    options = {key: value for key, value in options.items() if key in inspect.signature(builder).parameters}
+    common = {key: value for key, value in kwargs.items() if key in {
+        "group", "records", "output_root", "judge", "progress_writer", "cancellation_token", "manage_group_lifecycle"}}
     return orchestration.run_group(
-        **kwargs,
-        chemqa_slot_sets=experiments.CHEMQA_SLOT_SETS,
-        experiment_specs=experiment_specs,
+        **common, runner_options_factory=lambda: builder(**options),
         build_runner_fn=runner_adapters.build_runner,
         evaluate_answer_fn=scoring_evaluation.evaluate_record,
         build_error_group_record_result_fn=build_error_result_for_test,
-        classify_subset_fn=classify_subset,
-        save_json_fn=run_state.save_json,
-        slugify_fn=run_state.slugify,
+        classify_subset_fn=classify_subset, save_json_fn=run_state.save_json, slugify_fn=run_state.slugify,
     )
 
 
@@ -174,16 +183,16 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         }
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
 
-    def test_default_experiment_groups_are_three_skills_groups(self) -> None:
+    def test_default_experiment_groups_are_active_single_groups(self) -> None:
         self.assertEqual(
-            ["single_llm_skills_on", "single_llm_skills_off", "chemqa_skills_on"],
+            ["single_llm_skills_on", "single_llm_skills_off"],
             list(experiments.EXPERIMENT_GROUPS),
         )
         self.assertTrue(all(not group.websearch for group in experiments.EXPERIMENT_GROUPS.values()))
         self.assertTrue(all(not spec.websearch_enabled for spec in experiments.EXPERIMENT_SPECS.values()))
         self.assertTrue(experiments.EXPERIMENT_GROUPS["single_llm_skills_on"].skills_enabled)
         self.assertFalse(experiments.EXPERIMENT_GROUPS["single_llm_skills_off"].skills_enabled)
-        self.assertTrue(experiments.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
+        self.assertTrue(legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"].skills_enabled)
 
     def test_experiment_specs_expose_complete_configured_inventory(self) -> None:
         for group_id, spec in experiments.EXPERIMENT_SPECS.items():
@@ -217,7 +226,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertNotIn("debateclaw-v1", experiments.BENCHMARK_SKILLS_ALLOWLIST)
 
     def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
-        source = Path("benchmarking/workflow/runners/single_llm.py").read_text(encoding="utf-8")
+        source = Path("benchmarking/service/single/runner.py").read_text(encoding="utf-8")
 
         self.assertNotIn("selected_skills", source)
         self.assertNotIn("config_for_record", source)
@@ -260,7 +269,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "1",
             ],
         ):
-            args = benchmark_test.parse_args()
+            args = benchmark_test.parse_args(legacy_execution)
 
         self.assertFalse(hasattr(args, "finalization_grace_seconds"))
         self.assertEqual(1, args.max_unchanged_status_polls)
@@ -382,8 +391,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                     return path
 
             def fake_run_group(**kwargs):
-                captured["single_agent"] = kwargs["single_agent"]
-                captured["single_policy_timeout"] = str(kwargs["single_convergence_policy"].timeout_seconds)
+                captured["single_agent"] = kwargs["runner_options_factory"].keywords["single_agent"]
+                captured["single_policy_timeout"] = str(kwargs["runner_options_factory"].keywords["args"].single_timeout)
                 return []
 
             argv = [
@@ -927,11 +936,12 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
+        group = legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
             payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
+                context=runtime_config.runtime_config_context(legacy_experiments.EXPERIMENT_SPECS, runner_config_builder=legacy_config),
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
@@ -954,11 +964,12 @@ Points: 0.5, Item: Second criterion
             "tools": {"web": {"search": {"enabled": False}}},
             "plugins": {"entries": {"duckduckgo": {"enabled": False, "config": {}}}},
         }
-        group = experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
+        group = legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"]
         with patched_benchmark_runtime_paths():
             payload = runtime_config.build_run_scoped_config_payload(
                 base,
                 group=group,
+                context=runtime_config.runtime_config_context(legacy_experiments.EXPERIMENT_SPECS, runner_config_builder=legacy_config),
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
@@ -1037,22 +1048,22 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("abandoned", payload["legacy_status"])
 
     def test_chemqa_wait_for_terminal_status_accepts_new_done_state(self) -> None:
-        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
         runner._read_run_status = lambda _run_id: {"status": "done", "terminal_state": "failed", "terminal_reason_code": "stalled"}
-        payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+        payload = chemdebate_adapter.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
 
     def test_chemqa_wait_for_terminal_status_accepts_legacy_terminal_failure(self) -> None:
-        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
         runner._read_run_status = lambda _run_id: normalize_chemqa_run_status({"status": "terminal_failure", "phase": "review"})
-        payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+        payload = chemdebate_adapter.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
         self.assertEqual("done", payload["status"])
         self.assertEqual("failed", payload["terminal_state"])
         self.assertEqual("terminal_failure", payload["legacy_status"])
 
     def test_chemqa_wait_for_terminal_status_timeout_on_half_initialized_runner_raises_benchmark_error(self) -> None:
-        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
         with tempfile.TemporaryDirectory() as tmpdir:
             runner.chemqa_root = Path(tmpdir)
             original_time = time.time
@@ -1062,14 +1073,14 @@ Points: 0.5, Item: Second criterion
                 time.time = lambda: next(times)
                 time.sleep = lambda _seconds: None
                 with self.assertRaises(BenchmarkError):
-                    runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
+                    chemdebate_adapter.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=1)
             finally:
                 time.time = original_time
                 time.sleep = original_sleep
 
     def test_chemqa_wait_for_terminal_status_attempts_recovery_on_stagnant_status(self) -> None:
-        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
-        runner.convergence_policy = ConvergencePolicy(
+        runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
+        runner.convergence_policy = ChemQAConvergencePolicy(
             timeout_seconds=10,
             max_unchanged_status_polls=1,
             max_recovery_attempts=2,
@@ -1090,7 +1101,7 @@ Points: 0.5, Item: Second criterion
         try:
             time.time = lambda: next(times)
             time.sleep = lambda _seconds: None
-            payload = runner_adapters.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=10)
+            payload = chemdebate_adapter.ChemQARunner._wait_for_terminal_status(runner, "demo-run", timeout_seconds=10)
         finally:
             time.time = original_time
             time.sleep = original_sleep
@@ -1130,9 +1141,9 @@ Points: 0.5, Item: Second criterion
                 ),
                 encoding="utf-8",
             )
-            runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+            runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
             runner._candidate_protocol_dirs = lambda _run_id, _run_status: [team_dir]
-            short_text, full_text, meta = runner_adapters.ChemQARunner._build_candidate_submission_fallback(
+            short_text, full_text, meta = chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback(
                 runner,
                 "demo-run",
                 {"status": "stalled", "phase": "review"},
@@ -1143,7 +1154,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(str(proposal_path.resolve()), str(Path(meta["proposal_path"]).resolve()))
 
     def test_candidate_protocol_dirs_include_only_active_managed_coordinator_workspace(self) -> None:
-        runner = runner_adapters.ChemQARunner.__new__(runner_adapters.ChemQARunner)
+        runner = chemdebate_adapter.ChemQARunner.__new__(chemdebate_adapter.ChemQARunner)
         runner.chemqa_root = Path("/tmp/chemqa-root")
         runner.slot_set = "A"
         runner._active_slot_workspaces = {
@@ -1155,7 +1166,7 @@ Points: 0.5, Item: Second criterion
             / "debateA-coordinator"
             / "chemqa_review_protocol.yaml"
         )
-        candidates = runner_adapters.ChemQARunner._candidate_protocol_dirs(
+        candidates = chemdebate_adapter.ChemQARunner._candidate_protocol_dirs(
             runner,
             "demo-run",
             {"workspace_protocol_path": str(legacy_protocol)},
@@ -2895,7 +2906,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
@@ -2918,7 +2929,7 @@ Points: 0.5, Item: Second criterion
             command = captured["command"]
             assert isinstance(command, list)
             self.assertNotEqual("openclaw", command[0])
-            self.assertTrue(any(str(part).endswith("single_llm_openclaw_wrapper.py") for part in command))
+            self.assertTrue(any(str(part).endswith("openclaw_wrapper.py") for part in command))
             self.assertIn("--thinking", command)
             self.assertEqual("medium", command[command.index("--thinking") + 1])
             self.assertIn("--agent", command)
@@ -2967,7 +2978,7 @@ Points: 0.5, Item: Second criterion
 
             subprocess_utils.run_subprocess = fake_run_subprocess
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
@@ -3026,7 +3037,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=30,
@@ -3091,7 +3102,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3146,7 +3157,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3195,7 +3206,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3251,7 +3262,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3286,7 +3297,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3334,7 +3345,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3376,7 +3387,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3408,7 +3419,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3444,7 +3455,7 @@ Points: 0.5, Item: Second criterion
                 return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3487,7 +3498,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3534,7 +3545,7 @@ Points: 0.5, Item: Second criterion
                         return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
                     subprocess_utils.run_subprocess = fake_run_subprocess
-                    runner = runner_adapters.SingleLLMRunner(
+                    runner = single_adapter.SingleLLMRunner(
                         execution_backend="host",
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
@@ -3582,7 +3593,7 @@ Points: 0.5, Item: Second criterion
                         return self._single_llm_completed_process(command, text=error_text)
 
                     subprocess_utils.run_subprocess = fake_run_subprocess
-                    runner = runner_adapters.SingleLLMRunner(
+                    runner = single_adapter.SingleLLMRunner(
                         execution_backend="host",
                         agent_id="benchmark-single-skills-on",
                         timeout_seconds=900,
@@ -3620,7 +3631,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3661,7 +3672,7 @@ Points: 0.5, Item: Second criterion
                 return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3708,7 +3719,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3769,7 +3780,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3832,7 +3843,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3902,7 +3913,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -3962,7 +3973,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4021,7 +4032,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4072,7 +4083,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4126,7 +4137,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4179,7 +4190,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4239,7 +4250,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4301,7 +4312,7 @@ Points: 0.5, Item: Second criterion
                 )
 
             subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = runner_adapters.SingleLLMRunner(
+            runner = single_adapter.SingleLLMRunner(
                 execution_backend="host",
                 agent_id="benchmark-single-skills-on",
                 timeout_seconds=900,
@@ -4332,8 +4343,8 @@ Points: 0.5, Item: Second criterion
         captured: dict[str, object] = {}
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = chemdebate_adapter.ChemQARunner._ensure_artifacts
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
@@ -4349,7 +4360,7 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = fake_run_subprocess
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -4371,10 +4382,10 @@ Points: 0.5, Item: Second criterion
                 )
                 return qa_result_path
 
-            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 launch_root = Path(tmpdir) / "chemqa-launch"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4394,7 +4405,7 @@ Points: 0.5, Item: Second criterion
                     reference_answer="42",
                     payload={},
                 )
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
                 self.assertEqual("c1ccccc1", out.short_answer_text)
                 command = captured["command"]
                 assert isinstance(command, list)
@@ -4411,19 +4422,19 @@ Points: 0.5, Item: Second criterion
                 env = captured["env"]
                 assert isinstance(env, dict)
                 self.assertEqual(str(launch_root / "chemqa_skills_on" / "chembench-0001" / "home"), env["HOME"])
-                self.assertEqual(str(runner_adapters.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
+                self.assertEqual(str(chemdebate_adapter.DEFAULT_OPENCLAW_ENV_FILE), env["OPENCLAW_ENV_FILE"])
         finally:
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_archives_completed_artifacts_under_output_root(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = chemdebate_adapter.ChemQARunner._ensure_artifacts
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4434,7 +4445,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -4468,11 +4479,11 @@ Points: 0.5, Item: Second criterion
                 (scratch_dir / "final_answer.md").write_text("c1ccccc1\n", encoding="utf-8")
                 return qa_result_path
 
-            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4493,7 +4504,7 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.COMPLETED, out.status)
                 archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / out.runner_meta["run_id"]
@@ -4508,14 +4519,14 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_uses_canonical_qa_result_path_from_terminal_status(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = chemdebate_adapter.ChemQARunner._ensure_artifacts
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4563,7 +4574,7 @@ Points: 0.5, Item: Second criterion
                     encoding="utf-8",
                 )
 
-                runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+                chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                     "run_id": run_id,
                     "status": "done",
                     "terminal_state": "completed",
@@ -4577,9 +4588,9 @@ Points: 0.5, Item: Second criterion
                 def fail_if_called(self, run_id, *, env, run_status, wait_seconds=120, poll_seconds=5):
                     raise AssertionError("_ensure_artifacts should not rebuild when canonical qa_result_path is readable")
 
-                runner_adapters.ChemQARunner._ensure_artifacts = fail_if_called
+                chemdebate_adapter.ChemQARunner._ensure_artifacts = fail_if_called
                 output_root = Path(tmpdir) / "benchmark-output"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4600,7 +4611,7 @@ Points: 0.5, Item: Second criterion
                     payload={},
                 )
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("7.59", out.short_answer_text)
@@ -4610,15 +4621,15 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_chemqa_runner_archives_protocol_and_rebuilds_qa_result_for_failed_terminal_run(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_build_candidate_submission_fallback = runner_adapters.ChemQARunner._build_candidate_submission_fallback
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_build_candidate_submission_fallback = chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4629,14 +4640,14 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "lane_stalled",
                 "artifact_collection": {"status": "error"},
                 "protocol_path": str(self.chemqa_root / "generated" / "clawteam-data" / "runs" / run_id / "teams" / run_id / "chemqa_review_protocol.yaml"),
             }
-            runner_adapters.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
+            chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
 
             def fake_collect_artifacts(self, *, source_dir, output_dir, env):
                 output_dir.mkdir(parents=True, exist_ok=True)
@@ -4654,12 +4665,12 @@ Points: 0.5, Item: Second criterion
                 )
                 (output_dir / "final_answer.md").write_text("No accepted answer.\n", encoding="utf-8")
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4688,7 +4699,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.FAILED, out.status)
                 archive_dir = output_root / "artifacts" / "chemqa_skills_on" / "chembench-0001" / run_id
@@ -4701,15 +4712,15 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_with_candidate_fallback_returns_scored_recovered_result(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4720,7 +4731,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -4732,13 +4743,13 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4795,7 +4806,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.RECOVERED, out.status)
                 self.assertEqual("CCO", out.short_answer_text)
@@ -4811,15 +4822,15 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_uses_failure_artifact_answer_projection(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_build_candidate_submission_fallback = runner_adapters.ChemQARunner._build_candidate_submission_fallback
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_build_candidate_submission_fallback = chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4830,8 +4841,8 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback = lambda self, run_id, run_status: None
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "protocol_stalled",
@@ -4845,12 +4856,12 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -4927,7 +4938,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.RECOVERED, out.status)
                 self.assertEqual("B", out.short_answer_text)
@@ -4939,15 +4950,15 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._build_candidate_submission_fallback = original_build_candidate_submission_fallback
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_failed_terminal_with_final_answer_preview_stays_failed_and_unscored(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -4958,7 +4969,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -4971,13 +4982,13 @@ Points: 0.5, Item: Second criterion
                 output_dir.mkdir(parents=True, exist_ok=True)
                 _ = (self, source_dir, env)
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5014,7 +5025,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260427-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.FAILED, out.status)
                 self.assertFalse(out.should_score())
@@ -5028,14 +5039,14 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_reconciles_failed_run_status_with_completed_archived_rejection(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -5046,7 +5057,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -5073,12 +5084,12 @@ Points: 0.5, Item: Second criterion
                 )
                 (output_dir / "final_answer.md").write_text("No accepted answer.\n", encoding="utf-8")
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5107,7 +5118,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
@@ -5122,14 +5133,14 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_reconciled_rejected_run_does_not_expose_blob_as_short_answer(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_collect_artifacts = runner_adapters.ChemQARunner._collect_artifacts_from_source
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_collect_artifacts = chemdebate_adapter.ChemQARunner._collect_artifacts_from_source
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -5140,7 +5151,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "failed",
                 "terminal_reason_code": "stalled",
@@ -5176,12 +5187,12 @@ Points: 0.5, Item: Second criterion
                     encoding="utf-8",
                 )
 
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = fake_collect_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
                 chemqa_root = Path(tmpdir) / "chemqa-root"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=chemqa_root,
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5210,7 +5221,7 @@ Points: 0.5, Item: Second criterion
                 )
                 runner._now_stamp = lambda: "20260424-000000"
 
-                out = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertEqual(RunStatus.COMPLETED, out.status)
                 self.assertEqual("", out.short_answer_text)
@@ -5219,14 +5230,14 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._collect_artifacts_from_source = original_collect_artifacts
 
     def test_chemqa_runner_archives_repeated_runs_into_distinct_run_id_directories(self) -> None:
         original_run_subprocess = subprocess_utils.run_subprocess
         original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        original_wait_for_terminal_status = runner_adapters.ChemQARunner._wait_for_terminal_status
-        original_ensure_artifacts = runner_adapters.ChemQARunner._ensure_artifacts
+        original_wait_for_terminal_status = chemdebate_adapter.ChemQARunner._wait_for_terminal_status
+        original_ensure_artifacts = chemdebate_adapter.ChemQARunner._ensure_artifacts
         original_invoke_cleanroom_cleanup = CleanroomRuntime.invoke_cleanroom_cleanup
         try:
             subprocess_utils.run_subprocess = lambda command, *, env=None, cwd=None, timeout=None: subprocess.CompletedProcess(
@@ -5237,7 +5248,7 @@ Points: 0.5, Item: Second criterion
             )
             runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
             CleanroomRuntime.invoke_cleanroom_cleanup = lambda self, manifest_path: {"status": "cleaned", "manifest_path": str(manifest_path)}
-            runner_adapters.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = lambda self, run_id, timeout_seconds: {
                 "status": "done",
                 "terminal_state": "completed",
                 "terminal_reason_code": "",
@@ -5267,11 +5278,11 @@ Points: 0.5, Item: Second criterion
                 )
                 return qa_result_path
 
-            runner_adapters.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = fake_ensure_artifacts
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_root = Path(tmpdir) / "benchmark-output"
                 launch_root = output_root / "chemqa-launch"
-                runner = runner_adapters.ChemQARunner(
+                runner = chemdebate_adapter.ChemQARunner(
                     chemqa_root=Path(tmpdir) / "chemqa-root",
                     timeout_seconds=30,
                     config_path=Path(tmpdir) / "config.json",
@@ -5294,8 +5305,8 @@ Points: 0.5, Item: Second criterion
                 stamps = iter(["20260424-000001", "20260424-000002"])
                 runner._now_stamp = lambda: next(stamps)
 
-                out1 = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
-                out2 = runner.run(record, experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out1 = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
+                out2 = runner.run(record, legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"])
 
                 self.assertNotEqual(out1.runner_meta["run_id"], out2.runner_meta["run_id"])
                 archive1 = Path(out1.runner_meta["archive_dir"])
@@ -5307,8 +5318,8 @@ Points: 0.5, Item: Second criterion
             subprocess_utils.run_subprocess = original_run_subprocess
             runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
             CleanroomRuntime.invoke_cleanroom_cleanup = original_invoke_cleanroom_cleanup
-            runner_adapters.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
-            runner_adapters.ChemQARunner._ensure_artifacts = original_ensure_artifacts
+            chemdebate_adapter.ChemQARunner._wait_for_terminal_status = original_wait_for_terminal_status
+            chemdebate_adapter.ChemQARunner._ensure_artifacts = original_ensure_artifacts
 
     def test_run_group_continues_after_record_failure(self) -> None:
         records = [
@@ -5350,8 +5361,8 @@ Points: 0.5, Item: Second criterion
                     runner_meta={},
                 )
 
-        original_runner = runner_adapters.SingleLLMRunner
-        runner_adapters.SingleLLMRunner = StubSingleRunner
+        original_runner = single_adapter.SingleLLMRunner
+        single_adapter.SingleLLMRunner = StubSingleRunner
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
@@ -5375,7 +5386,7 @@ Points: 0.5, Item: Second criterion
                 self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r1.json").exists())
                 self.assertTrue((Path(tmpdir) / "per-record" / "single_llm_skills_off" / "r2.json").exists())
         finally:
-            runner_adapters.SingleLLMRunner = original_runner
+            single_adapter.SingleLLMRunner = original_runner
 
     def test_run_group_passes_single_timeout_retry_options_to_runner(self) -> None:
         record = BenchmarkRecord(
@@ -5405,8 +5416,8 @@ Points: 0.5, Item: Second criterion
                     runner_meta={},
                 )
 
-        original_runner = runner_adapters.SingleLLMRunner
-        runner_adapters.SingleLLMRunner = StubSingleRunner
+        original_runner = single_adapter.SingleLLMRunner
+        single_adapter.SingleLLMRunner = StubSingleRunner
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
@@ -5432,7 +5443,7 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(2, captured["timeout_retries"])
             self.assertEqual((1, 3), captured["timeout_retry_backoff_seconds"])
         finally:
-            runner_adapters.SingleLLMRunner = original_runner
+            single_adapter.SingleLLMRunner = original_runner
 
     def test_run_group_marks_unscored_recovery_as_execution_error(self) -> None:
         record = BenchmarkRecord(
@@ -5481,7 +5492,7 @@ Points: 0.5, Item: Second criterion
             scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
-                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                    group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5542,7 +5553,7 @@ Points: 0.5, Item: Second criterion
             scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
-                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                    group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5646,7 +5657,7 @@ Points: 0.5, Item: Second criterion
             scoring_evaluation.evaluate_record = fake_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
-                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                    group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5720,7 +5731,7 @@ Points: 0.5, Item: Second criterion
             scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
-                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                    group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5803,7 +5814,7 @@ Points: 0.5, Item: Second criterion
             scoring_evaluation.evaluate_record = fail_evaluate_answer
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = run_group_for_test(
-                    group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                    group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                     records=[record],
                     output_root=Path(tmpdir),
                     single_timeout=10,
@@ -5854,7 +5865,7 @@ Points: 0.5, Item: Second criterion
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             results = materialize_failure_results_for_test(
-                group=experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
+                group=legacy_experiments.EXPERIMENT_GROUPS["chemqa_skills_on"],
                 records=records,
                 output_root=Path(tmpdir),
                 error_message="group crashed",

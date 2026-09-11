@@ -21,8 +21,8 @@ from benchmarking.runtime.workspace_policy import (
     WorkspaceAudit,
     adjudicate_workspace_findings,
 )
-from benchmarking.workflow.prompts import build_single_llm_prompt
-from benchmarking.workflow.runners.single_llm import SingleLLMRunner
+from benchmarking.service.single.prompts import build_single_llm_prompt
+from benchmarking.service.single.runner import SingleLLMRunner
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def test_cancellation_after_attempt_returns_its_original_error_before_retry(self):
         from benchmarking.core.contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
         from benchmarking.runtime.cancellation import CancellationToken, CancellationReason
-        from benchmarking.workflow.runners.single_llm import TimeoutRetryDecision
+        from benchmarking.service.single.runner import TimeoutRetryDecision
         token = CancellationToken()
         runner = self._runner(captured_commands=[])
         runner._cancellation_enabled = True

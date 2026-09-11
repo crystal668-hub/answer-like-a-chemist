@@ -22,7 +22,7 @@ from benchmarking.runtime.container_runtime import (
     ContainerMount,
     DockerContainerRuntime,
 )
-from benchmarking.workflow.prompts import build_single_llm_prompt
+from benchmarking.service.single.prompts import build_single_llm_prompt
 
 IMAGE = os.environ.get("BENCHMARK_TEST_CONTAINER_IMAGE")
 pytestmark = pytest.mark.skipif(not IMAGE, reason="real Docker acceptance is opt-in")

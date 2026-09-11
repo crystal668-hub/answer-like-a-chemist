@@ -1,4 +1,5 @@
 from __future__ import annotations
+from benchmarking.service.single import execution as single_execution
 
 import json
 import sys
@@ -35,7 +36,7 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert callable(benchmarking_cli.main)
     assert callable(benchmarking_cli.parse_args)
     assert experiments.EXPERIMENT_GROUPS["single_llm_skills_on"].runner == "single_llm"
-    assert experiments.EXPERIMENT_GROUPS["chemqa_skills_on"].runner == "chemqa"
+    assert "chemqa_skills_on" not in experiments.EXPERIMENT_GROUPS
     assert all(group.websearch is False for group in experiments.EXPERIMENT_GROUPS.values())
     assert all(spec.websearch_enabled is False for spec in experiments.EXPERIMENT_SPECS.values())
 
@@ -543,7 +544,7 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
             "reports": {"single_llm_skills_on": {"available": False, "error": "fetch failed"}},
         },
     )
-    monkeypatch.setattr(runner_adapters, "run_pending_cleanroom_cleanup", lambda: [])
+    monkeypatch.setattr(single_execution, "cleanup", lambda: [])
     monkeypatch.setattr(
         benchmarking_cli,
         "launch_automated_evaluation",
@@ -722,7 +723,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             "reports": {"single_llm_skills_off": {"available": True}},
         },
     )
-    monkeypatch.setattr(runner_adapters, "run_pending_cleanroom_cleanup", lambda: [])
+    monkeypatch.setattr(single_execution, "cleanup", lambda: [])
     monkeypatch.setattr(orchestration, "run_group", fake_run_group)
     monkeypatch.setattr(benchmarking_cli, "launch_automated_evaluation", fake_launch)
 
@@ -877,7 +878,7 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             "reports": {"single_llm_skills_off": {"available": True}},
         },
     )
-    monkeypatch.setattr(runner_adapters, "run_pending_cleanroom_cleanup", lambda: [])
+    monkeypatch.setattr(single_execution, "cleanup", lambda: [])
     monkeypatch.setattr(orchestration, "run_group", fake_run_group)
     monkeypatch.setattr(benchmarking_cli, "launch_automated_evaluation", lambda output_root: launched.append(Path(output_root)))
 
@@ -981,7 +982,7 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             "reports": {"single_llm_skills_off": {"available": True}},
         },
     )
-    monkeypatch.setattr(runner_adapters, "run_pending_cleanroom_cleanup", lambda: [])
+    monkeypatch.setattr(single_execution, "cleanup", lambda: [])
     monkeypatch.setattr(orchestration, "run_group", fake_run_group)
     monkeypatch.setattr(benchmarking_cli, "launch_automated_evaluation", lambda output_root: (_ for _ in ()).throw(RuntimeError("boom")))
 

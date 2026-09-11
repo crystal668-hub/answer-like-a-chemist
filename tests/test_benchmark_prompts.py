@@ -3,12 +3,10 @@ from __future__ import annotations
 import unittest
 
 from benchmarking.core.datasets import BenchmarkRecord
-from benchmarking.workflow.prompts import (
-    build_chemqa_goal,
-    build_single_llm_prompt,
-    resolve_chemqa_answer_kind,
-)
-from benchmarking.workflow.runners.single_llm import validate_candidate_answer_contract
+from benchmarking.service.chemdebate.prompts import build_chemqa_goal
+from benchmarking.service.single.prompts import build_single_llm_prompt
+from benchmarking.service.chemdebate.prompts import resolve_chemqa_answer_kind
+from benchmarking.service.single.runner import validate_candidate_answer_contract
 
 
 class BenchmarkPromptsTests(unittest.TestCase):

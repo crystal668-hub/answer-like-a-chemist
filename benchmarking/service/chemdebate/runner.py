@@ -14,7 +14,7 @@ from benchmarking.core.contracts import (
     RunnerResult,
     RunStatus,
 )
-from benchmarking.core.convergence import ConvergencePolicy
+from .convergence import ChemQAConvergencePolicy as ConvergencePolicy
 from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
@@ -26,8 +26,8 @@ from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     adjudicate_workspace_findings,
 )
-from benchmarking.workflow.runners.chemqa_artifacts import ChemQAArtifactSupport
-from benchmarking.workflow.runners.chemqa_workspaces import ChemQAWorkspaceSupport
+from benchmarking.service.chemdebate.artifacts import ChemQAArtifactSupport
+from benchmarking.service.chemdebate.workspaces import ChemQAWorkspaceSupport
 
 
 class ConvergenceLimitExceeded(RuntimeError):

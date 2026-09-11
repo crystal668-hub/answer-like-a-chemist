@@ -61,3 +61,10 @@ Optional endpoint overrides are configured with `MINERU_AGENT_API_URL` and
 `MINERU_PRECISION_API_URL`; the Precision API token is read from
 `MINERU_API_TOKEN` by default. See the [MinerU API documentation](https://mineru.net/apiManage/docs)
 for account, quota, and API details.
+
+## Benchmark runtime modules
+
+`benchmarking.service.single` is the active runtime; the default CLI runs only
+the two single-LLM groups. ChemQA is frozen under `benchmarking.service.chemdebate`
+and requires the explicit `uv run python -m benchmarking.service.chemdebate.cli`
+entrypoint. Historical result identifiers and review support remain unchanged.

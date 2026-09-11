@@ -1,4 +1,7 @@
 from __future__ import annotations
+from benchmarking.service.single.orchestration import runner_options as single_runner_options
+from benchmarking.service.single import adapter as single_adapter
+from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
 import json
 import os
@@ -96,7 +99,7 @@ def test_signal_handlers_record_first_signal_and_restore(monkeypatch) -> None:
 
 
 def test_runners_and_judge_expose_uniform_cancellation_interface() -> None:
-    for runner_type in (runner_adapters.SingleLLMRunner, runner_adapters.ChemQARunner, JudgeClient):
+    for runner_type in (single_adapter.SingleLLMRunner, chemdebate_adapter.ChemQARunner, JudgeClient):
         assert callable(runner_type.cancel)
         assert callable(runner_type.wait_cancelled)
 
@@ -175,17 +178,7 @@ def test_run_group_stops_scheduling_and_materializes_cancelled_records(tmp_path:
         group=group,
         records=[_record("r1"), _record("r2")],
         output_root=tmp_path,
-        single_timeout=10,
-        chemqa_timeout=10,
         judge=object(),
-        config_path=tmp_path / "config.json",
-        single_agent="agent",
-        chemqa_root=tmp_path,
-        chemqa_model_profile="unused",
-        review_rounds=None,
-        rebuttal_rounds=None,
-        chemqa_slot_sets={},
-        experiment_specs={group.id: SimpleNamespace(skill_allowlist=())},
         build_runner_fn=lambda **_kwargs: Runner(),
         evaluate_answer_fn=lambda *_args, **_kwargs: pytest.fail("cancelled record reached evaluator"),
         build_error_group_record_result_fn=_error_result,
@@ -195,8 +188,17 @@ def test_run_group_stops_scheduling_and_materializes_cancelled_records(tmp_path:
             path.write_text(json.dumps(payload), encoding="utf-8"),
         ),
         slugify_fn=str,
-        single_agent_thinking="minimal",
         cancellation_token=token,
+        runner_options_factory=lambda: single_runner_options(
+            group=group,
+            output_root=tmp_path,
+            single_timeout=10,
+            config_path=tmp_path / "config.json",
+            single_agent="agent",
+            experiment_specs={group.id: SimpleNamespace(skill_allowlist=())},
+            single_agent_thinking="minimal",
+            cancellation_token=token,
+        ),
     )
 
     assert calls == ["r1"]
