@@ -49,6 +49,26 @@ class CancellationToken:
         self._lock = threading.Lock()
         self._reason: CancellationReason | None = None
         self._request_count = 0
+        self._cleanup_errors: list[dict[str, Any]] = []
+        self._cleanup_reports: list[dict[str, Any]] = []
+
+    def record_cleanup_outcome(self, report: dict[str, Any]) -> None:
+        with self._lock:
+            self._cleanup_reports.append(dict(report))
+
+    @property
+    def cleanup_reports(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(report) for report in self._cleanup_reports]
+
+    def record_cleanup_error(self, error: dict[str, Any]) -> None:
+        with self._lock:
+            self._cleanup_errors.append(dict(error))
+
+    @property
+    def cleanup_errors(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(error) for error in self._cleanup_errors]
 
     def cancel(self, reason: CancellationReason) -> bool:
         with self._lock:

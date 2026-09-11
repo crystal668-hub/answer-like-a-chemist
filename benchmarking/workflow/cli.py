@@ -670,7 +670,9 @@ def main() -> int:
             )
             attempt_limit = getattr(args, "max_concurrent_attempts", 2)
             single_queue = all(experiments.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in wave_group_ids)
-            with ThreadPoolExecutor(max_workers=attempt_limit if single_queue else max(1, len(wave_group_ids))) as executor:
+            from benchmarking.workflow.attempt_queue import AttemptQueueExecutor
+            with (AttemptQueueExecutor(attempt_limit, cancellation_token) if single_queue else
+                  ThreadPoolExecutor(max_workers=max(1, len(wave_group_ids)))) as executor:
                 future_map = {}
                 for group_id in wave_group_ids:
                     if cancellation_token.is_cancelled:
@@ -749,7 +751,7 @@ def main() -> int:
                         )
                         future_map[future] = (group_id, records_batch)
 
-                for future in as_completed(future_map):
+                for future in (executor.run() if single_queue else as_completed(future_map)):
                     group_id, records_batch = future_map[future]
                     try:
                         group_results.setdefault(group_id, []).extend(future.result())
@@ -796,6 +798,7 @@ def main() -> int:
             if wave_index < len(group_waves) and args.inter_wave_delay_seconds > 0:
                 cancellation_token.wait(args.inter_wave_delay_seconds)
     finally:
+        cancellation_errors.extend(cancellation_token.cleanup_errors)
         if cancellation_token.is_cancelled:
             reason = cancellation_token.reason
             progress_writer.run_cancelling(reason=reason.to_payload() if reason is not None else {})
@@ -893,6 +896,9 @@ def main() -> int:
         results = run_state.load_results_from_output_root(output_root, group_ids=aggregate_group_ids)
     else:
         results: list[_GroupRecordResult] = []
+        record_order = {record.record_id: index for index, record in enumerate(records)}
+        for entries in group_results.values():
+            entries.sort(key=lambda entry: record_order.get(entry.record_id, len(record_order)))
         for group_id in group_ids:
             results.extend(group_results.get(group_id, []))
 
@@ -981,6 +987,7 @@ def main() -> int:
         "records": len(records),
         "execution_plan": {
             "mode": "single-llm-queue-and-chemqa-waves",
+            "attempt_queue": {"unit": "attempt", "group_order": "round_robin", "record_order": "fifo", "scoring_workers": 1},
             "max_concurrent_groups": args.max_concurrent_groups,
             "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
@@ -1001,6 +1008,7 @@ def main() -> int:
     run_state.save_json(output_root / "results.json", payload)
     run_state.remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
+        "container_cleanup": cancellation_token.cleanup_reports,
         "docker_startup": docker_startup,
         "terminal_status": payload["status"],
         "verifier_grounded_release": (
@@ -1008,6 +1016,7 @@ def main() -> int:
         ),
         "execution_plan": {
             "mode": "single-llm-queue-and-chemqa-waves",
+            "attempt_queue": {"unit": "attempt", "group_order": "round_robin", "record_order": "fifo", "scoring_workers": 1},
             "max_concurrent_groups": args.max_concurrent_groups,
             "max_concurrent_attempts": getattr(args, "max_concurrent_attempts", 2),
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,

@@ -40,6 +40,59 @@ class CompletedProcess:
 
 
 class SingleLLMTimeoutRetryTests(unittest.TestCase):
+    def test_cancellation_after_attempt_returns_its_original_error_before_retry(self):
+        from benchmarking.core.contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
+        from benchmarking.runtime.cancellation import CancellationToken, CancellationReason
+        from benchmarking.workflow.runners.single_llm import TimeoutRetryDecision
+        token = CancellationToken()
+        runner = self._runner(captured_commands=[])
+        runner._cancellation_enabled = True
+        runner._cancellation_token = token
+        original = RunnerResult(RunStatus.FAILED, AnswerPayload(), {"provider": "original"},
+                                {"primary_error": "original"}, FailureInfo("timeout", "original provider timeout"))
+        def attempt(**kwargs):
+            token.cancel(CancellationReason(source="container_cleanup"))
+            return original
+        runner._run_isolated_attempt = attempt
+        runner._timeout_retry_decision = lambda result: TimeoutRetryDecision(True, "timeout")
+        result = runner.run(self._record(), Group("single_llm_skills_on", True))
+        self.assertEqual(result.failure, original.failure)
+        self.assertEqual(result.raw, original.raw)
+        self.assertEqual(result.runner_meta["timeout_retry"]["retries_used"], 0)
+
+    def test_container_remove_failure_preserves_provider_error_and_stops_admission(self):
+        from benchmarking.runtime.container_runtime import ContainerAttemptHandle, ContainerAttemptResult, CleanupReport
+        from benchmarking.runtime.cancellation import CancellationToken
+        from benchmarking.runtime.attempt_admission import AttemptAdmissionController
+        config = Path(self.temporary.name) / "config.json"
+        config.write_text(json.dumps({"agents": {"list": [{"id": "benchmark-single-skills-on"}]}}))
+        runner = self._runner(captured_commands=[], config_path=config, timeout_once=False)
+        runner.execution_backend = "docker"
+        token = CancellationToken()
+        runner.admission_controller = AttemptAdmissionController(max_attempts=1, cancellation_token=token)
+        class Runtime:
+            def create(self, spec):
+                self.spec = spec
+                return ContainerAttemptHandle("owned", "owned", spec.identity, "image")
+            def start(self, handle):
+                pass
+            def collect(self, handle, **kwargs):
+                return ContainerAttemptResult(handle, 1, "", "HTTP 429 rate limit exceeded")
+            def stop(self, handle, **kwargs):
+                pass
+            def remove(self, handle, **kwargs):
+                return CleanupReport(False, handle.container_id, "injected removal failure")
+        runtime = Runtime()
+        runner.container_runtime = runtime
+        result = runner.run(self._record(), Group("single_llm_skills_on", True))
+        self.assertTrue(token.is_cancelled)
+        self.assertEqual(token.cleanup_errors[0]["container_id"], "owned")
+        self.assertIn("429", json.dumps(result.runner_meta))
+        self.assertFalse(result.should_score())
+        self.assertTrue(result.runner_meta["workspace_isolation"]["recovery_required"])
+        self.assertFalse(any(mount.kind == "input" for mount in runtime.spec.mounts))
+        self.assertTrue(Path(result.runner_meta["workspace_isolation"]["active_workspace"]).exists())
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)

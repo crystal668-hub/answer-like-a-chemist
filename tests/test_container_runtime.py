@@ -20,6 +20,43 @@ def identity() -> AttemptIdentity:
     return AttemptIdentity("run", "inv", "group", "single_llm", "agent", "record", 0, "session", "template")
 
 
+@pytest.mark.parametrize("operation", ["inspect", "logs", "start", "kill", "rm", "ps"])
+def test_docker_commands_always_have_bounded_outer_timeout(operation):
+    def run(cmd, **kwargs):
+        assert 0 < kwargs["timeout"] <= 30
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+    runtime = DockerContainerRuntime(docker_executable="docker", run_subprocess=run)
+    with pytest.raises(ContainerRuntimeError) as error:
+        runtime._command([operation, "owned"])
+    assert error.value.code == "docker_command_timeout"
+
+
+def test_repeated_cancellation_skips_grace_wait():
+    from benchmarking.runtime.cancellation import CancellationToken, CancellationReason
+    from benchmarking.runtime.container_runtime import ContainerAttemptHandle
+    commands = []
+    def run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    token = CancellationToken()
+    token.cancel(CancellationReason(source="first"))
+    token.cancel(CancellationReason(source="second"))
+    DockerContainerRuntime(docker_executable="docker", run_subprocess=run).terminate(
+        ContainerAttemptHandle("owned", "owned", identity(), "image"), cancellation_token=token)
+    assert commands == [["docker", "kill", "--signal", "TERM", "owned"], ["docker", "kill", "owned"]]
+    assert token.reason.source == "first"
+
+
+def test_command_timeout_does_not_persist_environment_secrets():
+    def run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+    runtime = DockerContainerRuntime(docker_executable="docker", run_subprocess=run)
+    with pytest.raises(ContainerRuntimeError) as error:
+        runtime._command(["create", "--env", "PROVIDER_TOKEN=secret-value", "image"])
+    assert "secret-value" not in str(error.value)
+    assert "secret-value" not in json.dumps(error.value.details)
+
+
 def test_mount_validation_rejects_writable_input(tmp_path: Path) -> None:
     with pytest.raises(ContainerRuntimeError, match="read-only"):
         DockerContainerRuntime._validate_mounts((ContainerMount(tmp_path, Path("/benchmark/input"), "rw", "input"),))

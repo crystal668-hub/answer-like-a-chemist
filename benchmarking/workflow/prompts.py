@@ -143,7 +143,8 @@ def build_single_llm_prompt(
                 instructions.append("Inspect the local image files referenced in the bundle before answering.")
 
     prefix = "\n".join(instructions)
-    return (prefix + "\n\n" if prefix else "") + record.prompt.strip()
+    question = getattr(input_bundle, "prompt_text", None) or record.prompt
+    return (prefix + "\n\n" if prefix else "") + question.strip()
 
 
 def build_chemqa_goal(

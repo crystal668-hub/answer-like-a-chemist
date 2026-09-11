@@ -1,11 +1,11 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { shellCommands, validateDependencyCommand } from "./dependencies.js";
 
 const EXEC_TOOL_NAMES = new Set(["exec", "execute", "shell", "bash", "command"]);
 const ABSOLUTE_PATH_RE = /(?<![A-Za-z0-9_$])\/(?:[^\s"'`;&|()<>\n\\]+)/g;
 const RELATIVE_ESCAPE_RE = /(?<![A-Za-z0-9_$])(?:\.\/)*\.\.\/(?:[^\s"'`;&|()<>\n\\]+)/g;
 const HOME_PATH_RE = /(?<![A-Za-z0-9_$])~(?:\/[^\s"'`;&|()<>\n\\]*)?/;
-const FORBIDDEN_DISTRIBUTIONS = new Set(["verifier-grounded-benchmark"]);
 const SYSTEM_PATH_PREFIXES = [
   "/bin/",
   "/sbin/",
@@ -17,7 +17,7 @@ const SYSTEM_PATH_PREFIXES = [
 const TOOL_RULES = {
   read: [{ keys: ["path", "file_path"], access: "read" }],
   read_file: [{ keys: ["path", "file_path"], access: "read" }],
-  image: [{ keys: ["path", "file_path"], access: "read" }],
+  image: [{ keys: ["path", "file_path", "image", "images"], access: "read" }],
   open_file: [{ keys: ["path", "file_path"], access: "read" }],
   list: [{ keys: ["path", "directory"], access: "list" }],
   list_directory: [{ keys: ["path", "directory"], access: "list" }],
@@ -150,7 +150,8 @@ function validateExecCommand({ policy, command }) {
     };
   }
   const candidates = new Set();
-  for (const match of command.matchAll(ABSOLUTE_PATH_RE)) {
+  const pathCommand = command.replace(/https?:\/\/[^\s"'`]+/g, "URL");
+  for (const match of pathCommand.matchAll(ABSOLUTE_PATH_RE)) {
     const raw = trimPathPunctuation(match[0]);
     if (!raw) continue;
     try {
@@ -161,8 +162,9 @@ function validateExecCommand({ policy, command }) {
   }
 
   for (const candidate of candidates) {
+    const readableInput = (policy.read_scopes || []).some(scope => scope.scope_id !== "active_workspace" && scopeAllows(scope, candidate));
     const protectedRoot = roots.find((root) => isContained(root, candidate));
-    if (protectedRoot) {
+    if (protectedRoot && !readableInput) {
       return {
         ok: false,
         access: "exec",
@@ -170,7 +172,22 @@ function validateExecCommand({ policy, command }) {
         candidate,
       };
     }
-    if (!isSystemPath(candidate) && !isContained(workspace, candidate)) {
+    const mutatesCandidate = shellCommands(command).commands.some(words => {
+      const executable = basename(words[0] || "");
+      const operands = words.slice(1).filter(word => !word.startsWith("-"));
+      const samePath = word => { try { return resolveWithExistingPrefix(resolve(workspace, word)) === candidate; } catch { return true; } };
+      if (executable === "cp") return samePath(operands.at(-1) || "") || (words.includes("-t") && operands.some(samePath));
+      if (["rm", "mv", "touch", "mkdir", "tee", "truncate", "chmod", "chown"].includes(executable)) return operands.some(samePath);
+      return false;
+    });
+    const redirectsToCandidate = [...pathCommand.matchAll(/>{1,2}\s*("[^"]+"|'[^']+'|[^\s;&|]+)/g)].some(match => {
+      const target = match[1].replace(/^["']|["']$/g, "");
+      try { return resolveWithExistingPrefix(resolve(workspace, target)) === candidate; } catch { return true; }
+    });
+    if (readableInput && (mutatesCandidate || redirectsToCandidate)) {
+      return { ok: false, access: "mutate", reason: "external policy scopes are read-only", candidate };
+    }
+    if (!isSystemPath(candidate) && !isContained(workspace, candidate) && !readableInput) {
       return {
         ok: false,
         access: "exec",
@@ -190,49 +207,11 @@ function validateExecCommand({ policy, command }) {
   return { ok: true };
 }
 
-function normalizeDistribution(value) {
-  return String(value || "").toLowerCase().replace(/[_.]+/g, "-").split(/[<>=!~\[]/, 1)[0];
-}
-
-function validateAttemptPackageCommand(command) {
-  if (!process.env.BENCHMARK_ATTEMPT_PYTHON || typeof command !== "string") return { ok: true };
-  const tokens = command.trim().split(/\s+/);
-  const joined = ` ${tokens.join(" ")} `;
-  if (/(?:^|[;&|]\s*)(?:python\s+-m\s+pip|pip3?|\S+\/pip3?)\s+(?:install|uninstall|download|wheel)\b/i.test(command.trim())) {
-    return { ok: false, access: "dependency", reason: "pip mutations are disabled; use uv pip with the attempt environment" };
-  }
-  if (/\b(?:git\+|https?:\/\/|file:)/i.test(command) || /(?:^|\s)(?:-e|--editable|-f|--find-links|--index|--index-url|--extra-index-url|--no-index)(?:\s|=)/i.test(command)) {
-    return { ok: false, access: "dependency", reason: "only packages from the configured PyPI registry are allowed" };
-  }
-  if (/\buv\s+(?:sync|add|remove|tool|venv)\b/i.test(command) || /\buv\s+run\b[^;&|]*(?:--with|--with-requirements)/i.test(command)) {
-    return { ok: false, access: "dependency", reason: "dependency changes must use uv pip with the attempt environment" };
-  }
-  if (/\buv\s+pip\s+(?:install|uninstall)\b[^;&|]*(?:--python|--system|--target|--prefix|--project)(?:\s|=)/i.test(command)) {
-    return { ok: false, access: "dependency", reason: "the attempt dependency target cannot be overridden" };
-  }
-  const marker = tokens.findIndex((value, index) => value === "pip" && index > 0 && tokens[index - 1] === "uv");
-  if (marker >= 0 && ["install", "uninstall"].includes(tokens[marker + 1])) {
-    for (const token of tokens.slice(marker + 2)) {
-      if (token.includes("/") || token === "." || token === ".." || /\.(?:whl|zip|tar\.gz)$/i.test(token)) {
-        return { ok: false, access: "dependency", reason: "local dependency sources are forbidden" };
-      }
-      if (token.startsWith("-")) continue;
-      if (FORBIDDEN_DISTRIBUTIONS.has(normalizeDistribution(token))) {
-        return { ok: false, access: "dependency", reason: "the requested distribution is forbidden in benchmark attempts" };
-      }
-    }
-  }
-  if (joined.includes(" UV_EXCLUDE_NEWER=") || joined.includes(" UV_DEFAULT_INDEX=") || joined.includes(" UV_CACHE_DIR=")) {
-    return { ok: false, access: "dependency", reason: "attempt dependency policy variables cannot be overridden" };
-  }
-  return { ok: true };
-}
-
 export function validateToolCall({ policy, toolName, params = {} }) {
   const normalizedTool = String(toolName || "").toLowerCase();
   const checks = [];
   if (EXEC_TOOL_NAMES.has(normalizedTool)) {
-    const packageValidation = validateAttemptPackageCommand(params.command);
+    const packageValidation = validateDependencyCommand(params.command);
     if (!packageValidation.ok) return packageValidation;
     const commandValidation = validateExecCommand({ policy, command: params.command });
     if (!commandValidation.ok) return commandValidation;
@@ -242,7 +221,11 @@ export function validateToolCall({ policy, toolName, params = {} }) {
   } else if (TOOL_RULES[normalizedTool]) {
     for (const rule of TOOL_RULES[normalizedTool]) {
       for (const key of rule.keys) {
-        if (key in params) checks.push({ key, rawPath: params[key], access: rule.access });
+        if (key in params) {
+          for (const rawPath of (Array.isArray(params[key]) ? params[key] : [params[key]])) {
+            checks.push({ key, rawPath, access: rule.access });
+          }
+        }
       }
     }
   } else {

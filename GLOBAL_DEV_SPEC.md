@@ -92,6 +92,11 @@ provider/config error classification, and preservation of original upstream
 status codes, error codes, messages, and matched log events,
 `benchmarking.runtime.cancellation` owns run cancellation tokens, reasons, and
 owned process-group termination,
+`benchmarking.runtime.attempt_finalization` owns atomic attempt evidence I/O,
+environment ownership registration, and bounded-path cleanup;
+`benchmarking.runtime.dependency_evidence` validates dependency evidence independently
+of collector status. `benchmarking.workflow.attempt_queue` owns staged synchronous
+execution and the shared attempt/retry/scoring scheduler,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
 `benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
 isolated process bridge, and public package API calls. The scoring evaluator
@@ -229,11 +234,17 @@ For each invocation, the CLI:
    startup before workspace recovery. `docker-startup.json` and the runtime
    manifest retain startup evidence, including failures.
 4. Installs `SIGINT`/`SIGTERM` cancellation handlers, then dispatches single-LLM
-   records through one shared queue across selected single-LLM groups, followed
+   attempts through one shared queue across selected single-LLM groups, followed
    by ChemQA group waves. `--max-concurrent-attempts` defaults to 2 and must be
    positive. Each queued record has an independent agent identity and runtime
    config, so group configuration and active workspaces are not shared across
    concurrent records. Group progress completes after all records return.
+   Groups rotate round-robin; ready records within a group are FIFO. Retry
+   deadlines use a monotonic clock and rejoin the group tail without holding a
+   worker. A separate single scoring worker uses persisted runner-result
+   references, so judge latency does not occupy attempt workers. Attempt
+   results are retained under `attempt-results/`, pending scoring inputs under
+   `scoring-pending/`, and final per-record results are written immediately.
    `--max-concurrent-groups` controls ChemQA waves only. Each record runs through either the
    single-LLM runner or the ChemQA runner, then through the registered evaluator
    when the runner result is scoreable.
@@ -269,6 +280,18 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   Failed container removal cancels further scheduling. Docker wait polls for
   cancellation and gives the container supervisor a bounded evidence-finalizing
   stop window before removal.
+- Docker lifecycle CLI commands have explicit outer timeouts. Graceful termination
+  sends TERM and polls for up to 420 seconds; a repeated cancellation skips the
+  remaining grace and forces termination. Removal failures stop admission and
+  enter run-level cleanup errors, producing `cancelled_with_errors`. A workspace
+  whose container removal is unconfirmed remains in place for later recovery.
+  The runtime manifest retains all container cleanup outcomes, including
+  termination grace and forced-stop diagnostics.
+- Startup orphan recovery acquires an existing workspace lock after proving
+  ownership, preserves logs before removal, and allows running orphan supervisors
+  a bounded finalization window. Incomplete workspace recovery removes fixed
+  runner-owned environment paths before sealing; unsafe or uncleanable inactive
+  workspaces are quarantined. General symlink validation is not relaxed.
 - Bounded single-LLM attempts default to 7200 seconds (2 hours). The runner
   forwards this budget to OpenClaw as `--timeout`; the wrapper subprocess guard
   adds the 90-second finalization safety window and 30-second process margin,
@@ -287,6 +310,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   mutations, direct URLs, local/editable sources, alternate indexes, dependency
   target overrides, and the pinned verifier distribution are blocked for
   explicit commands under the cooperative-agent threat model.
+- Dependency commands are classified before source/target checks. Requirements
+  and constraints files are unsupported and rejected, including compact option
+  forms. Literal registry requirements remain supported. Environment target,
+  registry, cutoff, cache, and configuration overrides are rejected. Ordinary
+  HTTP command arguments are not classified as dependency operations.
 - The runner materializes the role contract, attaches current scratch paths,
   invokes `benchmarking.runtime.single_llm_openclaw_wrapper`, validates OpenClaw
   JSON stdout, and enforces the eval-aware candidate-answer contract.
@@ -314,12 +342,28 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   runner metadata.
 - Docker Python and skill scripts use
   `/benchmark/workspace/scratch/venv/bin/python`; the uv cache is
-  `scratch/tmp/cache/uv`. Missing dependency evidence rejects otherwise complete
-  Docker answers. The container removes only generated plugin-skill cache links
+  `scratch/tmp/cache/uv`. Dependency manifests use schema version 2 and independently
+  validate attempt identity, actual interpreter prefix/executable, registry cutoff,
+  freeze/inventory agreement, RECORD presence/hashes, replay lock content/hashes,
+  and dependency policy. Docker and host VGB share this scoring contract: invalid
+  necessary evidence or forbidden dependencies reject scoring while retaining the
+  answer; unavailable replay locks or native-tool fingerprints permit scoring with
+  `degraded_execution=true` and `status=partial`. A generated lock that fails
+  validation is invalid, not an unavailable-lock downgrade. Successful removal of
+  a forbidden distribution does not make its attempt scoreable. Prior provider
+  failures retain their original evidence. The container removes only generated plugin-skill cache links
   into OpenClaw's immutable image extension tree, recording their targets before
   archival; general workspace symlink validation remains unchanged.
 - Container transcript path projections are applied in memory during host
   audit, including recovery, while raw transcripts remain unchanged.
+- `RuntimePathProjection` supplies container-visible bundle paths, config policy
+  projection, and persisted audit mappings. Bundled questions use localized
+  Markdown and relative image references. Only the current record bundle mounts
+  read-only at `/benchmark/input`; records without a bundle have no input mount.
+  Guard read scopes include the exact bundle in both backends. Historical replay
+  consumes persisted path mappings when present and preserves legacy reads.
+  The image tool's `image` and `images` arguments, including every array member,
+  are checked by the guard and parsed by transcript audit.
 - The transcript is audited under the attempt access policy before the complete
   workspace is archived. A `non_evaluable` adjudication or archive failure
   rejects an otherwise complete answer; `scoreable_degraded` preserves it with
@@ -568,14 +612,11 @@ boundary. Processes still run as the same local user.
 
 ### Current risks
 
-- Docker migration has known gaps in multimodal bundle path/policy projection,
-  crash recovery with uncleaned attempt environments, dependency evidence
-  completeness checks, and indirect dependency-command validation. The CLI
-  executor still holds a worker throughout record retries and scoring even
-  after admission release. Docker repeated-cancellation handling and cleanup
-  error propagation are incomplete. See
-  `docs/design/2026-09-11-benchmark-infra-open-issues-handoff.md` for evidence and
-  acceptance criteria; existing passing smoke checks do not close these gaps.
+- Docker migration fixes and acceptance evidence are tracked in
+  `docs/design/2026-09-11-benchmark-infra-fix-validation.md`. Dependency replay
+  unavailability is explicitly diagnostic degradation, while invalid inventory,
+  policy violations, and isolation failures remain non-scoreable. The command
+  guard remains a cooperative-agent policy, not an arbitrary shell sandbox.
 - Attempt isolation detects and adjudicates filesystem evidence but cannot prevent
   every same-user filesystem access performed inside arbitrary subprocesses.
 - The benchmark CLI still owns argument parsing, wave scheduling, final

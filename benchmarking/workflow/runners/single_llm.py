@@ -10,7 +10,7 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 from dotenv import dotenv_values
@@ -30,6 +30,9 @@ from benchmarking.core.convergence import (
     is_timeout_family_text,
 )
 from benchmarking.runtime import paths as runtime_paths
+from benchmarking.runtime.bundles import RuntimePathProjection
+from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, read_evidence, register_environment, write_evidence
+from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -39,8 +42,6 @@ from benchmarking.runtime.agent_workspace import (
 )
 from benchmarking.runtime.attempt_environment import (
     AttemptPythonEnvironment,
-    cleanup_attempt_environment,
-    cleanup_partial_attempt_environment,
     collect_dependency_manifest,
     create_attempt_environment,
     dependency_install_events,
@@ -68,8 +69,10 @@ from benchmarking.runtime.workspace_policy import (
     WorkspaceAccessPolicy,
     WorkspaceAudit,
     ensure_workspace_audit,
+    build_workspace_access_policy,
 )
 from benchmarking.skills.audit import build_skill_use_audit
+from benchmarking.workflow.attempt_queue import RetryDelay, WorkStep, staged
 
 OPENCLAW_RESPONSE_TIMEOUT_TEXT = "Request timed out before a response was generated"
 OPENCLAW_IDLE_TIMEOUT_TEXT = "The model did not produce a response before the LLM idle timeout"
@@ -628,7 +631,7 @@ class SingleLLMRunner:
                 [
                     "- This attempt has a fresh Python environment; use `$BENCHMARK_ATTEMPT_PYTHON` for scratch scripts.",
                     "- Install needed registry packages with `uv pip install PACKAGE`; installation time is part of the answer budget.",
-                    "- Do not create another venv or use pip, editable installs, URLs, local wheels, alternate indexes, or verifier packages.",
+                    "- Do not create another venv or use pip, requirements/constraints files, editable installs, URLs, local wheels, alternate indexes, or verifier packages.",
                 ]
             )
         return "\n".join(lines)
@@ -890,15 +893,7 @@ class SingleLLMRunner:
             ))
         mappings = None
         if self.execution_backend == "docker":
-            mappings = {
-                "/benchmark/workspace": str(lease.active_workspace),
-                "/benchmark/session": str(lease.scratch_dir / "session"),
-                "/opt/benchmark/skills": str(runtime_paths.skills_root),
-                "/opt/benchmark/scripts/run_skill.py": str(runtime_paths.project_root / "scripts/run_skill.py"),
-            }
-            bundle_dir = getattr(input_bundle, "bundle_dir", None)
-            if bundle_dir is not None:
-                mappings["/benchmark/input"] = str(bundle_dir)
+            mappings = RuntimePathProjection(lease.active_workspace, runtime_paths.skills_root, input_bundle).audit_mappings()
         return self.workspace_manager.audit_attempt(
             lease,
             result.runner_meta,
@@ -963,6 +958,7 @@ class SingleLLMRunner:
         attempt_env = dict(environment)
         if is_vgb and self.execution_backend == "host":
             try:
+                register_environment(lease.scratch_dir, identity.sentinel_fields(), "host")
                 attempt_environment = create_attempt_environment(
                     lease.scratch_dir,
                     bootstrap_python=sys.executable,
@@ -975,7 +971,7 @@ class SingleLLMRunner:
                 )
                 attempt_env.update(attempt_environment.to_env())
             except Exception as exc:
-                cleanup_partial_attempt_environment(lease.scratch_dir)
+                cleanup_report = cleanup_owned_environment(lease.scratch_dir)
                 result = self._unexpected_attempt_failure_result(
                     exc=exc,
                     record=record,
@@ -984,6 +980,7 @@ class SingleLLMRunner:
                     session_id=session_id,
                 )
                 result.runner_meta["attempt_environment"] = {"status": "failed", "error": str(exc)}
+                result.runner_meta["attempt_environment_cleanup"] = cleanup_report
 
         attempt_env["BENCHMARK_WORKSPACE_DIR"] = str(lease.active_workspace)
         attempt_env["BENCHMARK_ATTEMPT_INDEX"] = str(attempt_index)
@@ -993,6 +990,19 @@ class SingleLLMRunner:
         attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(lease.notes_dir)
         attempt_env["BENCHMARK_PROJECT_ROOT"] = str(Path(__file__).resolve().parents[3])
         attempt_env["BENCHMARK_SKILL_RUNNER"] = str(Path(__file__).resolve().parents[3] / "scripts" / "run_skill.py")
+        if result is None and self.execution_backend == "host" and self.config_path.is_file():
+            try:
+                config = read_evidence(self.config_path)
+                policy = self.workspace_manager.policy_for_lease(
+                    lease, role="single_llm", skills_enabled=skills_enabled,
+                    always_read_scopes=[Path(input_bundle.bundle_dir)] if input_bundle is not None else [],
+                    read_scopes=self.allowed_workspace_roots if skills_enabled else ())
+                config.setdefault("plugins", {}).setdefault("entries", {}).setdefault(
+                    "benchmark-workdir-guard", {}).setdefault("config", {}).setdefault("agentPolicies", {})[self.agent_id] = policy.to_payload()
+                write_evidence(self.config_path, config)
+            except Exception as exc:
+                result = self._unexpected_attempt_failure_result(exc=exc, record=record, group=group,
+                                                                 input_bundle=input_bundle, session_id=session_id)
         attempt_prompt = self._attach_scratch_prompt(
             prompt,
             scratch_dir=lease.scratch_dir,
@@ -1031,6 +1041,11 @@ class SingleLLMRunner:
                     session_id=session_id,
                 )
         assert result is not None
+        if result.runner_meta.get("container_cleanup", {}).get("removed") is False:
+            result.runner_meta["workspace_isolation"] = {**lease.to_meta(), "archive_ok": False,
+                "recovery_required": True, "reason": "container_execution_state_unconfirmed"}
+            self.workspace_manager._release_lease(lease)
+            return result
         if self.execution_backend == "docker":
             if result.failure is not None:
                 session_root = lease.scratch_dir / "session"
@@ -1045,22 +1060,13 @@ class SingleLLMRunner:
                     if transcript.is_file() and not transcript.is_symlink():
                         result.runner_meta["session_isolation"]["postflight_entry_session_file"] = str(transcript)
             manifest_path = lease.notes_dir / "dependency-manifest.json"
-            result.runner_meta["attempt_environment"] = (
-                json.loads(manifest_path.read_text()) if manifest_path.is_file()
-                else {"status": "manifest_failed", "error": "container dependency evidence missing"}
-            )
+            result.runner_meta["attempt_environment"] = read_evidence(manifest_path)
             result.runner_meta["dependency_audit"] = result.runner_meta["attempt_environment"].get("dependency_audit", {})
             cleanup_path = lease.notes_dir / "dependency-cleanup.json"
-            result.runner_meta["attempt_environment_cleanup"] = json.loads(cleanup_path.read_text()) if cleanup_path.is_file() else {"status": "unavailable"}
-            cleanup_partial_attempt_environment(lease.scratch_dir)
-            if result.failure is None and result.runner_meta["attempt_environment"].get("status") != "complete":
-                failed = self._unexpected_attempt_failure_result(
-                    exc=RuntimeError("Container dependency evidence is incomplete"), record=record,
-                    group=group, input_bundle=input_bundle, session_id=session_id,
-                )
-                failed.runner_meta.update(result.runner_meta)
-                result = failed
+            result.runner_meta["attempt_environment_cleanup"] = read_evidence(cleanup_path)
+            result.runner_meta["host_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
         if attempt_environment is not None:
+            manifest = {}
             try:
                 session_isolation = result.runner_meta.get("session_isolation")
                 session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
@@ -1082,11 +1088,29 @@ class SingleLLMRunner:
                 result.runner_meta["attempt_environment"] = manifest
                 result.runner_meta["dependency_audit"] = dependency_audit
             except Exception as exc:
-                result.runner_meta["attempt_environment"] = {
-                    "status": "manifest_failed",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            result.runner_meta["attempt_environment_cleanup"] = cleanup_attempt_environment(attempt_environment)
+                manifest.update(status="manifest_failed", error=f"{type(exc).__name__}: {exc}")
+                result.runner_meta["attempt_environment"] = manifest
+            result.runner_meta["attempt_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
+        if self.execution_backend == "docker" or is_vgb:
+            manifest = result.runner_meta.get("attempt_environment") or {}
+            try:
+                validation = validate_dependency_evidence(manifest, identity=identity.sentinel_fields(), scratch=lease.scratch_dir,
+                    expected_venv="/benchmark/workspace/scratch/venv" if self.execution_backend == "docker" else str(lease.scratch_dir / "venv"),
+                    pypi_cutoff=self.pypi_cutoff)
+            except (TypeError, ValueError, AttributeError) as exc:
+                validation = {"status": "invalid", "scoreable": False, "errors": [str(exc)]}
+            manifest.update(status=validation["status"], validation=validation)
+            try:
+                write_evidence(lease.notes_dir / "dependency-manifest.json", manifest)
+            except OSError as exc:
+                validation.update(status="invalid", scoreable=False, persistence_error=str(exc))
+            result.runner_meta["attempt_environment"] = manifest
+            result.runner_meta["dependency_evidence"] = validation
+            if validation["status"] == "partial":
+                result.runner_meta["degraded_execution"] = True
+            if not validation["scoreable"] and result.failure is None:
+                result = replace(result, status=RunStatus.FAILED, recovery=None, failure=FailureInfo(
+                    code="dependency_evidence_invalid", message="Attempt dependency evidence is invalid", details=validation))
         result.runner_meta["workspace_scratch"] = scratch_meta
         if skills_enabled:
             result.runner_meta["skill_scratch"] = scratch_meta
@@ -1220,6 +1244,11 @@ class SingleLLMRunner:
         }
         return result
 
+    def _execute_attempt(self, **kwargs):
+        with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
+            return self._run_isolated_attempt(**kwargs)
+
+    @staged
     def run(self, record: Any, group: Any) -> RunnerResult:
         self._configure_record_skills(record, group)
         input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
@@ -1227,7 +1256,8 @@ class SingleLLMRunner:
             record,
             websearch_enabled=group.websearch,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
-            input_bundle=input_bundle,
+            input_bundle=(RuntimePathProjection(self.workspace_manager.active_workspace_path(group_id=group.id, agent_id=self.agent_id), runtime_paths.skills_root, input_bundle).visible_bundle()
+                          if self.execution_backend == "docker" else input_bundle),
             configured_skills=set(self.configured_skills),
             time_budget_seconds=None if self.no_timeout else self.convergence_policy.timeout_seconds,
         )
@@ -1249,8 +1279,7 @@ class SingleLLMRunner:
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
             session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
-            with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
-                result = self._run_isolated_attempt(
+            result = yield WorkStep(lambda: self._execute_attempt(
                     record=record,
                     group=group,
                     input_bundle=input_bundle,
@@ -1259,10 +1288,17 @@ class SingleLLMRunner:
                     attempt_index=attempt_index,
                     wrapper_path=wrapper_path,
                     environment=env,
-                )
+                ))
             last_result = result
+            if self.workspace_manager is not None:
+                write_evidence(self.workspace_manager.output_root / "attempt-results" / str(group.id) /
+                               self._slugify(record.record_id) / f"{session_id}.json", {
+                                   "status": result.status.value, "answer": result.answer.__dict__,
+                                   "runner_meta": result.runner_meta, "raw": result.raw})
             decision = self._timeout_retry_decision(result)
             can_retry = decision.retryable and attempt_index < self.timeout_retries
+            if cancellation_token is not None and cancellation_token.is_cancelled:
+                can_retry = False
             if decision.retryable:
                 triggered = True
                 retry_reason = decision.reason
@@ -1286,10 +1322,9 @@ class SingleLLMRunner:
                     attempt_history=attempt_history,
                 )
             backoff = self.timeout_retry_backoff_seconds[attempt_index]
-            if cancellation_token is not None and cancellation_token.wait(backoff):
+            yield RetryDelay(backoff, cancellation_token.wait if cancellation_token is not None else self._sleep)
+            if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
-            else:
-                self._sleep(0 if cancellation_token is not None else backoff)
         assert last_result is not None
         return self._attach_timeout_retry_meta(
             last_result,
@@ -1338,6 +1373,14 @@ class SingleLLMRunner:
         spool = workspace / "scratch" / "outputs" / "container-spool"
         spool.mkdir(parents=True, exist_ok=True)
         config_path = spool / "openclaw.json"
+        projection = RuntimePathProjection(workspace, runtime_paths.skills_root, input_bundle)
+        policy = build_workspace_access_policy(
+            active_workspace=workspace, role="single_llm",
+            skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            protected_roots=self.workspace_manager.protected_roots,
+            always_read_scopes=([Path(input_bundle.bundle_dir)] if input_bundle is not None else []),
+            skill_read_scopes=self.allowed_workspace_roots if bool(getattr(group, "skills_enabled", True)) else (),
+        )
         materialize_container_config(
             self.config_path,
             config_path,
@@ -1345,6 +1388,8 @@ class SingleLLMRunner:
             host_workspace=workspace,
             host_skills_root=runtime_paths.skills_root,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
+            path_projection=projection,
+            workspace_policy=policy.to_payload(),
         )
         session_root = workspace / "scratch" / "session"
         (session_root / "agents" / self.agent_id / "agent").mkdir(parents=True, exist_ok=True)
@@ -1390,11 +1435,12 @@ class SingleLLMRunner:
         )
         mounts = [
             ContainerMount(workspace, PurePosixPath("/benchmark/workspace"), "rw", "workspace"),
-            ContainerMount(input_dir, PurePosixPath("/benchmark/input"), "ro", "input"),
             ContainerMount(config_path, PurePosixPath("/benchmark/config/openclaw.json"), "ro", "config"),
             ContainerMount(session_root, PurePosixPath("/benchmark/session"), "rw", "session"),
             ContainerMount(spool, PurePosixPath("/benchmark/result-spool"), "rw", "spool"),
         ]
+        if input_bundle is not None:
+            mounts.append(ContainerMount(input_dir, PurePosixPath("/benchmark/input"), "ro", "input"))
         if bool(getattr(group, "skills_enabled", True)):
             mounts.append(ContainerMount(runtime_paths.skills_root, PurePosixPath("/opt/benchmark/skills"), "ro", "skills"))
             mounts.append(ContainerMount(runtime_paths.project_root / "scripts" / "run_skill.py", PurePosixPath("/opt/benchmark/scripts/run_skill.py"), "ro", "skill_runner"))
@@ -1427,6 +1473,7 @@ class SingleLLMRunner:
                 {
                     "schema_version": 1,
                     "identity": identity.sentinel_fields(),
+                    "path_projection": projection.to_meta(),
                     "image": spec.image,
                     "network_mode": spec.network_mode,
                     "mounts": [
@@ -1441,47 +1488,75 @@ class SingleLLMRunner:
             + "\n",
             encoding="utf-8",
         )
-        handle = self.container_runtime.create(spec)
+        try:
+            handle = self.container_runtime.create(spec)
+        except ContainerRuntimeError as exc:
+            if exc.code != "container_cleanup_failed":
+                raise
+            token = self.admission_controller.cancellation_token if self.admission_controller is not None else getattr(self, "_cancellation_token", None)
+            if token is not None:
+                token.record_cleanup_error({"stage": "container_create", **exc.details})
+                token.cancel(CancellationReason(source="container_cleanup", message="Container creation cleanup unconfirmed"))
+            result = self._unexpected_attempt_failure_result(exc=exc, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+            result.runner_meta["container_cleanup"] = {"removed": False, **exc.details}
+            return result
+        result = None
+        outcome = None
+        cleanup_errors = []
         try:
             self.container_runtime.start(handle)
             outcome = self.container_runtime.collect(handle, timeout_seconds=spec.timeout_seconds, cancellation_token=getattr(self, "_cancellation_token", None))
             (spool / "stdout.log").write_text(outcome.stdout, encoding="utf-8")
             (spool / "stderr.log").write_text(outcome.stderr, encoding="utf-8")
             if outcome.timed_out:
-                return self._subprocess_timeout_result(exc=subprocess.TimeoutExpired(container_command, spec.timeout_seconds, output=outcome.stdout, stderr=outcome.stderr), record=record, group=group, input_bundle=input_bundle, session_id=session_id)
-            completed = subprocess.CompletedProcess(container_command, outcome.return_code or 0, outcome.stdout, outcome.stderr)
-            if completed.returncode != 0:
-                classification = capture_execution_error(returncode=completed.returncode, stdout=outcome.stdout, stderr=outcome.stderr, session_id=session_id)
-                return self._execution_error_result(classification=classification, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
-            payload = self._parse_json_stdout(completed, container_command)
-            payload = self._translate_container_paths(payload, session_root=session_root)
-            result_payload = self._unwrap_agent_payload(payload)
-            runner_meta = dict(result_payload.get("meta") or {})
-            runner_meta["container"] = {"container_id": handle.container_id, "container_name": handle.container_name, "image_digest": handle.image_digest, "inspect": dict(outcome.inspect), "stats": dict(outcome.stats), "cleanup": dict(outcome.cleanup)}
-            return self._build_container_runner_result(
-                payload=payload,
-                result_payload=result_payload,
-                runner_meta=runner_meta,
-                record=record,
-                group=group,
-                input_bundle=input_bundle,
-                session_id=session_id,
-            )
+                result = self._subprocess_timeout_result(exc=subprocess.TimeoutExpired(container_command, spec.timeout_seconds, output=outcome.stdout, stderr=outcome.stderr), record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+            elif outcome.return_code != 0:
+                classification = capture_execution_error(returncode=outcome.return_code or 1, stdout=outcome.stdout, stderr=outcome.stderr, session_id=session_id)
+                result = self._execution_error_result(classification=classification, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+            else:
+                completed = subprocess.CompletedProcess(container_command, 0, outcome.stdout, outcome.stderr)
+                payload = self._translate_container_paths(self._parse_json_stdout(completed, container_command), session_root=session_root)
+                result_payload = self._unwrap_agent_payload(payload)
+                runner_meta = dict(result_payload.get("meta") or {})
+                runner_meta["container"] = {"container_id": handle.container_id, "container_name": handle.container_name, "image_digest": handle.image_digest, "inspect": dict(outcome.inspect), "stats": dict(outcome.stats)}
+                result = self._build_container_runner_result(payload=payload, result_payload=result_payload,
+                    runner_meta=runner_meta, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
+        except Exception as exc:
+            result = self._unexpected_attempt_failure_result(exc=exc, record=record, group=group,
+                                                             input_bundle=input_bundle, session_id=session_id)
         finally:
             try:
                 self.container_runtime.stop(handle, grace_seconds=10)
-            except Exception:
+            except Exception as exc:
+                cleanup_errors.append({"stage": "stop", "error": str(exc)})
                 try:
                     self.container_runtime.kill(handle)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    cleanup_errors.append({"stage": "kill", "error": str(exc)})
             cleanup = self.container_runtime.remove(handle, force=True)
-            (spool / "cleanup.json").write_text(json.dumps(cleanup.__dict__, indent=2) + "\n", encoding="utf-8")
+            report = {**cleanup.__dict__, "identity": identity.sentinel_fields(), "operations": cleanup_errors}
+            if outcome is not None:
+                report.update(outcome.cleanup)
+                report.update(cancelled=outcome.cancelled, timed_out=outcome.timed_out)
+            token = self.admission_controller.cancellation_token if self.admission_controller is not None else getattr(self, "_cancellation_token", None)
+            if token is not None:
+                token.record_cleanup_outcome(report)
+            try:
+                write_evidence(spool / "cleanup.json", report)
+            except OSError as exc:
+                cleanup_errors.append({"stage": "cleanup_evidence", "error": str(exc)})
             if not cleanup.removed:
-                token = self.admission_controller.cancellation_token if self.admission_controller is not None else getattr(self, "_cancellation_token", None)
                 if token is not None:
+                    token.record_cleanup_error({"stage": "container_remove", "container_id": handle.container_id,
+                                                "identity": identity.sentinel_fields(), "error": cleanup.error})
                     token.cancel(CancellationReason(source="container_cleanup", message="Container removal failed; scheduling stopped"))
-                raise ContainerRuntimeError(f"container cleanup failed: {cleanup.error}", code="container_cleanup_failed")
+        assert result is not None
+        result.runner_meta["container_cleanup"] = report
+        result.runner_meta["path_projection"] = projection.to_meta()
+        if not cleanup.removed and result.failure is None:
+            result = replace(result, status=RunStatus.FAILED, recovery=None, failure=FailureInfo(
+                "container_cleanup_failed", "Container cleanup failed", report))
+        return result
 
     @staticmethod
     def _translate_container_paths(value: Any, *, session_root: Path) -> Any:

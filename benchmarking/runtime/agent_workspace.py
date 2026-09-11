@@ -726,12 +726,27 @@ class AttemptWorkspaceManager:
                 template_sha256=template_sha256,
                 created_at=str(sentinel.get("created_at") or ""),
             )
-            archives.append(
-                self.seal(
-                    lease,
-                    AttemptOutcome(runner_status="aborted", archive_reason="shutdown_recovery"),
-                )
-            )
+            try:
+                if identity.runner_kind == "single_llm":
+                    from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, read_evidence, write_evidence
+                    owner = read_evidence(lease.notes_dir / "environment-owner.json")
+                    if owner.get("identity") not in (None, identity.sentinel_fields()):
+                        raise ValueError("environment ownership mismatch")
+                    cleanup = cleanup_owned_environment(lease.scratch_dir)
+                    write_evidence(lease.notes_dir / "recovery-cleanup.json", cleanup)
+                    if cleanup["status"] != "complete":
+                        raise ValueError("environment cleanup failed")
+                    if not (lease.notes_dir / "dependency-manifest.json").is_file():
+                        write_evidence(lease.notes_dir / "dependency-manifest.json", {
+                            "status": "unavailable", "identity": identity.sentinel_fields(), "reason": "crash_recovery"})
+                    from benchmarking.runtime.container_attempt import cleanup_plugin_skill_links
+                    cleanup_plugin_skill_links(lease.scratch_dir / "session", host_recovery=True)
+                archives.append(self.seal(lease, AttemptOutcome(runner_status="aborted", archive_reason="shutdown_recovery")))
+            except (OSError, ValueError, WorkspaceIsolationError):
+                if workspace.exists():
+                    self._quarantine_managed_path(workspace, identity, reason="environment_recovery_failed")
+            finally:
+                self._release_lease(lease)
         return archives
 
     def recover_all_incomplete(self) -> dict[str, Any]:

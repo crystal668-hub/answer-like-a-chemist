@@ -13,6 +13,8 @@ from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.core.status import build_result_axes_from_runner
 from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationToken
+from benchmarking.workflow.attempt_queue import WorkStep, staged, persist_runner_result, load_runner_result
+from benchmarking.core.contracts import RunnerResult
 
 
 class OrchestrationError(RuntimeError):
@@ -101,6 +103,7 @@ def status_label(run_result: Any) -> str:
     return str(getattr(status, "value", status))
 
 
+@staged
 def run_group(
     *,
     group: Any,
@@ -297,20 +300,34 @@ def run_group(
         started = time.time()
         run_result: Any | None = None
         try:
-            run_result = runner.run(record, group)
+            if getattr(runner.run, "supports_steps", False):
+                run_result = yield from runner.run(record, group, staged=True)
+            else:
+                run_result = yield WorkStep(lambda: runner.run(record, group))
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
             ensure_compatible_runner_result(run_result, runner_kind=group.runner)
             axes = build_result_axes_from_runner(run_result)
             if run_result.should_score():
                 answer_text = run_result.answer.full_response_text or run_result.answer.short_answer_text
-                evaluation = evaluate_answer_fn(
-                    record,
-                    short_answer_text=run_result.answer.short_answer_text,
-                    full_response_text=run_result.answer.full_response_text,
-                    answer_text=answer_text,
-                    judge=judge,
-                )
+                if group.runner == "single_llm" and isinstance(run_result, RunnerResult):
+                    result_path = persist_runner_result(output_root / "scoring-pending" / group.id /
+                                                       f"{slugify_fn(record.record_id)}.json", run_result)
+                    run_result = None
+                    def score_saved(path=result_path, selected_record=record):
+                        saved = load_runner_result(path)
+                        return evaluate_answer_fn(selected_record, short_answer_text=saved.answer.short_answer_text,
+                            full_response_text=saved.answer.full_response_text,
+                            answer_text=saved.answer.full_response_text or saved.answer.short_answer_text, judge=judge)
+                    try:
+                        evaluation = yield WorkStep(score_saved, kind="score")
+                    finally:
+                        run_result = load_runner_result(result_path)
+                else:
+                    evaluation = yield WorkStep(lambda: evaluate_answer_fn(
+                        record, short_answer_text=run_result.answer.short_answer_text,
+                        full_response_text=run_result.answer.full_response_text,
+                        answer_text=answer_text, judge=judge), kind="score")
                 entry = GroupRecordResult(
                     **axes,
                     group_id=group.id,

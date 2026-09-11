@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import shutil
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -148,7 +149,13 @@ def collect_dependency_manifest(
 ) -> dict[str, Any]:
     env = dict(base_env or os.environ)
     env.update(environment.to_env())
-    freeze = run_subprocess(
+    def collect(command, **kwargs):
+        try:
+            return run_subprocess(command, **kwargs)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return subprocess.CompletedProcess(command, 1, "", f"{type(exc).__name__}: {exc}")
+
+    freeze = collect(
         ["uv", "pip", "freeze", "--python", str(environment.python)],
         cwd=str(environment.venv_dir.parent),
         env=env,
@@ -158,18 +165,24 @@ def collect_dependency_manifest(
         timeout=60,
     )
     packages = [line.strip() for line in (freeze.stdout or "").splitlines() if line.strip()]
-    if freeze.returncode != 0:
-        raise RuntimeError("attempt dependency freeze failed")
-    replay = _build_replay_lock(environment, packages, env=env, run_subprocess=run_subprocess)
-    probe = run_subprocess(
+    try:
+        replay = _build_replay_lock(environment, packages, env=env, run_subprocess=run_subprocess)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        replay = {"status": "unavailable", "error": str(exc)}
+    probe = collect(
         [
             str(environment.python),
             "-c",
-            "import hashlib, importlib.metadata as m, json; "
+            "import hashlib, importlib.metadata as m, json, sys, platform; "
             "rows=[]; "
             "[(rows.append({'name':d.metadata['Name'],'version':d.version,'direct_url':d.read_text('direct_url.json') or '',"
+            "'record_present':d.read_text('RECORD') is not None, "
             "'record_sha256':hashlib.sha256((d.read_text('RECORD') or '').encode()).hexdigest()})) "
-            "for d in m.distributions() if d.metadata.get('Name')]; print(json.dumps(sorted(rows,key=lambda x:x['name'].lower())))",
+            "for d in m.distributions() if d.metadata.get('Name')]; "
+            "print(json.dumps({'distributions':sorted(rows,key=lambda x:x['name'].lower()),"
+            "'python':{'executable':sys.executable,'prefix':sys.prefix,'base_prefix':sys.base_prefix,"
+            "'version':platform.python_version(),'implementation':platform.python_implementation(),"
+            "'platform':platform.platform(),'machine':platform.machine()}}))",
         ],
         cwd=str(environment.venv_dir.parent),
         env=env,
@@ -178,16 +191,17 @@ def collect_dependency_manifest(
         check=False,
         timeout=60,
     )
-    distributions: list[dict[str, str]] = []
-    if probe.returncode != 0:
-        raise RuntimeError("attempt distribution inventory failed")
+    distributions = None
+    python_info = {}
     if probe.returncode == 0:
         try:
-            distributions = [dict(item) for item in json.loads(probe.stdout) if isinstance(item, dict)]
-        except (json.JSONDecodeError, TypeError, ValueError):
-            distributions = []
+            payload = json.loads(probe.stdout)
+            distributions = payload["distributions"]
+            python_info = payload["python"]
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+            distributions = None
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "identity": dict(identity or {}),
         "python": {
             "bootstrap": environment.bootstrap_python,
@@ -196,6 +210,7 @@ def collect_dependency_manifest(
             "implementation": platform.python_implementation(),
             "platform": platform.platform(),
             "machine": platform.machine(),
+            **python_info,
         },
         "venv": {
             "path": str(environment.venv_dir),
@@ -211,6 +226,8 @@ def collect_dependency_manifest(
             "replay_lock": replay,
         },
         "distributions": distributions,
+        "collection": {"freeze": {"returncode": freeze.returncode, "stderr": freeze.stderr},
+                       "inventory": {"returncode": probe.returncode, "stderr": probe.stderr}},
         "install_events": list(install_events or []),
         "native_tools": _native_tool_fingerprints(native_tools or environment.native_tools),
         "credentials": {
@@ -299,11 +316,21 @@ def dependency_install_events(transcript_path: str | Path | None) -> list[dict[s
 
 
 def _is_dependency_command(command: str) -> bool:
-    normalized = " ".join(command.lower().split())
-    return any(
-        marker in normalized
-        for marker in ("uv pip ", "pip install ", "pip uninstall ", "python -m pip ")
-    )
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    for index, token in enumerate(tokens):
+        name = Path(token).name
+        if name == "uv" and tokens[index + 1:index + 2] == ["pip"]:
+            return True
+        if name in {"pip", "pip3"} and tokens[index + 1:index + 2] in (["install"], ["uninstall"]):
+            return True
+        if name.startswith("python") and tokens[index + 1:index + 3] == ["-m", "pip"]:
+            return True
+    return False
 
 
 def remediate_forbidden_distributions(
@@ -314,7 +341,7 @@ def remediate_forbidden_distributions(
 ) -> dict[str, Any]:
     installed = {
         _normalize_distribution(item.get("name"))
-        for item in manifest.get("distributions", [])
+        for item in manifest.get("distributions") or []
         if isinstance(item, dict)
     }
     forbidden = sorted(installed & FORBIDDEN_DISTRIBUTIONS)
@@ -368,12 +395,10 @@ def cleanup_attempt_environment(environment: AttemptPythonEnvironment) -> dict[s
 
 
 def cleanup_partial_attempt_environment(root: Path) -> None:
-    root = Path(root).expanduser().resolve()
-    for path in (root / "venv", root / ".uv-cache", root / ".runtime-bin", root / "tmp/cache/uv"):
-        if path.is_symlink() or path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(path)
+    from benchmarking.runtime.attempt_finalization import cleanup_owned_environment
+    report = cleanup_owned_environment(Path(root).expanduser())
+    if report["errors"]:
+        raise RuntimeError(f"Partial attempt cleanup failed: {report['errors']}")
 
 
 def _materialize_native_tools(tool_bin_dir: Path, *, uv: str) -> dict[str, str]:
@@ -406,9 +431,13 @@ def _native_tool_fingerprints(tools: dict[str, str]) -> dict[str, dict[str, str]
                 version = " ".join((completed.stdout or completed.stderr or "").split())[:500]
             except (OSError, subprocess.TimeoutExpired):
                 version = ""
+        try:
+            digest = binary_sha256(path) if path.is_file() else ""
+        except OSError:
+            digest = ""
         fingerprints[name] = {
             "path": str(path),
-            "sha256": binary_sha256(path) if path.is_file() else "",
+            "sha256": digest,
             "version": version,
         }
     return fingerprints

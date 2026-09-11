@@ -20,6 +20,50 @@ PLUGIN_PATH = (
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for the OpenClaw plugin test")
 class BenchmarkWorkdirGuardTests(unittest.TestCase):
+    def test_readonly_input_allows_copy_out_but_rejects_mutations(self):
+        with tempfile.TemporaryDirectory() as root:
+            workspace = Path(root) / "workspace"
+            bundle = Path(root) / "input"
+            workspace.mkdir()
+            bundle.mkdir()
+            image = bundle / "image.png"
+            image.write_bytes(b"image")
+            scopes = [{"scope_id": "input", "path": str(bundle), "kind": "directory"}]
+            for command, blocked in ((f"cat {image}", False), (f"cp {image} scratch.png", False),
+                                     (f"cp scratch.png {image}", True), (f"rm {image}", True),
+                                     (f"echo text > {image}", True)):
+                with self.subTest(command=command):
+                    result = self._run_hook(workspace=workspace, params={"command": command}, read_scopes=scopes)
+                    self.assertEqual(result is not None, blocked)
+
+    def test_image_tool_checks_single_image_and_every_array_item(self):
+        with tempfile.TemporaryDirectory() as root:
+            workspace = Path(root)
+            for params in ({"image": "/outside/image.png"}, {"images": [str(workspace / "a.png"), "/outside/b.png"]}):
+                result = self._run_hook(workspace=workspace, tool_name="image", params=params)
+                self.assertTrue(result["block"])
+
+    def test_dependency_indirection_and_environment_overrides_are_blocked(self):
+        with tempfile.TemporaryDirectory() as root:
+            workspace = Path(root)
+            for command in (
+                "uv pip install -rrequirements.txt", "uv pip install --constraint=constraints.txt rdkit",
+                "VIRTUAL_ENV=other uv pip install rdkit", "env UV_PYTHON=other uv pip install rdkit",
+                "/usr/bin/python3 -m pip install rdkit", "uv pip install 'verifier_grounded_benchmark>=1'",
+                "VIRTUAL_ENV=other UV_PYTHON=other uv pip install rdkit",
+                "$BENCHMARK_ATTEMPT_PYTHON -I -m pip install rdkit", "command uv pip install -r requirements.txt",
+            ):
+                with self.subTest(command=command):
+                    result = self._run_hook(workspace=workspace, params={"command": command}, attempt_python=True)
+                    self.assertIsNotNone(result)
+                    self.assertTrue(result["block"])
+
+    def test_network_command_and_quoted_registry_requirement_are_allowed(self):
+        with tempfile.TemporaryDirectory() as root:
+            for command in ("curl https://example.com/data", "uv pip install 'rdkit>=2024.1'", "uv pip install rdkit"):
+                with self.subTest(command=command):
+                    self.assertIsNone(self._run_hook(workspace=Path(root), params={"command": command}, attempt_python=True))
+
     def _run_hook(
         self,
         *,
@@ -29,12 +73,13 @@ class BenchmarkWorkdirGuardTests(unittest.TestCase):
         params: dict[str, object] | None = None,
         protected_roots: list[dict[str, str]] | None = None,
         attempt_python: bool = False,
+        read_scopes: list[dict[str, str]] | None = None,
     ) -> dict[str, object] | None:
         policy = {
             "policy_digest": "test-policy",
             "read_scopes": [
                 {"scope_id": "active_workspace", "path": str(workspace), "kind": "directory"}
-            ],
+            ] + (read_scopes or []),
             "write_scopes": [
                 {"scope_id": "attempt_scratch", "path": str(workspace / "scratch"), "kind": "directory"}
             ],

@@ -374,6 +374,7 @@ def replay_workspace_adjudication(
             runner_meta,
             environment=historical_environment,
             policy=policy,
+            transcript_path_mappings=(runner_meta.get("path_projection") or {}).get("container_to_host"),
         )
         audit_payload = audit.to_payload()
         review = _historical_review(audit_payload)

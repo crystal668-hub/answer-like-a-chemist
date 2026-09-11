@@ -8,10 +8,10 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, register_environment, write_evidence
+from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 
 from benchmarking.runtime.attempt_environment import (
-    cleanup_attempt_environment,
-    cleanup_partial_attempt_environment,
     collect_dependency_manifest,
     create_attempt_environment,
     dependency_install_events,
@@ -19,11 +19,11 @@ from benchmarking.runtime.attempt_environment import (
 )
 
 
-def cleanup_plugin_skill_links(session_root: Path) -> list[dict[str, str]]:
+def cleanup_plugin_skill_links(session_root: Path, *, host_recovery: bool = False) -> list[dict[str, str]]:
     """Remove only OpenClaw's generated links into the immutable image."""
     cache = session_root / "plugin-skills"
     records = []
-    if cache.is_symlink():
+    if session_root.is_symlink() or cache.is_symlink():
         raise ValueError("plugin skill cache root is a symlink")
     if not cache.is_dir():
         return records
@@ -31,7 +31,9 @@ def cleanup_plugin_skill_links(session_root: Path) -> list[dict[str, str]]:
     for link in sorted(cache.iterdir()):
         if not link.is_symlink():
             continue
-        target = link.resolve(strict=True)
+        target = Path(os.readlink(link)) if host_recovery else link.resolve(strict=True)
+        if ".." in target.parts:
+            raise ValueError("plugin skill link has an untrusted target")
         if not target.is_relative_to(extension_root) or "skills" not in target.relative_to(extension_root).parts:
             raise ValueError(f"unexpected plugin skill link: {link.name}")
         records.append({"name": link.name, "image_target": str(target)})
@@ -56,6 +58,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
     try:
+        register_environment(scratch, json.loads(os.environ["BENCHMARK_ATTEMPT_IDENTITY"]), "docker")
         environment = create_attempt_environment(
             scratch,
             bootstrap_python="/usr/local/bin/python",
@@ -94,17 +97,27 @@ def main() -> int:
                     install_events=events,
                 )
                 manifest["dependency_audit"] = remediate_forbidden_distributions(environment, manifest)
-                manifest["status"] = "complete"
+                manifest["validation"] = validate_dependency_evidence(
+                    manifest, identity=json.loads(os.environ["BENCHMARK_ATTEMPT_IDENTITY"]), scratch=scratch,
+                    expected_venv=str(environment.venv_dir), pypi_cutoff=environment.pypi_cutoff)
+                manifest["status"] = manifest["validation"]["status"]
+                write_evidence(notes / "dependency-manifest.json", manifest)
             except Exception as exc:
-                manifest = {"status": "manifest_failed", "error": f"{type(exc).__name__}: {exc}"}
+                manifest.update(status="manifest_failed", error=f"{type(exc).__name__}: {exc}")
             finally:
-                cleanup = cleanup_attempt_environment(environment)
+                cleanup = cleanup_owned_environment(scratch)
         else:
-            cleanup_partial_attempt_environment(scratch)
-        (notes / "dependency-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        (notes / "dependency-cleanup.json").write_text(json.dumps(cleanup, indent=2) + "\n")
-        plugin_cleanup = cleanup_plugin_skill_links(Path("/benchmark/session"))
-        (notes / "plugin-skill-cache-cleanup.json").write_text(json.dumps(plugin_cleanup, indent=2) + "\n")
+            cleanup = cleanup_owned_environment(scratch)
+        try:
+            plugin_cleanup = {"status": "complete", "links": cleanup_plugin_skill_links(Path("/benchmark/session"))}
+        except Exception as exc:
+            plugin_cleanup = {"status": "failed", "error": str(exc)}
+        for name, payload in (("dependency-manifest", manifest), ("dependency-cleanup", cleanup),
+                              ("plugin-skill-cache-cleanup", plugin_cleanup)):
+            try:
+                write_evidence(notes / f"{name}.json", payload)
+            except OSError as exc:
+                print(f"{name}: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

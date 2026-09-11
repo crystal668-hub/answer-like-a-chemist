@@ -24,6 +24,7 @@ class RuntimeBundle:
     bundle_dir: Path
     question_markdown: Path
     image_files: list[Path]
+    prompt_text: str | None = None
 
     def to_meta(self) -> dict[str, Any]:
         return {
@@ -31,6 +32,43 @@ class RuntimeBundle:
             "question_markdown": str(self.question_markdown),
             "image_files": [str(path) for path in self.image_files],
         }
+
+
+@dataclass(frozen=True)
+class RuntimePathProjection:
+    workspace: Path
+    skills_root: Path
+    bundle: RuntimeBundle | None = None
+
+    def audit_mappings(self) -> dict[str, str]:
+        mappings = {
+            "/benchmark/workspace": str(self.workspace.resolve()),
+            "/benchmark/session": str(self.workspace.resolve() / "scratch/session"),
+            "/opt/benchmark/skills": str(self.skills_root.resolve()),
+            "/opt/benchmark/scripts/run_skill.py": str(self.skills_root.resolve().parent / "scripts/run_skill.py"),
+        }
+        if self.bundle is not None:
+            mappings["/benchmark/input"] = str(Path(self.bundle.bundle_dir).resolve())
+        return mappings
+
+    def visible_bundle(self) -> RuntimeBundle | None:
+        if self.bundle is None:
+            return None
+        root = Path(self.bundle.bundle_dir).resolve()
+        def project(path: Path) -> Path:
+            candidate = Path(path)
+            if candidate.is_symlink() or not candidate.is_file():
+                raise RuntimeBundleError(f"Input asset is missing or a symlink: {candidate}")
+            try:
+                relative = candidate.resolve().relative_to(root)
+            except ValueError as exc:
+                raise RuntimeBundleError(f"Input asset escapes its bundle: {candidate}") from exc
+            return Path("/benchmark/input") / relative
+        return RuntimeBundle(Path("/benchmark/input"), project(self.bundle.question_markdown),
+                             [project(path) for path in self.bundle.image_files], getattr(self.bundle, "prompt_text", None))
+
+    def to_meta(self) -> dict[str, Any]:
+        return {"schema_version": 1, "container_to_host": self.audit_mappings()}
 
 
 RUNTIME_BUNDLE_LOCK = threading.Lock()
@@ -267,12 +305,16 @@ def _extension_from_image_mime(mime_type: str) -> str:
 
 
 def build_hle_question_markdown(record: BenchmarkRecord, *, image_relpaths: list[str]) -> str:
+    question = str(record.payload.get("question") or record.prompt).strip()
+    original_image = str(record.payload.get("image") or record.grading.config.get("image") or "")
+    if original_image and image_relpaths:
+        question = question.replace(original_image, image_relpaths[0])
     lines = [
         "# HLE Benchmark Record",
         f"Record ID: {record.record_id}",
         "",
         "Question:",
-        str(record.payload.get("question") or record.prompt).strip(),
+        question,
     ]
     if image_relpaths:
         lines.extend(["", "Local images to inspect:"])
@@ -322,6 +364,7 @@ def ensure_runtime_bundle(record: BenchmarkRecord, *, bundle_root: Path) -> Runt
                 image_files.append(target_path)
                 image_relpath = str(target_path.relative_to(bundle_dir))
                 image_relpaths.append(image_relpath)
+                image_rewrites[raw_path] = image_relpath
                 if visible_locators and index <= len(visible_locators):
                     locator = visible_locators[index - 1]
                     image_rewrites[locator] = image_relpath
@@ -370,4 +413,10 @@ def ensure_runtime_bundle(record: BenchmarkRecord, *, bundle_root: Path) -> Runt
                 build_hle_question_markdown(record, image_relpaths=image_relpaths),
                 encoding="utf-8",
             )
-    return RuntimeBundle(bundle_dir=bundle_dir, question_markdown=question_markdown, image_files=image_files)
+    markdown = question_markdown.read_text(encoding="utf-8")
+    for match in SUPERCHEM_MARKDOWN_IMAGE_URL_RE.finditer(markdown):
+        raw_path = match.group("url")
+        target = bundle_dir / raw_path
+        if urlparse(raw_path).scheme or Path(raw_path).is_absolute() or not target.resolve().is_relative_to(bundle_dir.resolve()) or not target.is_file():
+            raise RuntimeBundleError(f"Unlocalized or unavailable image reference: {raw_path}")
+    return RuntimeBundle(bundle_dir=bundle_dir, question_markdown=question_markdown, image_files=image_files, prompt_text=markdown)

@@ -8,6 +8,7 @@ injectable and testable.
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import socket
 import re
@@ -20,8 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
-from benchmarking.runtime.agent_workspace import AttemptIdentity, AttemptWorkspaceManager
+from benchmarking.runtime.agent_workspace import AttemptIdentity, AttemptWorkspaceManager, workspace_slug
 from benchmarking.runtime.cancellation import CancellationToken
+from benchmarking.runtime.bundles import RuntimePathProjection
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -106,10 +108,14 @@ class DockerContainerRuntime:
         return self.docker
 
     def _command(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        kwargs.setdefault("timeout", 30 if args[0] in {"create", "start", "logs", "kill", "rm", "stop"} else 15)
         try:
             result = self._run([self._require_docker(), *args], text=True, capture_output=True, check=False, **kwargs)
         except subprocess.TimeoutExpired as exc:
-            raise ContainerRuntimeError(str(exc), code="docker_command_timeout") from exc
+            raise ContainerRuntimeError(
+                f"docker {args[0]} exceeded its {kwargs['timeout']}-second command deadline",
+                code="docker_command_timeout", details={"stage": args[0], "timeout_seconds": kwargs["timeout"]},
+            ) from exc
         except OSError as exc:
             raise ContainerRuntimeError(str(exc), code="docker_command_failed") from exc
         if result.returncode != 0:
@@ -176,15 +182,34 @@ class DockerContainerRuntime:
         for mount in spec.mounts:
             args += ["--mount", f"type=bind,src={mount.source.resolve()},dst={mount.target},readonly={str(mount.mode == 'ro').lower()}"]
         args += [spec.image, *spec.command]
-        result = self._command(args)
+        try:
+            result = self._command(args)
+        except ContainerRuntimeError as exc:
+            if exc.code == "docker_command_timeout":
+                try:
+                    inspected = self.inspect(name)
+                    actual = (inspected.get("Config") or {}).get("Labels") or {}
+                    if any(actual.get(key) != value for key, value in labels.items()):
+                        raise ContainerRuntimeError("timed-out create ownership is unconfirmed")
+                    self._command(["rm", "-f", name])
+                except ContainerRuntimeError as cleanup_error:
+                    raise ContainerRuntimeError(str(exc), code="container_cleanup_failed", details={
+                        "container_name": name, "identity": spec.identity.sentinel_fields(),
+                        "cleanup_error": str(cleanup_error), "execution_state": "unconfirmed"}) from exc
+            raise
         container_id = result.stdout.strip().splitlines()[-1]
         if not container_id:
             raise ContainerRuntimeError("docker create returned no container id", code="container_create_failed")
         try:
             inspect = self.inspect(container_id)
             image_digest = str(inspect.get("Image") or self.resolve_image_digest(spec.image))
-        except Exception:
-            self._command(["rm", "-f", container_id], timeout=30)
+        except Exception as exc:
+            try:
+                self._command(["rm", "-f", container_id], timeout=30)
+            except ContainerRuntimeError as cleanup_error:
+                raise ContainerRuntimeError(str(exc), code="container_cleanup_failed", details={
+                    "container_id": container_id, "identity": spec.identity.sentinel_fields(),
+                    "cleanup_error": str(cleanup_error), "execution_state": "unconfirmed"}) from exc
             raise
         return ContainerAttemptHandle(container_id, name, spec.identity, image_digest, labels=labels)
 
@@ -220,13 +245,14 @@ class DockerContainerRuntime:
     def collect(self, handle: ContainerAttemptHandle, *, timeout_seconds: float | None = None, cancellation_token: CancellationToken | None = None) -> ContainerAttemptResult:
         timed_out = False
         cancelled = False
+        termination = {}
         deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         while True:
             cancelled = cancellation_token is not None and cancellation_token.is_cancelled
             timed_out = deadline is not None and time.monotonic() >= deadline
             if cancelled or timed_out:
                 # Give the container supervisor time to stop the agent and preserve evidence.
-                self.stop(handle, grace_seconds=300)
+                termination = self.terminate(handle, cancellation_token=cancellation_token)
                 break
             interval = min(1.0, max(0.01, deadline - time.monotonic())) if deadline is not None else 1.0
             try:
@@ -245,10 +271,26 @@ class DockerContainerRuntime:
             stats = self.stats(handle.container_id)
         except ContainerRuntimeError:
             stats = {}
-        return ContainerAttemptResult(handle, state.get("ExitCode"), logs.stdout, logs.stderr, timed_out, cancelled, bool(state.get("OOMKilled")), inspect=inspect, stats=stats)
+        return ContainerAttemptResult(handle, state.get("ExitCode"), logs.stdout, logs.stderr, timed_out, cancelled, bool(state.get("OOMKilled")), inspect=inspect, stats=stats, cleanup={"termination": termination})
 
     def stop(self, handle: ContainerAttemptHandle, *, grace_seconds: float) -> None:
-        self._command(["stop", "--time", str(max(0, int(grace_seconds))), handle.container_id])
+        self._command(["stop", "--time", str(max(0, int(grace_seconds))), handle.container_id], timeout=max(0, grace_seconds) + 30)
+
+    def terminate(self, handle: ContainerAttemptHandle, *, cancellation_token: CancellationToken | None = None, grace_seconds: float = 420) -> dict[str, Any]:
+        self._command(["kill", "--signal", "TERM", handle.container_id])
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            if cancellation_token is not None and cancellation_token.request_count > 1:
+                break
+            try:
+                self._command(["wait", handle.container_id], timeout=min(1, max(0.01, deadline - time.monotonic())))
+                return {"term_sent": True, "forced": False, "grace_seconds": grace_seconds}
+            except ContainerRuntimeError as exc:
+                if exc.code != "docker_command_timeout":
+                    raise
+        self.kill(handle)
+        return {"term_sent": True, "forced": True, "grace_seconds": grace_seconds,
+                "repeat_cancellation": cancellation_token is not None and cancellation_token.request_count > 1}
 
     def kill(self, handle: ContainerAttemptHandle) -> None:
         self._command(["kill", handle.container_id])
@@ -268,6 +310,7 @@ class DockerContainerRuntime:
             if not container_id.strip():
                 continue
             report = {"container_id": container_id.strip(), "removed": False}
+            lock_handle = None
             try:
                 inspected = self.inspect(container_id.strip())
                 labels = inspected.get("Config", {}).get("Labels") or {}
@@ -298,10 +341,29 @@ class DockerContainerRuntime:
                     raise ValueError("container identity does not match workspace sentinel")
                 if Path(sentinel["workspace_path"]).resolve() != workspace.resolve():
                     raise ValueError("workspace sentinel path mismatch")
+                lock_path = workspace.parents[2] / "locks" / f"{workspace_slug(identity.group_id)}--{workspace_slug(identity.agent_id)}.lock"
+                if lock_path.is_symlink():
+                    raise ValueError("workspace recovery lock is a symlink")
+                if lock_path.exists():
+                    lock_handle = lock_path.open("rb")
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                handle = ContainerAttemptHandle(container_id.strip(), str(inspected.get("Name", "")), identity, str(inspected.get("Image", "")))
+                if (inspected.get("State") or {}).get("Running"):
+                    self.terminate(handle)
+                from benchmarking.runtime.attempt_finalization import write_evidence
+                try:
+                    logs = self._command(["logs", container_id.strip()])
+                    write_evidence(workspace / "scratch/notes/orphan-evidence.json", {
+                        "identity": identity.sentinel_fields(), "stdout": logs.stdout, "stderr": logs.stderr})
+                except (OSError, ContainerRuntimeError) as exc:
+                    report["evidence_error"] = str(exc)
                 self._command(["rm", "-f", container_id.strip()], timeout=30)
                 report["removed"] = True
             except (ContainerRuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 report["reason"] = str(exc)
+            finally:
+                if lock_handle is not None:
+                    lock_handle.close()
             reports.append(report)
         return reports
 
@@ -314,6 +376,8 @@ def materialize_container_config(
     host_workspace: Path,
     host_skills_root: Path,
     skills_enabled: bool,
+    path_projection: RuntimePathProjection | None = None,
+    workspace_policy: Mapping[str, Any] | None = None,
 ) -> Path:
     """Rewrite the run config to stable in-container paths.
 
@@ -334,7 +398,8 @@ def materialize_container_config(
 
     def rewrite(value: Any) -> Any:
         if isinstance(value, str):
-            replacements = (
+            replacements = tuple(sorted(((host, container) for container, host in
+                                 (path_projection.audit_mappings() if path_projection else {}).items()), key=lambda item: len(item[0]), reverse=True)) + (
                 (host_workspace_text, "/benchmark/workspace"),
                 (host_skills_text, "/opt/benchmark/skills"),
                 ("/scripts/run_skill.py", "/opt/benchmark/scripts/run_skill.py"),
@@ -353,6 +418,9 @@ def materialize_container_config(
             return {key: rewrite(item) for key, item in value.items()}
         return value
 
+    if workspace_policy is not None:
+        payload.setdefault("plugins", {}).setdefault("entries", {}).setdefault(
+            "benchmark-workdir-guard", {}).setdefault("config", {}).setdefault("agentPolicies", {})[agent_id] = dict(workspace_policy)
     payload = rewrite(payload)
     payload.pop("secrets", None)
     entries = payload["agents"]["list"]

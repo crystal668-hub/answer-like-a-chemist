@@ -26,6 +26,27 @@ from benchmarking.runtime.workspace_policy import (
 
 
 class AttemptWorkspaceManagerTests(unittest.TestCase):
+    def test_image_array_access_to_protected_material_is_audited(self):
+        image = self.root / "verifier-resources" / "hidden.png"
+        image.parent.mkdir()
+        image.write_bytes(b"hidden")
+        audit = self._audit_tool_event(tool_name="image", arguments={"images": [str(image)]},
+                                      result={"content": [{"type": "text", "text": "image data"}]})
+        self.assertEqual(audit.adjudication, "non_evaluable")
+        self.assertEqual(audit.contamination_status, "confirmed")
+
+    def test_crash_recovery_cleans_container_venv_without_relaxing_symlink_policy(self):
+        lease = self.manager.prepare(self._identity())
+        python = lease.scratch_dir / "venv/bin/python"
+        python.parent.mkdir(parents=True)
+        python.symlink_to("/usr/local/bin/python")
+        self.manager._release_lease(lease)
+        recovered = self._manager(invocation_id="invocation-2").recover_all_incomplete()
+        self.assertEqual(recovered["status"], "recovered")
+        self.assertEqual(len(recovered["archives"]), 1)
+        self.assertFalse(lease.active_workspace.exists())
+        self.assertEqual(self._manager(invocation_id="invocation-3").recover_all_incomplete()["status"], "clean")
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)

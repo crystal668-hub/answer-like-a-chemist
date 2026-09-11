@@ -300,6 +300,8 @@ _PATH_ARGUMENT_KEYS = frozenset(
     {
         "path",
         "file_path",
+        "image",
+        "images",
         "directory",
         "workdir",
         "cwd",
@@ -829,17 +831,20 @@ def _candidate_paths(
         return [], None
     for key, value in arguments.items():
         normalized_key = str(key).strip().lower()
-        if normalized_key not in _PATH_ARGUMENT_KEYS or not isinstance(value, (str, os.PathLike)):
+        if normalized_key not in _PATH_ARGUMENT_KEYS:
             continue
-        candidate = _resolve_candidate(
-            str(value),
-            source=f"{normalized_tool or 'tool'}.{normalized_key}",
-            base_dir=workspace,
-            environment=environment,
-            require_path_syntax=False,
-        )
-        if candidate is not None:
-            candidates.append(candidate)
+        for item in value if isinstance(value, list) else [value]:
+            if not isinstance(item, (str, os.PathLike)) or not str(item).strip():
+                continue
+            candidate = _resolve_candidate(
+                str(item),
+                source=f"{normalized_tool or 'tool'}.{normalized_key}",
+                base_dir=workspace,
+                environment=environment,
+                require_path_syntax=False,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
     return candidates, None
 
 
