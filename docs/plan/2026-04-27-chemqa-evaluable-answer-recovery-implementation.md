@@ -1,6 +1,6 @@
 # ChemQA Evaluable Answer Recovery Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make ChemQA benchmark recovery preserve evaluable answers whenever a trustworthy answer can be reconstructed, and expose the new evaluability semantics through per-record results and aggregate reporting.
 
@@ -922,7 +922,7 @@ git commit -m "feat: version benchmark results payload for evaluability schema"
 
 **Files:**
 - Modify: `GLOBAL_DEV_SPEC.md`
-- Read: `docs/superpowers/specs/2026-04-27-chemqa-evaluable-answer-recovery-design.md`
+- Historical reference (not present in this repository): `2026-04-27-chemqa-evaluable-answer-recovery-design.md`
 - Test: `tests/test_benchmark_test.py`
 
 - [ ] **Step 1: Document the new result semantics in `GLOBAL_DEV_SPEC.md`**

@@ -7,7 +7,7 @@
 > that matrix; the hard-coded `SKILL_TREE` snippets below describe the original
 > implementation only.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace deterministic record-level skill routing with full benchmark skill availability, a lightweight Hierarchical Skill Tree, model-driven skill use, and post-run audit metrics.
 
@@ -19,10 +19,15 @@
 
 ## Current Branch And Old Branch Decision
 
+Historical local worktree paths are represented below by
+`${IMPLEMENTATION_WORKTREE}` and `${PREVIOUS_ROUTER_WORKTREE}`. Resolve their
+actual locations with `git worktree list` before using any example commands;
+these placeholders do not imply that the historical worktrees still exist.
+
 New implementation branch:
 
 - Branch: `skill-autonomous-discovery-audit`
-- Worktree: `/Users/xutao/.config/superpowers/worktrees/workspace/skill-autonomous-discovery-audit`
+- Worktree: `${IMPLEMENTATION_WORKTREE}`
 - Base: local `master` at `d02027d`
 - Baseline check already run: `uv run pytest tests/test_benchmark_prompts.py tests/test_benchmark_config_runtime.py tests/test_experimental_chemistry_skill_matrix.py -q`
 - Baseline result: `19 passed`
@@ -30,7 +35,7 @@ New implementation branch:
 Old router repair branch:
 
 - Branch: `skill-injection-routing-repair`
-- Worktree: `/Users/xutao/.config/superpowers/worktrees/workspace/skill-injection-routing-repair`
+- Worktree: `${PREVIOUS_ROUTER_WORKTREE}`
 - Status: clean
 - Merge status: not merged into `master`
 - Unique commits: 9 commits from `f5b3151` through `caa3e60`
@@ -40,7 +45,7 @@ Deletion commands when approved:
 
 ```bash
 git -C /Users/xutao/.openclaw/workspace tag archive/skill-injection-routing-repair caa3e60
-git -C /Users/xutao/.openclaw/workspace worktree remove /Users/xutao/.config/superpowers/worktrees/workspace/skill-injection-routing-repair
+git -C /Users/xutao/.openclaw/workspace worktree remove ${PREVIOUS_ROUTER_WORKTREE}
 git -C /Users/xutao/.openclaw/workspace branch -D skill-injection-routing-repair
 ```
 
@@ -1508,7 +1513,7 @@ If no edits were required, do not create an empty commit.
 Run:
 
 ```bash
-git -C /Users/xutao/.config/superpowers/worktrees/workspace/skill-autonomous-discovery-audit branch --show-current
+git -C ${IMPLEMENTATION_WORKTREE} branch --show-current
 ```
 
 Expected: `skill-autonomous-discovery-audit`.
@@ -1518,7 +1523,7 @@ Expected: `skill-autonomous-discovery-audit`.
 Run:
 
 ```bash
-git -C /Users/xutao/.config/superpowers/worktrees/workspace/skill-injection-routing-repair status --short
+git -C ${PREVIOUS_ROUTER_WORKTREE} status --short
 ```
 
 Expected: no output.
@@ -1538,7 +1543,7 @@ Expected: command succeeds. If the tag already exists at `caa3e60`, keep it and 
 Run:
 
 ```bash
-git -C /Users/xutao/.openclaw/workspace worktree remove /Users/xutao/.config/superpowers/worktrees/workspace/skill-injection-routing-repair
+git -C /Users/xutao/.openclaw/workspace worktree remove ${PREVIOUS_ROUTER_WORKTREE}
 ```
 
 Expected: worktree removed.

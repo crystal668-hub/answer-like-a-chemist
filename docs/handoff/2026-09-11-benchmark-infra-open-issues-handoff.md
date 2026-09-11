@@ -3,7 +3,7 @@
 状态：`OPEN`
 
 后续实现：六项均已接入修复及自动化回归，见
-[本轮验收记录](2026-09-11-benchmark-infra-fix-validation.md)。交接暂不关闭：
+[本轮验收记录](../report/2026-09-11-benchmark-infra-fix-validation.md)。交接暂不关闭：
 SuperChem 完整模型验收及 VGB 模型安装后评分受到连接失败影响，尚未完成。
 下文保留原审查基线；依赖重放 lock 缺失的评分规则以后续验收记录中的用户确认决策为准。
 
@@ -22,8 +22,8 @@ SuperChem 完整模型验收及 VGB 模型安装后评分受到连接失败影�
 1. `/Users/xutao/.openclaw/workspace/AGENTS.md`
 2. `/Users/xutao/.openclaw/workspace/GLOBAL_DEV_SPEC.md`
 3. 本文
-4. `docs/design/infra-fix-handoff.md`：第一轮原始交接范围。
-5. `docs/design/infra-fix-validation.md`：第一轮实现及有限验收证据。
+4. `docs/handoff/infra-fix-handoff.md`：第一轮原始交接范围。
+5. `docs/report/infra-fix-validation.md`：第一轮实现及有限验收证据。
 
 代码与文档冲突时，以代码为准。项目根目录为 `/Users/xutao/.openclaw/workspace`，不是上级运行时目录。使用 `uv run ...` 或项目 `.venv` 执行脚本和测试。实现后同步更新当前规范，运行定向和全量测试，通过后提交 Git。不要把待实现设计描述成现状。
 

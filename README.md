@@ -1,5 +1,7 @@
 ## Verifier-grounded OpenClaw usage
 
+Documentation catalog: [docs/README.md](docs/README.md).
+
 The integration follows the public `verifier-grounded-benchmark` API. Dataset
 provisioning reads `track.prompts()`, OpenClaw acts as the external model
 caller, and isolated scoring calls `track.evaluate_one({task_id, response})`.
@@ -47,7 +49,7 @@ the complete selected dataset. The three dataset names are
 and `verifier_grounded_property_calculation` (2 tasks).
 
 The complete integration contract is documented in
-`docs/superpowers/specs/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`.
+`docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`.
 
 ## Local paper-processing
 

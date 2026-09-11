@@ -1,6 +1,6 @@
 # Benchmark Infra 重构待修复问题交接文档
 
-状态：`PARTIALLY COMPLETED / REOPENED`。第一轮实现见 `infra-fix-validation.md`；复审发现的六项未关闭问题以 [2026-09-11 后续交接](2026-09-11-benchmark-infra-open-issues-handoff.md) 为准。下文保留原始交接范围。
+状态：`PARTIALLY COMPLETED / REOPENED`。第一轮实现见 [首轮验收记录](../report/infra-fix-validation.md)；复审发现的六项未关闭问题以 [2026-09-11 后续交接](2026-09-11-benchmark-infra-open-issues-handoff.md) 为准。下文保留原始交接范围。
 
 更新时间：2026-09-11
 
@@ -349,7 +349,7 @@ CLI 默认 `docker`，但以下内部构造函数仍默认 `host`：
 
 ### 9.5 历史设计文档
 
-`docs/superpowers/plans/` 和 `docs/superpowers/specs/` 中的旧 health-filtered 描述属于历史决策记录，不建议删除或批量改写。`GLOBAL_DEV_SPEC.md` 只描述当前系统，必须随实现更新；当前设计文档可增加 superseded 注释，但不应伪造历史。
+`docs/plan/` 和 `docs/design/` 中的旧 health-filtered 描述属于历史决策记录，不建议删除或批量改写。`GLOBAL_DEV_SPEC.md` 只描述当前系统，必须随实现更新；当前设计文档可增加 superseded 注释，但不应伪造历史。
 
 ## 10. 明确不能删除的模块
 

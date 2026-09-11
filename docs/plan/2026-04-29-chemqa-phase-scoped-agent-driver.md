@@ -1,6 +1,6 @@
 # ChemQA Phase-Scoped Agent Driver Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make ChemQA role execution phase-scoped so a normal OpenClaw turn without an artifact no longer becomes an immediate lane failure.
 
@@ -265,7 +265,7 @@ Run:
 ```bash
 git -C /Users/xutao/.openclaw/workspace status --short
 git -C /Users/xutao/.openclaw/workspace diff --stat
-git -C /Users/xutao/.openclaw/workspace add docs/superpowers/plans/2026-04-29-chemqa-phase-scoped-agent-driver.md skills/chemqa-review/scripts/chemqa_review_openclaw_driver.py skills/chemqa-review/scripts/materialize_runplan.py skills/chemqa-review/scripts/control_store.py skills/chemqa-review/tests/test_chemqa_review_runtime.py skills/debateclaw-v1/scripts/openclaw_debate_agent.py GLOBAL_DEV_SPEC.md
+git -C /Users/xutao/.openclaw/workspace add docs/plan/2026-04-29-chemqa-phase-scoped-agent-driver.md skills/chemqa-review/scripts/chemqa_review_openclaw_driver.py skills/chemqa-review/scripts/materialize_runplan.py skills/chemqa-review/scripts/control_store.py skills/chemqa-review/tests/test_chemqa_review_runtime.py skills/debateclaw-v1/scripts/openclaw_debate_agent.py GLOBAL_DEV_SPEC.md
 git -C /Users/xutao/.openclaw/workspace commit -m "fix: make chemqa agent driver phase scoped"
 ```
 

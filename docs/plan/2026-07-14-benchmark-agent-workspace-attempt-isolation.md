@@ -7,7 +7,7 @@
 分支：`feature/benchmark-attempt-workspace-isolation`
 
 设计依据：
-`docs/superpowers/specs/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md`
+`docs/design/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md`
 
 ## 1. 目标与完成定义
 

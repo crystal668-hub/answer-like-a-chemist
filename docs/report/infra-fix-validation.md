@@ -7,7 +7,7 @@ Scope correction (2026-09-11): the passing checks below establish the tested
 paths only, not completion of the entire migration. The follow-up review found
 six open issues in multimodal paths, crash recovery, dependency evidence and
 policy, attempt scheduling, and cancellation. See
-[the open-issues handoff](2026-09-11-benchmark-infra-open-issues-handoff.md).
+[the open-issues handoff](../handoff/2026-09-11-benchmark-infra-open-issues-handoff.md).
 The earlier run outcomes remain valid evidence within their tested scope.
 
 ## Implemented Contracts

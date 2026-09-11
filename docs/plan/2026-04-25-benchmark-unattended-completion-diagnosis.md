@@ -1,6 +1,6 @@
 # Benchmark Unattended Completion Diagnosis Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:systematic-debugging` before any code changes. This document is a diagnosis and analysis plan, not an implementation plan. Do not expand scope beyond the bottlenecks that prevent unattended completion of the current benchmark run.
+> **For agentic workers:** REQUIRED SUB-SKILL: Trace architecture, data flow, and root causes before any code changes. This document is a diagnosis and analysis plan, not an implementation plan. Do not expand scope beyond the bottlenecks that prevent unattended completion of the current benchmark run.
 
 **Goal:** Locate the smallest root-cause fix set that allows the current ChemQA benchmark path to complete without manual recovery intervention or premature execution-failure classification.
 

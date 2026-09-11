@@ -1,6 +1,6 @@
 # OpenClaw Healthcheck Repair Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将本次全仓库体检的四个发现收敛为一条低风险修复路线：先恢复测试可复现性，再澄清 ChemQA 真实控制面，再把 provider skill 使用从 prompt 约束升级为可审计运行时合同，最后逐步瘦身 `benchmark_test.py`。
 

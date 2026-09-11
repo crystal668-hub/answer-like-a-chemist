@@ -20,9 +20,11 @@ runbooks.
 - Persistent source changes belong under this root. The primary source surfaces
   are `benchmarking/`, `skills/`, `scripts/`, `docs/`, `tests/`,
   `pyproject.toml`, and `uv.lock`.
-- All documentation and subdirectories under `docs/superpowers/` are tracked
-  source content; other generated or local documentation remains subject to the
-  repository ignore rules.
+- Maintained documentation under `docs/` is tracked source content, organized by
+  purpose into `design/`, `plan/`, `handoff/`, `report/`, `guide/`, and `research/`.
+  `docs/AGENTS.md` defines classification and maintenance rules;
+  `docs/README.md` indexes the complete collection. Runtime artifacts remain
+  under `state/` and local metadata remains subject to repository ignore rules.
 
 ### OpenClaw runtime home
 
@@ -633,7 +635,7 @@ boundary. Processes still run as the same local user.
 ### Current risks
 
 - Docker migration fixes and acceptance evidence are tracked in
-  `docs/design/2026-09-11-benchmark-infra-fix-validation.md`. Dependency replay
+  `docs/report/2026-09-11-benchmark-infra-fix-validation.md`. Dependency replay
   unavailability is explicitly diagnostic degradation, while invalid inventory,
   policy violations, and isolation failures remain non-scoreable. The command
   guard remains a cooperative-agent policy, not an arbitrary shell sandbox.
@@ -671,19 +673,22 @@ boundary. Processes still run as the same local user.
 
 ## 6. Specification and Runbook Index
 
+- `docs/README.md`: complete document catalog grouped by purpose.
+- `docs/AGENTS.md`: documentation classification, naming, status, and link rules.
+
 ### Normative project and benchmark contracts
 
 - `AGENTS.md`: repository workflow, canonical document rule, test and commit
   requirements.
-- `docs/superpowers/specs/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md`:
+- `docs/design/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md`:
   current attempt behavior, access policy, four-axis adjudication, and historical
   replay contract.
-- `docs/superpowers/specs/2026-07-16-benchmark-forbidden-path-root-containment-spec.md`:
+- `docs/design/2026-07-16-benchmark-forbidden-path-root-containment-spec.md`:
   protected-root containment and transcript path evidence.
-- `docs/superpowers/specs/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md`:
+- `docs/design/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md`:
   typed audit recovery, EOF heredoc handling, owned-process cancellation, and
   persistent cancellation terminal states.
-- `docs/superpowers/specs/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`:
+- `docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`:
   verifier-grounded dataset exposure and isolated scoring contract.
 - `benchmarking/resources/verifier_grounded/release.json`: current pinned
   verifier-grounded release identity.
@@ -691,7 +696,7 @@ boundary. Processes still run as the same local user.
 ### Operational runbooks and component contracts
 
 - `README.md`: verifier-grounded CLI usage and paper-processing operations.
-- `docs/benchmark-dashboard-usage.md`: dashboard launch, data sources, and review
+- `docs/guide/benchmark-dashboard-usage.md`: dashboard launch, data sources, and review
   workflow.
 - `skills/debateclaw-v1/SKILL.md` and `skills/debateclaw-v1/references/`:
   DebateClaw presets, runtime conventions, model/slot mapping, and recovery.

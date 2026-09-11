@@ -1,6 +1,6 @@
 # Skill Injection Routing Architecture Repair Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace benchmark skill injection from a broad text inventory with a record-scoped route-select-load-execute-trace architecture that lets agents use the right chemistry skill only when the task needs it.
 
@@ -1309,7 +1309,7 @@ git commit -m "feat: pass selected skill contracts to chemqa"
 
 **Files:**
 - Modify: `workspace/GLOBAL_DEV_SPEC.md`
-- Modify or create: `workspace/docs/superpowers/specs/2026-05-07-skill-injection-routing-architecture-repair-plan.md`
+- Modify or create: `workspace/docs/plan/2026-05-07-skill-injection-routing-architecture-repair-plan.md`
 
 - [ ] **Step 1: Update global spec capability status**
 
@@ -1336,7 +1336,7 @@ Under `Source modules -> workspace/benchmarking/`, update:
 Run:
 
 ```bash
-rg -n "compact grouped route summaries|Experimental chemistry skill routing rules|84 local skill routes" workspace/GLOBAL_DEV_SPEC.md workspace/docs/superpowers/specs
+rg -n "compact grouped route summaries|Experimental chemistry skill routing rules|84 local skill routes" workspace/GLOBAL_DEV_SPEC.md workspace/docs/design
 ```
 
 Expected: no stale claim that runtime prompts inject the full compact matrix by default.
@@ -1344,7 +1344,7 @@ Expected: no stale claim that runtime prompts inject the full compact matrix by 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add workspace/GLOBAL_DEV_SPEC.md workspace/docs/superpowers/specs/2026-05-07-skill-injection-routing-architecture-repair-plan.md
+git add workspace/GLOBAL_DEV_SPEC.md workspace/docs/plan/2026-05-07-skill-injection-routing-architecture-repair-plan.md
 git commit -m "docs: document skill routing architecture repair"
 ```
 

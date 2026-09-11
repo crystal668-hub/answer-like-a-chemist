@@ -6,7 +6,7 @@
 > `SKILL_TREE` references below are historical design snippets; runtime tree
 > views are derived by `benchmarking.skills.tree`.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent malformed OpenClaw stdout from becoming scoreable benchmark answers, and make benchmark-advertised chemistry skills execute through a fixed workspace `uv run` runtime with startup health checks.
 
@@ -18,7 +18,14 @@
 
 ## Scope
 
-This plan modifies the `skill-autonomous-discovery-audit` worktree at `/Users/xutao/.config/superpowers/worktrees/workspace/skill-autonomous-discovery-audit`.
+The later references to `docs/2026-05-09-single-llm-benchmark-blockers.md`
+identify a historical document absent from this repository. The example edit
+and commit commands are historical instructions, not current runnable guidance.
+
+`${IMPLEMENTATION_WORKTREE}` represents the historical local worktree path.
+Resolve its actual location with `git worktree list` before using this plan.
+
+This plan modifies the `skill-autonomous-discovery-audit` worktree at `${IMPLEMENTATION_WORKTREE}`.
 
 This plan covers two required behaviors:
 
@@ -1518,7 +1525,7 @@ Append to `docs/2026-05-09-single-llm-benchmark-blockers.md`:
 ```markdown
 ## Resolution Plan Status
 
-The implementation plan in `docs/superpowers/plans/2026-05-09-benchmark-result-contract-skill-runtime-health.md` addresses the two merge-blocking architecture issues:
+The implementation plan in `docs/plan/2026-05-09-benchmark-result-contract-skill-runtime-health.md` addresses the two merge-blocking architecture issues:
 
 - malformed OpenClaw stdout can no longer enter answer extraction or evaluation as payload data;
 - benchmark skills-on runs use startup health checks and a workspace `uv run` skill runner so unavailable skill paths become explicit diagnostics instead of repeated ambiguous tool failures.

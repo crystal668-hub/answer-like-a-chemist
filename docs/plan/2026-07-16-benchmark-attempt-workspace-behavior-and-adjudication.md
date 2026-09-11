@@ -7,7 +7,7 @@
 分支：`feat/benchmark-attempt-workspace-adjudication`
 
 规格依据：
-`docs/superpowers/specs/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md`
+`docs/design/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md`
 
 ## 1. 完成定义
 

@@ -1,6 +1,6 @@
 # Benchmark Inputs and Runner Convergence Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix the temp SUPERChem image path failure, repair SUPERChem image extraction at the source, and add benchmark runner-level convergence/recovery controls for all benchmark records.
 

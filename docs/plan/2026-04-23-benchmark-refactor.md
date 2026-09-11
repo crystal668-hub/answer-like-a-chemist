@@ -1,6 +1,6 @@
 # Benchmark Architecture Refactor Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Refactor the benchmark stack so execution status, experiment definition, runtime provisioning, dataset parsing, and evaluation are explicit contracts instead of hidden cross-file conventions.
 

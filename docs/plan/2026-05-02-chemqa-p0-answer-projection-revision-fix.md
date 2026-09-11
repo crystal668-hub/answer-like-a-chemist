@@ -1,6 +1,6 @@
 # ChemQA P0 Answer Projection and Revision Propagation Fix Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Execution:** Follow the repository AGENTS.md and implement this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix the P0 ChemQA failure mode where the transcript or long answer contains the correct result, but the benchmark-visible final answer uses a stale or malformed short-answer projection.
 
