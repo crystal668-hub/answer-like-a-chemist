@@ -22,6 +22,12 @@ UNSUPPORTED_THINKING_LEVEL_RE = re.compile(
     r"(?: Use one of: (?P<supported>[^.]+)\.)?",
     re.I | re.M,
 )
+SESSION_TAKEOVER_RE = re.compile(
+    r"(?P<error>EmbeddedAttemptSessionTakeoverError:\s*)?"
+    r"session file changed while embedded prompt lock was released:\s*(?P<path>\S+)",
+    re.I,
+)
+SESSION_LANE_RE = re.compile(r"lane=(?P<lane>\S+)")
 RAW_ERROR_RE = re.compile(r"\brawError=(?P<raw>.+)$", re.I)
 HTTP_ERROR_RE = re.compile(
     r"^(?:HTTP(?:\s+status)?\s*)?(?P<status>[1-5]\d{2})(?:\s*[:;-]?\s*)(?P<message>.*)$",
@@ -351,6 +357,28 @@ def capture_execution_error(
         "stdout_excerpt": _excerpt(stdout_text),
         "stderr_excerpt": _excerpt(stderr_text),
     }
+    takeover_match = SESSION_TAKEOVER_RE.search(diagnostic_text)
+    if takeover_match:
+        matching_lines = [line.strip() for line in diagnostic_text.splitlines() if SESSION_TAKEOVER_RE.search(line)]
+        lanes = [
+            match.group("lane")
+            for line in diagnostic_text.splitlines()
+            if (match := SESSION_LANE_RE.search(line)) is not None
+        ]
+        details = {
+            **base_details,
+            "session_path": takeover_match.group("path").rstrip('"'),
+            "lanes": list(dict.fromkeys(lanes)),
+            "matched_lines": matching_lines,
+        }
+        return ExecutionErrorClassification(
+            code="openclaw_session_takeover",
+            message=matching_lines[-1] if matching_lines else takeover_match.group(0),
+            layer="openclaw_session",
+            retryable=False,
+            source=source,
+            details=details,
+        )
     secret_match = SECRET_ASSIGNMENT_RE.search(diagnostic_text)
     missing_path_match = MISSING_PATH_SEGMENT_RE.search(diagnostic_text)
     if secret_match:

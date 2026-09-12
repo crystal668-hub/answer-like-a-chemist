@@ -8,8 +8,6 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
-from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, register_environment, write_evidence
-from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 
 from benchmarking.runtime.attempt_environment import (
     collect_dependency_manifest,
@@ -17,6 +15,12 @@ from benchmarking.runtime.attempt_environment import (
     dependency_install_events,
     remediate_forbidden_distributions,
 )
+from benchmarking.runtime.attempt_finalization import (
+    cleanup_owned_environment,
+    register_environment,
+    write_evidence,
+)
+from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 
 
 def cleanup_plugin_skill_links(session_root: Path, *, host_recovery: bool = False) -> list[dict[str, str]]:
@@ -86,6 +90,29 @@ def main() -> int:
                 os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        lifecycle_path = notes / "session-lifecycle.json"
+        if not lifecycle_path.is_file():
+            try:
+                identity = json.loads(os.environ["BENCHMARK_ATTEMPT_IDENTITY"])
+                write_evidence(
+                    lifecycle_path,
+                    {
+                        "schema_version": 1,
+                        "attempt_id": "/".join(
+                            str(identity.get(key) or "")
+                            for key in ("run_id", "group_id", "record_id", "attempt_index")
+                        ).strip("/"),
+                        "session_id": str(identity.get("session_id") or ""),
+                        "wrapper_pid": child.pid if child is not None else None,
+                        "takeover_detected": False,
+                        "final_status": "wrapper_evidence_unavailable",
+                        "invocations": [],
+                        "events": [],
+                        "cleanup": {"status": "container_attempt_fallback"},
+                    },
+                )
+            except Exception as exc:
+                print(f"session-lifecycle: {exc}", file=sys.stderr)
         if environment is not None:
             try:
                 events = []

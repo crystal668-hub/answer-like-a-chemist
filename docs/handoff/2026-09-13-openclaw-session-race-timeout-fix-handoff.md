@@ -1,6 +1,9 @@
 # OpenClaw Session Race 与历史 Timeout 误重试修复交接文档
 
-状态：`READY_FOR_IMPLEMENTATION`
+状态：`CLOSED`
+
+实施与验收结果见
+[OpenClaw Session Race and Timeout Retry Fix Validation](../report/2026-09-13-openclaw-session-race-timeout-fix-validation.md)。
 
 整理日期：2026-09-13
 
@@ -489,4 +492,3 @@ session takeover + no answer -> terminal session error, no silent retry
 4. 设计并实现 outcome/retry 状态机，再设计 session lifecycle ownership。
 5. 每完成一个阶段都运行对应测试并保留结果；不要把真实 benchmark run
    当作唯一回归测试。
-

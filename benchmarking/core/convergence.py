@@ -252,6 +252,7 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
         "tool_call_count": tool_call_count,
         "tool_names": tool_names,
         "prompt_error_count": len(prompt_errors),
+        "historical_prompt_errors": prompt_errors,
         "latest_prompt_error": latest_prompt_error,
         "latest_prompt_error_is_timeout": is_timeout_family_text(latest_prompt_error),
         "missing_skill_doc_read_count": missing_skill_doc_read_count,

@@ -23,6 +23,7 @@ from benchmarking.core.convergence import (
     summarize_transcript_convergence,
 )
 from benchmarking.core.result_contract import contract_to_payload, parse_agent_stdout
+from benchmarking.runtime.error_capture import capture_execution_error
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
@@ -30,6 +31,7 @@ from benchmarking.runtime.session_isolation import (
     merge_preflight_postflight_audit,
     reset_agent_main_session_if_stale,
 )
+from benchmarking.runtime.session_lifecycle import SessionLifecycleSupervisor
 
 OPENCLAW_STREAM_READ_ERROR_TEXT = "stream_read_error"
 OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT = "Agent couldn't generate a response"
@@ -149,6 +151,31 @@ def transcript_path_from_audit(audit: dict[str, Any]) -> Path | None:
     return path if path.is_file() else None
 
 
+def inspect_postflight_session_with_lifecycle_fallback(
+    *,
+    agent_id: str,
+    session_id: str,
+    config_path: Path,
+    preflight_audit: dict[str, Any],
+    supervisor: SessionLifecycleSupervisor,
+) -> dict[str, Any]:
+    try:
+        postflight = inspect_postflight_session(agent_id, session_id, config_path=config_path)
+        return merge_preflight_postflight_audit(preflight_audit, postflight)
+    except (OSError, SessionIsolationError) as exc:
+        transcript_path = supervisor.session_path(session_id)
+        recovered = transcript_path.is_file() and not transcript_path.is_symlink()
+        return {
+            **preflight_audit,
+            "requested_session_id": session_id,
+            "postflight_entry_session_id": session_id if recovered else "",
+            "postflight_entry_session_file": str(transcript_path.resolve()) if recovered else "",
+            "session_isolation_ok": recovered,
+            "transcript_path_recovered": recovered,
+            "postflight_inspection_error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def _target_result_payload(payload: Any) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
@@ -156,6 +183,26 @@ def _target_result_payload(payload: Any) -> dict[str, Any] | None:
     if isinstance(result, dict):
         return result
     return payload
+
+
+def lifecycle_status_for_result(
+    target: dict[str, Any] | None,
+    *,
+    returncode: int,
+    eval_kind: str,
+    answer_schema: dict[str, Any] | None = None,
+) -> str:
+    convergence = target.get("meta", {}).get("convergence", {}) if isinstance(target, dict) else {}
+    recovered = isinstance(convergence, dict) and bool(
+        convergence.get("transcript_answer_recovered") or convergence.get("finalization_rescue_succeeded")
+    )
+    if recovered:
+        return "recovered"
+    payload_failed = isinstance(target, dict) and bool(
+        _is_timeout_like_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
+        or _classify_agent_error_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
+    )
+    return "failed" if returncode != 0 or payload_failed else "completed"
 
 
 def _is_timeout_like_payload(
@@ -376,6 +423,7 @@ def _try_finalization_rescue(
     *,
     args: argparse.Namespace,
     env: dict[str, str],
+    supervisor: SessionLifecycleSupervisor | None = None,
     answer_schema: dict[str, Any] | None = None,
 ) -> bool:
     try:
@@ -386,6 +434,8 @@ def _try_finalization_rescue(
                 str(getattr(args, "eval_kind", "") or ""),
                 answer_schema=answer_schema,
             ),
+            supervisor=supervisor,
+            invocation_kind="finalization_rescue",
         )
     except Exception as exc:
         _merge_convergence(
@@ -447,6 +497,9 @@ def merge_convergence_metadata(
     env: dict[str, str] | None = None,
     time_reminder_meta: dict[str, Any] | None = None,
     answer_schema: dict[str, Any] | None = None,
+    supervisor: SessionLifecycleSupervisor | None = None,
+    current_process_failed: bool = False,
+    allow_finalization_rescue: bool = True,
 ) -> Any:
     target = _target_result_payload(payload)
     if target is None:
@@ -482,7 +535,7 @@ def merge_convergence_metadata(
         merged.update(convergence_meta)
         meta["convergence"] = merged
 
-    error_like = bool(agent_error_kind)
+    error_like = bool(agent_error_kind) or current_process_failed
     timeout_like = _is_timeout_like_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
     if transcript_path is not None and (timeout_like or error_like):
         recovered = extract_latest_complete_answer_from_transcript_for_eval(
@@ -501,6 +554,7 @@ def merge_convergence_metadata(
             return payload
     if (
         error_like
+        and allow_finalization_rescue
         and env is not None
         and transcript_path is not None
         and _session_isolation_ok(audit)
@@ -509,7 +563,13 @@ def merge_convergence_metadata(
             for text in _payload_texts(target)
         )
     ):
-        _try_finalization_rescue(target, args=args, env=env, answer_schema=answer_schema)
+        _try_finalization_rescue(
+            target,
+            args=args,
+            env=env,
+            answer_schema=answer_schema,
+            supervisor=supervisor,
+        )
     return payload
 
 
@@ -529,6 +589,7 @@ def _build_openclaw_command(
     *,
     message_override: str | None = None,
     timeout_override: int | None = None,
+    session_id_override: str | None = None,
 ) -> list[str]:
     timeout = args.timeout if timeout_override is None else timeout_override
     command = [
@@ -538,7 +599,7 @@ def _build_openclaw_command(
         "--agent",
         args.agent,
         "--session-id",
-        args.session_id,
+        args.session_id if session_id_override is None else session_id_override,
         "--message",
         args.message if message_override is None else message_override,
     ]
@@ -566,6 +627,9 @@ def _run_openclaw_with_time_reminder_tracking(
     *,
     args: argparse.Namespace,
     env: dict[str, str],
+    supervisor: SessionLifecycleSupervisor | None = None,
+    invocation_kind: str = "primary",
+    session_id: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     timeout_seconds = int(getattr(args, "timeout", 0) or 0)
     threshold_seconds = _time_reminder_threshold_seconds(timeout_seconds)
@@ -579,6 +643,9 @@ def _run_openclaw_with_time_reminder_tracking(
         stderr=subprocess.PIPE,
         text=True,
     )
+    effective_session_id = session_id or str(getattr(args, "session_id", "") or "")
+    if supervisor is not None:
+        supervisor.invocation_started(kind=invocation_kind, session_id=effective_session_id, child_pid=proc.pid)
     while True:
         try:
             stdout, stderr = proc.communicate(timeout=TIME_REMINDER_POLL_SECONDS)
@@ -591,6 +658,14 @@ def _run_openclaw_with_time_reminder_tracking(
     reminder_due = reminder_due or elapsed >= threshold_seconds
     remaining = max(0.0, float(timeout_seconds) - elapsed) if timeout_seconds > 0 else 0.0
     result = subprocess.CompletedProcess(command, proc.returncode, stdout=stdout, stderr=stderr)
+    result.session_id = effective_session_id
+    if supervisor is not None:
+        supervisor.invocation_finished(
+            session_id=effective_session_id,
+            returncode=int(proc.returncode or 0),
+            stdout=stdout,
+            stderr=stderr,
+        )
     result.time_reminder_meta = {
         "enabled": True,
         "threshold_seconds": threshold_seconds,
@@ -609,11 +684,37 @@ def run_openclaw(
     env: dict[str, str],
     message_override: str | None = None,
     timeout_override: int | None = None,
+    supervisor: SessionLifecycleSupervisor | None = None,
+    invocation_kind: str = "primary",
 ) -> subprocess.CompletedProcess[str]:
-    command = _build_openclaw_command(args, message_override=message_override, timeout_override=timeout_override)
+    session_id = args.session_id
+    if supervisor is not None and invocation_kind != "primary":
+        session_id = supervisor.allocate_followup_session(invocation_kind)
+    command = _build_openclaw_command(
+        args,
+        message_override=message_override,
+        timeout_override=timeout_override,
+        session_id_override=session_id,
+    )
     if message_override is None and timeout_override is None and _time_reminder_enabled(args):
-        return _run_openclaw_with_time_reminder_tracking(command, args=args, env=env)
-    return subprocess.run(
+        return _run_openclaw_with_time_reminder_tracking(
+            command,
+            args=args,
+            env=env,
+            supervisor=supervisor,
+            invocation_kind=invocation_kind,
+            session_id=session_id,
+        )
+    if supervisor is not None:
+        return _run_openclaw_with_time_reminder_tracking(
+            command,
+            args=args,
+            env=env,
+            supervisor=supervisor,
+            invocation_kind=invocation_kind,
+            session_id=session_id,
+        )
+    result = subprocess.run(
         command,
         env=env,
         cwd=_benchmark_workspace_cwd(env),
@@ -621,6 +722,8 @@ def run_openclaw(
         text=True,
         check=False,
     )
+    result.session_id = session_id
+    return result
 
 
 def _maybe_run_time_reminder(
@@ -630,6 +733,7 @@ def _maybe_run_time_reminder(
     env: dict[str, str],
     audit: dict[str, Any],
     answer_schema: dict[str, Any] | None = None,
+    supervisor: SessionLifecycleSupervisor | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     reminder_meta = _time_reminder_meta_from_result(primary_result, args)
     if not reminder_meta.get("enabled"):
@@ -656,6 +760,8 @@ def _maybe_run_time_reminder(
         env=env,
         message_override=TIME_REMINDER_PROMPT,
         timeout_override=remaining_seconds,
+        supervisor=supervisor,
+        invocation_kind="time_reminder",
     )
     reminder_meta["applied"] = True
     reminder_meta["skipped_reason"] = ""
@@ -672,40 +778,92 @@ def main() -> int:
     config_path = Path(args.config_file).expanduser().resolve()
     env = build_openclaw_subprocess_env(base_env=os.environ.copy(), config_path=config_path)
     try:
-        preflight_audit = reset_agent_main_session_if_stale(args.agent, args.session_id, config_path=config_path)
-        result = run_openclaw(args, env=env)
-        if result.returncode != 0:
+        supervisor = SessionLifecycleSupervisor.from_environment(
+            agent_id=args.agent,
+            session_id=args.session_id,
+            config_path=config_path,
+            env=env,
+        )
+        with supervisor:
+            preflight_audit = reset_agent_main_session_if_stale(args.agent, args.session_id, config_path=config_path)
+            result = run_openclaw(args, env=env, supervisor=supervisor)
+            result_session_id = str(getattr(result, "session_id", args.session_id) or args.session_id)
+            primary_audit = inspect_postflight_session_with_lifecycle_fallback(
+                agent_id=args.agent,
+                session_id=result_session_id,
+                config_path=config_path,
+                preflight_audit=preflight_audit,
+                supervisor=supervisor,
+            )
+            if result.returncode == 0:
+                result, time_reminder_meta = _maybe_run_time_reminder(
+                    result,
+                    args=args,
+                    env=env,
+                    audit=primary_audit,
+                    answer_schema=answer_schema,
+                    supervisor=supervisor,
+                )
+                result_session_id = str(getattr(result, "session_id", result_session_id) or result_session_id)
+                audit = inspect_postflight_session_with_lifecycle_fallback(
+                    agent_id=args.agent,
+                    session_id=result_session_id,
+                    config_path=config_path,
+                    preflight_audit=preflight_audit,
+                    supervisor=supervisor,
+                )
+            else:
+                time_reminder_meta = _base_time_reminder_meta(args)
+                audit = primary_audit
+            if args.json:
+                output = result.stdout.strip() or result.stderr.strip()
+                payload = parse_openclaw_json_output(output)
+                payload = merge_convergence_metadata(
+                    payload,
+                    args=args,
+                    audit=audit,
+                    env=env,
+                    time_reminder_meta=time_reminder_meta,
+                    answer_schema=answer_schema,
+                    supervisor=supervisor,
+                    current_process_failed=result.returncode != 0,
+                    allow_finalization_rescue=result.returncode == 0,
+                )
+                payload = merge_isolation_audit(payload, audit)
+                target = _target_result_payload(payload)
+                convergence = target.get("meta", {}).get("convergence", {}) if isinstance(target, dict) else {}
+                recovered = isinstance(convergence, dict) and bool(
+                    convergence.get("transcript_answer_recovered") or convergence.get("finalization_rescue_succeeded")
+                )
+                status = lifecycle_status_for_result(
+                    target,
+                    returncode=result.returncode,
+                    eval_kind=str(getattr(args, "eval_kind", "") or ""),
+                    answer_schema=answer_schema,
+                )
+                lifecycle = supervisor.finalize(status=status)
+                if isinstance(target, dict):
+                    meta = target.setdefault("meta", {})
+                    if isinstance(meta, dict):
+                        meta["session_lifecycle"] = lifecycle
+                        if result.returncode != 0:
+                            meta["execution_error"] = capture_execution_error(
+                                returncode=result.returncode,
+                                stdout=str(result.stdout or ""),
+                                stderr=str(result.stderr or ""),
+                                session_id=result_session_id,
+                            ).to_details()
+                if result.returncode != 0 and not recovered:
+                    sys.stdout.write(result.stdout)
+                    sys.stderr.write(result.stderr)
+                    return result.returncode
+                print(json.dumps(payload, ensure_ascii=False))
+                return 0
+            lifecycle = supervisor.finalize(status="completed" if result.returncode == 0 else "failed")
+            del lifecycle
             sys.stdout.write(result.stdout)
             sys.stderr.write(result.stderr)
             return result.returncode
-        primary_postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
-        primary_audit = merge_preflight_postflight_audit(preflight_audit, primary_postflight_audit)
-        result, time_reminder_meta = _maybe_run_time_reminder(
-            result,
-            args=args,
-            env=env,
-            audit=primary_audit,
-            answer_schema=answer_schema,
-        )
-        postflight_audit = inspect_postflight_session(args.agent, args.session_id, config_path=config_path)
-        audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
-        if args.json:
-            output = result.stdout.strip() or result.stderr.strip()
-            payload = parse_openclaw_json_output(output)
-            payload = merge_convergence_metadata(
-                payload,
-                args=args,
-                audit=audit,
-                env=env,
-                time_reminder_meta=time_reminder_meta,
-                answer_schema=answer_schema,
-            )
-            payload = merge_isolation_audit(payload, audit)
-            print(json.dumps(payload, ensure_ascii=False))
-        else:
-            sys.stdout.write(result.stdout)
-            sys.stderr.write(result.stderr)
-        return 0
     except Exception as exc:
         if args.json:
             payload = {

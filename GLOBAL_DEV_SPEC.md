@@ -64,9 +64,9 @@ runbooks.
 
 | Module | Ownership |
 | --- | --- |
-| `benchmarking/core/` | Dataset normalization, runner/result dataclasses, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
+| `benchmarking/core/` | Dataset normalization, runner/result dataclasses, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -350,9 +350,19 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   <seconds> seconds for the whole answer attempt.` For bounded positive
   budgets, the wrapper tracks the primary turn and, when it returns without a
   complete answer after roughly five sixths of the budget (6000 seconds at the
-  default), sends a same-session reminder with the remaining time.
+  default), sends a reminder with the remaining time using a new follow-up
+  session file owned by the same benchmark attempt.
 - Every primary or timeout-retry attempt receives a fresh sentinel-managed
   workspace and run-scoped session id.
+- Each wrapper acquires an exclusive per-session owner mutex before starting
+  OpenClaw. Its append-only lifecycle journal and atomic summary record the
+  attempt/session identity, wrapper and OpenClaw PIDs, owner token, invocation
+  kind, session-file fingerprints, provider terminal events, takeover state,
+  cleanup, and immutable transcript snapshots. Follow-up reminder and
+  finalization turns receive new session files. The reusable mutex inode is
+  retained empty after its lock is released so unlock/removal cannot race a new
+  owner. Container attempts guarantee a lifecycle artifact even if the wrapper
+  cannot initialize.
 - Docker records and host records with `eval_kind=verifier_grounded` receive a
   fresh attempt-local Python environment and uv cache. All attempts in an invocation
   share its run-start PyPI cutoff, while each retry starts from a new empty
@@ -377,9 +387,26 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   a terminal `primary_error` plus ordered `observed_errors`; internal error
   categories and retry policy do not replace the original upstream status code,
   error code, message, or matched log text.
-- Timeout-family failures may create a fresh attempt. Transcript recovery and a
-  same-session finalization repair can preserve a complete answer; incomplete or
-  unreliable output remains non-scoreable.
+- `EmbeddedAttemptSessionTakeoverError` has the stable
+  `openclaw_session_takeover` code and `openclaw_session` layer. Its original
+  matched lines, session path, lanes, process return code, and lifecycle
+  evidence are retained; it is terminal and non-retryable when no complete
+  answer can be recovered.
+- Attempt outcome is decided before retry policy. A schema-complete native
+  answer is `completed`; a complete transcript or finalization answer is
+  `recovered`; either terminal answer suppresses retry even when the transcript
+  contains historical timeout diagnostics. Only an unanswered current failure
+  may retry. Attempt history records `current_failure_code`,
+  `historical_prompt_errors`, `answer_source`, and typed current retryability.
+  This prevents a later failed attempt from replacing a scoreable answer.
+- Provider lifecycle metadata distinguishes `provider_first_token_timeout`,
+  `provider_stream_gap_timeout`, `provider_http_timeout`,
+  `openclaw_idle_watchdog`, and `openclaw_session_takeover` where available.
+  OpenClaw 2026.6.9 does not expose response-chunk timestamps in its trajectory,
+  so the first/last chunk fields remain empty rather than inferring chunks from
+  the terminal `model.completed` event. The OpenClaw idle watchdog remains
+  enabled. A Docker return code of zero does not override a failed or timed-out
+  agent payload.
 - Canonical skill scripts continue through `scripts/run_skill.py`. Within a VGB
   attempt it executes them directly with `BENCHMARK_ATTEMPT_PYTHON`, without
   resolving the workspace project or implicitly installing project extras.

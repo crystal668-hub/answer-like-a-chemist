@@ -7,13 +7,18 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import nullcontext
-from datetime import UTC, datetime
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from benchmarking.core.attempt_outcome import (
+    AttemptEvidence,
+    AttemptRetryDecision,
+    determine_attempt_outcome,
+)
 from benchmarking.core.contracts import (
     AnswerPayload,
     FailureInfo,
@@ -29,9 +34,6 @@ from benchmarking.core.convergence import (
     is_timeout_family_text,
 )
 from benchmarking.runtime import paths as runtime_paths
-from benchmarking.runtime.bundles import RuntimePathProjection
-from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, read_evidence, register_environment, write_evidence
-from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 from benchmarking.runtime.agent_workspace import (
     AttemptIdentity,
     AttemptOutcome,
@@ -46,20 +48,32 @@ from benchmarking.runtime.attempt_environment import (
     dependency_install_events,
     remediate_forbidden_distributions,
 )
+from benchmarking.runtime.attempt_finalization import (
+    cleanup_owned_environment,
+    read_evidence,
+    register_environment,
+    write_evidence,
+)
+from benchmarking.runtime.bundles import RuntimePathProjection
+from benchmarking.runtime.cancellation import CancellationReason
+from benchmarking.runtime.container_network import (
+    ContainerNetworkConfig,
+    resolve_container_network,
+    runtime_environment,
+)
 from benchmarking.runtime.container_runtime import (
-    ContainerRuntimeError,
     ContainerAttemptSpec,
     ContainerMount,
+    ContainerRuntimeError,
     DockerContainerRuntime,
     materialize_container_config,
 )
-from benchmarking.runtime.cancellation import CancellationReason
+from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
     capture_execution_error,
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
-from benchmarking.runtime.container_network import ContainerNetworkConfig, resolve_container_network, runtime_environment
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
@@ -68,8 +82,8 @@ from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     WorkspaceAccessPolicy,
     WorkspaceAudit,
-    ensure_workspace_audit,
     build_workspace_access_policy,
+    ensure_workspace_audit,
 )
 from benchmarking.skills.audit import build_skill_use_audit
 from benchmarking.workflow.attempt_queue import RetryDelay, WorkStep, staged
@@ -165,17 +179,6 @@ def is_runner_meta_timeout_family(runner_meta: dict[str, Any]) -> bool:
         error.get("code"),
         error.get("type"),
     ]
-    convergence = runner_meta.get("convergence")
-    if isinstance(convergence, dict):
-        if convergence.get("latest_prompt_error_is_timeout") is True:
-            return True
-        candidates.extend(
-            [
-                convergence.get("latest_prompt_error"),
-                convergence.get("prompt_error"),
-                convergence.get("finalization_rescue_error"),
-            ]
-        )
     return any(is_timeout_family_text(candidate) for candidate in candidates if candidate is not None)
 
 
@@ -781,11 +784,16 @@ class SingleLLMRunner:
         failure = result.failure
         timeout_exception = result.runner_meta.get("timeout_exception")
         execution_error = result.runner_meta.get("execution_error")
+        outcome = self._attempt_outcome(result)
         entry: dict[str, Any] = {
             "attempt": attempt_number,
             "session_id": session_id,
             "status": str(result.status.value),
             "failure_code": str(getattr(failure, "code", "") or ""),
+            "current_failure_code": outcome.current_failure_code,
+            "historical_prompt_errors": list(outcome.historical_prompt_errors),
+            "answer_source": outcome.answer_source.value,
+            "current_failure_retryable": outcome.retry_decision is AttemptRetryDecision.RETRY,
             "retryable": retryable,
             "retry_reason": retry_reason,
         }
@@ -1192,6 +1200,14 @@ class SingleLLMRunner:
                 original_result=result,
             )
         isolation_meta.update(archive.to_meta())
+        for key in ("container", "session_lifecycle"):
+            evidence = result.runner_meta.get(key)
+            if isinstance(evidence, dict):
+                result.runner_meta[key] = self._translate_path_prefix(
+                    evidence,
+                    source=lease.active_workspace,
+                    target=archive.workspace,
+                )
         if attempt_environment is not None:
             archived_environment_manifest = archive.workspace / "scratch" / "notes" / "dependency-manifest.json"
             if archived_environment_manifest.is_file():
@@ -1200,28 +1216,82 @@ class SingleLLMRunner:
         return result
 
     def _timeout_retry_decision(self, result: RunnerResult) -> TimeoutRetryDecision:
+        outcome = self._attempt_outcome(result)
+        result.runner_meta["attempt_outcome"] = outcome.to_meta()
+        if outcome.retry_decision is AttemptRetryDecision.RETRY:
+            return TimeoutRetryDecision(True, outcome.retry_reason)
+        return TimeoutRetryDecision(False, "")
+
+    @staticmethod
+    def _attempt_outcome(result: RunnerResult):
         failure = result.failure
         runner_meta = result.runner_meta or {}
         details = getattr(failure, "details", {}) if failure is not None else {}
         execution_error = runner_meta.get("execution_error")
+        current_failure_code = str(getattr(failure, "code", "") or "")
+        current_failure_retryable = False
         if isinstance(execution_error, dict):
+            current_failure_code = str(execution_error.get("code") or current_failure_code)
             if execution_error.get("retryable") is True:
-                return TimeoutRetryDecision(True, str(execution_error.get("code") or getattr(failure, "code", "")))
+                current_failure_retryable = True
             if execution_error.get("retryable") is False:
-                return TimeoutRetryDecision(False, "")
-        if isinstance(details, dict):
+                current_failure_retryable = False
+        elif isinstance(details, dict):
+            current_failure_code = str(details.get("code") or current_failure_code)
             if details.get("retryable") is True:
-                return TimeoutRetryDecision(True, str(details.get("code") or getattr(failure, "code", "")))
+                current_failure_retryable = True
             if details.get("retryable") is False:
-                return TimeoutRetryDecision(False, "")
-        if getattr(failure, "code", "") == "agent_response_timeout":
-            return TimeoutRetryDecision(True, "agent_response_timeout")
-        if is_runner_meta_timeout_family(runner_meta):
-            return TimeoutRetryDecision(True, "runner_meta_timeout_family")
+                current_failure_retryable = False
+        if current_failure_code == "agent_response_timeout":
+            current_failure_retryable = True
         message = str(getattr(failure, "message", "") or "")
-        if is_timeout_family_text(message):
-            return TimeoutRetryDecision(True, "failure_timeout_family")
-        return TimeoutRetryDecision(False, "")
+        if failure is not None and not current_failure_code:
+            current_failure_code = "failure_timeout_family" if is_timeout_family_text(message) else "runner_failure"
+        if failure is not None and is_timeout_family_text(message) and not (
+            isinstance(execution_error, dict) and execution_error.get("retryable") is False
+        ):
+            current_failure_retryable = True
+        convergence = runner_meta.get("convergence")
+        historical_prompt_errors: list[str] = []
+        if isinstance(convergence, dict):
+            raw_errors = convergence.get("historical_prompt_errors")
+            if isinstance(raw_errors, list):
+                historical_prompt_errors = [str(item) for item in raw_errors if str(item).strip()]
+            elif str(convergence.get("latest_prompt_error") or "").strip():
+                historical_prompt_errors = [str(convergence["latest_prompt_error"])]
+            if (
+                failure is not None
+                and not current_failure_retryable
+                and convergence.get("latest_prompt_error_is_timeout") is True
+                and not (isinstance(execution_error, dict) and execution_error.get("retryable") is False)
+            ):
+                current_failure_code = "openclaw_idle_watchdog"
+                current_failure_retryable = True
+        recovery_source = str(
+            (result.recovery.source if result.recovery is not None else "")
+            or (convergence.get("recovery_source") if isinstance(convergence, dict) else "")
+        )
+        recovered = result.status is RunStatus.RECOVERED and result.should_score()
+        return determine_attempt_outcome(
+            AttemptEvidence(
+                native_result_status=result.status.value,
+                native_payload_complete=result.status is RunStatus.COMPLETED and result.should_score(),
+                transcript_complete_answer=recovered and (
+                    "transcript" in recovery_source
+                    or bool(isinstance(convergence, dict) and convergence.get("transcript_answer_recovered"))
+                ),
+                finalization_rescue_complete=recovered and (
+                    "rescue" in recovery_source
+                    or bool(isinstance(convergence, dict) and convergence.get("finalization_rescue_succeeded"))
+                ),
+                current_process_exit=(
+                    execution_error.get("returncode") if isinstance(execution_error, dict) else None
+                ),
+                current_failure_code=current_failure_code,
+                current_failure_retryable=current_failure_retryable,
+                historical_prompt_errors=tuple(historical_prompt_errors),
+            )
+        )
 
     def _attach_timeout_retry_meta(
         self,
@@ -1556,6 +1626,25 @@ class SingleLLMRunner:
                                                 "identity": identity.sentinel_fields(), "error": cleanup.error})
                     token.cancel(CancellationReason(source="container_cleanup", message="Container removal failed; scheduling stopped"))
         assert result is not None
+        lifecycle_path = workspace / "scratch" / "notes" / "session-lifecycle.json"
+        lifecycle = read_evidence(lifecycle_path)
+        if lifecycle:
+            result.runner_meta["session_lifecycle"] = self._translate_container_paths(
+                lifecycle,
+                session_root=session_root,
+                workspace=workspace,
+            )
+        result.runner_meta["container"] = {
+            "container_id": handle.container_id,
+            "container_name": handle.container_name,
+            "image_digest": handle.image_digest,
+            "inspect": dict(outcome.inspect) if outcome is not None else {},
+            "stats": dict(outcome.stats) if outcome is not None else {},
+            "return_code": outcome.return_code if outcome is not None else None,
+            "stdout_path": str(spool / "stdout.log"),
+            "stderr_path": str(spool / "stderr.log"),
+            "session_lifecycle_path": str(lifecycle_path),
+        }
         result.runner_meta["container_cleanup"] = report
         result.runner_meta["path_projection"] = projection.to_meta()
         if not cleanup.removed and result.failure is None:
@@ -1564,14 +1653,36 @@ class SingleLLMRunner:
         return result
 
     @staticmethod
-    def _translate_container_paths(value: Any, *, session_root: Path) -> Any:
+    def _translate_container_paths(value: Any, *, session_root: Path, workspace: Path | None = None) -> Any:
         if isinstance(value, str):
-            return value.replace("/benchmark/session", str(session_root))
+            translated = value.replace("/benchmark/session", str(session_root))
+            if workspace is not None:
+                translated = translated.replace("/benchmark/workspace", str(workspace))
+            return translated
         if isinstance(value, list):
-            return [SingleLLMRunner._translate_container_paths(item, session_root=session_root) for item in value]
+            return [
+                SingleLLMRunner._translate_container_paths(item, session_root=session_root, workspace=workspace)
+                for item in value
+            ]
         if isinstance(value, dict):
             return {
-                key: SingleLLMRunner._translate_container_paths(item, session_root=session_root)
+                key: SingleLLMRunner._translate_container_paths(item, session_root=session_root, workspace=workspace)
+                for key, item in value.items()
+            }
+        return value
+
+    @staticmethod
+    def _translate_path_prefix(value: Any, *, source: Path, target: Path) -> Any:
+        if isinstance(value, str):
+            source_text = str(source)
+            if value == source_text or value.startswith(f"{source_text}{os.sep}"):
+                return f"{target}{value[len(source_text):]}"
+            return value
+        if isinstance(value, list):
+            return [SingleLLMRunner._translate_path_prefix(item, source=source, target=target) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: SingleLLMRunner._translate_path_prefix(item, source=source, target=target)
                 for key, item in value.items()
             }
         return value
@@ -1654,13 +1765,19 @@ class SingleLLMRunner:
                     stderr=str(result.stderr or ""),
                     session_id=session_id,
                 )
-                return self._execution_error_result(
+                failed_result = self._execution_error_result(
                     classification=classification,
                     record=record,
                     group=group,
                     input_bundle=input_bundle,
                     session_id=session_id,
                 )
+                workspace_text = str(env.get("BENCHMARK_WORKSPACE_DIR") or "").strip()
+                if workspace_text:
+                    lifecycle = read_evidence(Path(workspace_text) / "scratch" / "notes" / "session-lifecycle.json")
+                    if lifecycle:
+                        failed_result.runner_meta["session_lifecycle"] = lifecycle
+                return failed_result
             payload = self._parse_json_stdout(result, command)
         except subprocess.TimeoutExpired as exc:
             return self._subprocess_timeout_result(

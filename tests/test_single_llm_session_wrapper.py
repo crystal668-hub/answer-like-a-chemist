@@ -34,6 +34,20 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn("Run single-LLM OpenClaw turns", completed.stdout)
 
+    def test_lifecycle_status_uses_timeout_payload_when_process_exit_is_zero(self) -> None:
+        target = {
+            "payloads": [{"text": "LLM request timed out."}],
+            "meta": {"aborted": True, "livenessState": "blocked"},
+        }
+        self.assertEqual(
+            "failed",
+            wrapper.lifecycle_status_for_result(
+                target,
+                returncode=0,
+                eval_kind="superchem_multiple_choice_rpf",
+            ),
+        )
+
     def test_run_openclaw_uses_benchmark_workspace_as_process_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir).resolve()
@@ -113,6 +127,57 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             stdout=json.dumps({"result": {"payloads": [item], "meta": meta or {}}}),
             stderr="",
         )
+
+    def test_takeover_exit_recovers_complete_transcript_and_keeps_typed_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = self.write_config(root)
+            transcript = root / "session-a.jsonl"
+            transcript.write_text(
+                '{"message":{"role":"assistant","content":[{"type":"text","text":"Reasoning.\\nFINAL ANSWER: B"}]}}\n',
+                encoding="utf-8",
+            )
+            stderr = (
+                "[diagnostic] lane task error: lane=main "
+                'error="EmbeddedAttemptSessionTakeoverError: session file changed while embedded prompt lock was released: '
+                f'{transcript}"\n'
+            )
+            completed = subprocess.CompletedProcess(["openclaw"], 1, stdout="", stderr=stderr)
+            args = argparse.Namespace(
+                agent="benchmark-single",
+                config_file=str(config_path),
+                session_id="session-a",
+                message="Q",
+                thinking="high",
+                timeout=900,
+                eval_kind="superchem_multiple_choice_rpf",
+                answer_schema_json="",
+                json=True,
+            )
+            audit = {
+                "requested_session_id": "session-a",
+                "agent_id": "benchmark-single",
+                "session_store_path": str(root / "sessions.json"),
+                "preflight_removed_stale_main_entry": False,
+                "preflight_previous_session_id": "",
+                "postflight_entry_session_id": "session-a",
+                "postflight_entry_session_file": str(transcript),
+                "session_isolation_ok": True,
+            }
+
+            with mock.patch.object(wrapper, "parse_args", return_value=args), \
+                mock.patch.object(wrapper, "reset_agent_main_session_if_stale", return_value=audit), \
+                mock.patch.object(wrapper, "run_openclaw", return_value=completed), \
+                mock.patch.object(wrapper, "inspect_postflight_session", return_value=audit), \
+                mock.patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        payload = json.loads(stdout.getvalue())["result"]
+        self.assertEqual("Reasoning.\nFINAL ANSWER: B", payload["payloads"][0]["text"])
+        self.assertTrue(payload["meta"]["convergence"]["transcript_answer_recovered"])
+        self.assertEqual("openclaw_session_takeover", payload["meta"]["execution_error"]["code"])
+        self.assertFalse(payload["meta"]["execution_error"]["retryable"])
 
     def attach_time_reminder_meta(
         self,

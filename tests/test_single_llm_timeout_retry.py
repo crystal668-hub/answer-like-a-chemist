@@ -694,6 +694,80 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertNotEqual(archived_workspaces[0], archived_workspaces[1])
         self.assertTrue(all(path.is_dir() for path in archived_workspaces))
 
+    def test_completed_answer_with_historical_idle_timeout_is_not_retried(self) -> None:
+        captured_commands: list[list[str]] = []
+        runner = self._runner(captured_commands=captured_commands, timeout_once=False)
+        runner._parse_json_stdout = lambda result, command: {
+            "result": {
+                "payloads": [{"text": "Reasoning\nFINAL ANSWER: X"}],
+                "meta": {
+                    "convergence": {
+                        "historical_prompt_errors": ["LLM idle timeout (120s): no response from model"],
+                        "latest_prompt_error": "LLM idle timeout (120s): no response from model",
+                        "latest_prompt_error_is_timeout": True,
+                    }
+                },
+            }
+        }
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual(1, len(captured_commands))
+        self.assertTrue(result.should_score())
+        retry = result.runner_meta["timeout_retry"]
+        self.assertFalse(retry["triggered"])
+        self.assertEqual("native", retry["attempt_history"][0]["answer_source"])
+        self.assertEqual(
+            ["LLM idle timeout (120s): no response from model"],
+            retry["attempt_history"][0]["historical_prompt_errors"],
+        )
+
+    def test_recovered_answer_with_historical_idle_timeout_is_not_retried(self) -> None:
+        captured_commands: list[list[str]] = []
+        runner = self._runner(captured_commands=captured_commands, timeout_once=False)
+        runner._parse_json_stdout = lambda result, command: {
+            "result": {
+                "payloads": [{"text": "Reasoning\nFINAL ANSWER: X"}],
+                "meta": {
+                    "convergence": {
+                        "transcript_answer_recovered": True,
+                        "recovery_source": "single-llm-session-transcript",
+                        "historical_prompt_errors": ["LLM idle timeout (120s): no response from model"],
+                        "latest_prompt_error": "LLM idle timeout (120s): no response from model",
+                        "latest_prompt_error_is_timeout": True,
+                    }
+                },
+            }
+        }
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual(1, len(captured_commands))
+        self.assertTrue(result.should_score())
+        retry = result.runner_meta["timeout_retry"]
+        self.assertFalse(retry["triggered"])
+        self.assertEqual("transcript", retry["attempt_history"][0]["answer_source"])
+
+    def test_session_takeover_without_answer_is_terminal_and_not_retried(self) -> None:
+        captured_commands: list[list[str]] = []
+        stderr = (Path(__file__).parent / "fixtures" / "single_llm" / "session_takeover.stderr.txt").read_text(
+            encoding="utf-8"
+        )
+        runner = self._runner(
+            captured_commands=captured_commands,
+            timeout_once=False,
+            failure_stderr=stderr,
+        )
+
+        result = runner.run(self._record(), Group(id="single_llm_skills_on", skills_enabled=True))
+
+        self.assertEqual(1, len(captured_commands))
+        self.assertEqual("openclaw_session_takeover", result.failure.code)
+        self.assertFalse(result.runner_meta["timeout_retry"]["triggered"])
+        history = result.runner_meta["timeout_retry"]["attempt_history"][0]
+        self.assertEqual("openclaw_session_takeover", history["current_failure_code"])
+        self.assertEqual("none", history["answer_source"])
+
 
 if __name__ == "__main__":
     unittest.main()
