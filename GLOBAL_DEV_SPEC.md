@@ -159,8 +159,18 @@ printed in the report.
   unrelated installed package with the same name.
 - `scripts/run_skill.py` is the fixed entrypoint for benchmark-agent execution
   of local skill scripts through the workspace `uv` environment.
-- `scripts/sync_verifier_grounded_datasets.py` validates a pinned release and
-  synchronizes public prompt datasets and isolated scoring runtime metadata.
+- `scripts/sync_verifier_grounded_datasets.py` validates a pinned release,
+  synchronizes public prompt datasets and isolated scoring runtime metadata, and
+  after a successful sync retains all runtime instances for the newest two
+  distinct semantic versions while removing older managed runtimes. Cleanup
+  failures make provisioning fail and identify the paths that could not be
+  removed; unrecognized runtime directories are preserved.
+
+Verifier runtime provisioning completes installation, runtime validation, and
+dataset synchronization before applying this retention policy. Same-version
+runtime directories with different wheel hashes are all retained; only managed
+directories older than the two newest distinct versions are removed. The wheel
+cache under `data/verifier-grounded-releases` is not part of this cleanup.
 - `scripts/replay_workspace_adjudication.py` replays stored transcript evidence
   without a model call, recovers archived final answers from per-record data,
   runner metadata, or the session transcript, reconstructs a missing

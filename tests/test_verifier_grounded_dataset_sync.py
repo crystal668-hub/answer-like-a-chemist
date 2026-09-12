@@ -3,13 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+import pytest
 
 from benchmarking.core.datasets import load_records
-from benchmarking.runtime.vgb_bridge import load_release_config
+from benchmarking.runtime.vgb_bridge import (
+    VerifierGroundedRuntimeError,
+    load_release_config,
+)
 from scripts.sync_verifier_grounded_datasets import (
     REFERENCE_PLACEHOLDER,
     RESOURCE_DATASET_ROOT,
     build_dataset_records,
+    prune_runtime_history,
     sync_datasets,
 )
 
@@ -116,6 +123,89 @@ def test_sync_datasets_writes_tracked_and_runtime_copies(tmp_path: Path) -> None
         resource_path = resource_root / f"{dataset}.jsonl"
         runtime_path = benchmarks_root / dataset / "data" / f"{dataset}.jsonl"
         assert resource_path.read_bytes() == runtime_path.read_bytes()
+
+
+def _write_runtime_manifest(
+    root: Path,
+    name: str,
+    *,
+    version: str,
+    package: str = "verifier-grounded-benchmark",
+) -> Path:
+    runtime = root / name
+    runtime.mkdir(parents=True)
+    (runtime / "runtime-manifest.json").write_text(
+        json.dumps(
+            {
+                "package": package,
+                "version": version,
+                "wheel_sha256": f"{version.replace('.', ''):0<64}"[:64],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return runtime
+
+
+def test_prune_runtime_history_keeps_two_latest_distinct_versions_and_same_version_instances(
+    tmp_path: Path,
+) -> None:
+    config = load_release_config()
+    runtime_root = tmp_path / "verifier-grounded-runtimes"
+    old = _write_runtime_manifest(runtime_root, "0.8.0-old", version="0.8.0")
+    previous = _write_runtime_manifest(runtime_root, "0.9.1-a", version="0.9.1")
+    previous_duplicate = _write_runtime_manifest(runtime_root, "0.9.1-b", version="0.9.1")
+    latest = _write_runtime_manifest(runtime_root, "0.10.0", version="0.10.0")
+    unmanaged = _write_runtime_manifest(
+        runtime_root,
+        "unmanaged",
+        version="0.1.0",
+        package="other-package",
+    )
+    malformed = runtime_root / "malformed"
+    malformed.mkdir()
+    invalid_hash = runtime_root / "invalid-hash"
+    invalid_hash.mkdir()
+    (invalid_hash / "runtime-manifest.json").write_text(
+        json.dumps(
+            {
+                "package": config.package,
+                "version": "0.1.0",
+                "wheel_sha256": "not-a-sha256",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime_root / "not-a-runtime.txt").write_text("keep", encoding="utf-8")
+
+    result = prune_runtime_history(config=config, runtime_root=runtime_root)
+
+    assert result["kept_versions"] == ["0.10.0", "0.9.1"]
+    assert not old.exists()
+    assert previous.exists()
+    assert previous_duplicate.exists()
+    assert latest.exists()
+    assert unmanaged.exists()
+    assert malformed.exists()
+    assert invalid_hash.exists()
+    assert (runtime_root / "not-a-runtime.txt").exists()
+
+
+def test_prune_runtime_history_reports_delete_failures(tmp_path: Path) -> None:
+    config = load_release_config()
+    runtime_root = tmp_path / "verifier-grounded-runtimes"
+    stale = _write_runtime_manifest(runtime_root, "0.8.0", version="0.8.0")
+    _write_runtime_manifest(runtime_root, "0.9.1", version="0.9.1")
+    _write_runtime_manifest(runtime_root, "0.10.0", version="0.10.0")
+
+    with (
+        patch(
+            "scripts.sync_verifier_grounded_datasets.shutil.rmtree",
+            side_effect=OSError("permission denied"),
+        ),
+        pytest.raises(VerifierGroundedRuntimeError, match=str(stale)),
+    ):
+        prune_runtime_history(config=config, runtime_root=runtime_root)
 
 
 def test_checked_in_datasets_match_pinned_release_inventory() -> None:

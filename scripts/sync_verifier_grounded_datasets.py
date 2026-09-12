@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from packaging.version import InvalidVersion, Version
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -34,6 +36,8 @@ PUBLIC_ANSWER_SCHEMA_KEYS = {
 RESOURCE_DATASET_ROOT = (
     ROOT / "benchmarking" / "resources" / "verifier_grounded" / "datasets"
 )
+VERIFIER_RUNTIME_ROOT = runtime_paths.project_state_root / "verifier-grounded-runtimes"
+RUNTIME_HISTORY_VERSIONS = 2
 
 
 def install_runtime(*, config: ReleaseConfig, source_wheel: Path) -> dict[str, Any]:
@@ -98,6 +102,74 @@ def install_runtime(*, config: ReleaseConfig, source_wheel: Path) -> dict[str, A
     config.runtime_manifest.chmod(0o600)
     validate_runtime_files(config)
     return description
+
+
+def prune_runtime_history(
+    *,
+    config: ReleaseConfig,
+    runtime_root: Path = VERIFIER_RUNTIME_ROOT,
+    keep_versions: int = RUNTIME_HISTORY_VERSIONS,
+) -> dict[str, list[str]]:
+    """Keep all managed runtime instances for the newest distinct versions."""
+    if keep_versions < 1:
+        raise ValueError("keep_versions must be at least 1")
+
+    root = runtime_root.expanduser().resolve()
+    if not root.is_dir():
+        return {"kept_versions": [], "removed": []}
+
+    managed: list[tuple[Path, Version]] = []
+    for path in root.iterdir():
+        if path.is_symlink() or not path.is_dir():
+            continue
+        manifest_path = path / "runtime-manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict) or manifest.get("package") != config.package:
+            continue
+        version_text = manifest.get("version")
+        wheel_sha256 = manifest.get("wheel_sha256")
+        if (
+            not isinstance(version_text, str)
+            or not version_text
+            or not isinstance(wheel_sha256, str)
+            or len(wheel_sha256) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in wheel_sha256)
+        ):
+            continue
+        try:
+            version = Version(version_text)
+        except InvalidVersion:
+            continue
+        managed.append((path, version))
+
+    managed.sort(key=lambda item: str(item[0]))
+    versions = sorted({version for _, version in managed}, reverse=True)
+    kept_versions = versions[:keep_versions]
+    kept_version_set = set(kept_versions)
+    removed: list[str] = []
+    failures: list[str] = []
+    for path, version in managed:
+        if version in kept_version_set:
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            failures.append(f"{path}: {exc}")
+        else:
+            removed.append(str(path))
+
+    if failures:
+        detail = "; ".join(failures)
+        raise VerifierGroundedRuntimeError(
+            f"Failed to prune verifier runtime history: {detail}"
+        )
+    return {
+        "kept_versions": [str(version) for version in kept_versions],
+        "removed": removed,
+    }
 
 
 def build_dataset_records(
@@ -206,7 +278,16 @@ def main() -> None:
         resource_root=args.resource_root.expanduser().resolve(),
         benchmarks_root=args.benchmarks_root.expanduser().resolve(),
     )
-    print(json.dumps({"runtime": str(config.runtime_root), "written": [str(path) for path in paths]}))
+    cleanup = prune_runtime_history(config=config)
+    print(
+        json.dumps(
+            {
+                "runtime": str(config.runtime_root),
+                "written": [str(path) for path in paths],
+                "runtime_cleanup": cleanup,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
