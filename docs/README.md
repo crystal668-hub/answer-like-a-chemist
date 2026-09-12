@@ -40,10 +40,11 @@ Implementation sequences and diagnosis plans.
 - [Benchmark Agent Workspace Attempt Isolation Implementation Plan](plan/2026-07-14-benchmark-agent-workspace-attempt-isolation.md)
 - [Benchmark Attempt Workspace Behavior and Adjudication Implementation Plan](plan/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication.md)
 
-## handoff (2)
+## handoff (3)
 
 Context and remaining work for a new maintainer.
 
+- [OpenClaw Session Race 与历史 Timeout 误重试修复交接文档](handoff/2026-09-13-openclaw-session-race-timeout-fix-handoff.md)
 - [Benchmark Infra 迁移遗留问题交接文档](handoff/2026-09-11-benchmark-infra-open-issues-handoff.md)
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 
