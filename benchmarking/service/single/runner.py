@@ -1655,10 +1655,12 @@ class SingleLLMRunner:
     @staticmethod
     def _translate_container_paths(value: Any, *, session_root: Path, workspace: Path | None = None) -> Any:
         if isinstance(value, str):
-            translated = value.replace("/benchmark/session", str(session_root))
-            if workspace is not None:
-                translated = translated.replace("/benchmark/workspace", str(workspace))
-            return translated
+            # Match only complete container prefixes; apply at most one mapping.
+            if value == "/benchmark/session" or value.startswith("/benchmark/session/"):
+                return str(session_root) + value[len("/benchmark/session"):]
+            if workspace is not None and (value == "/benchmark/workspace" or value.startswith("/benchmark/workspace/")):
+                return str(workspace) + value[len("/benchmark/workspace"):]
+            return value
         if isinstance(value, list):
             return [
                 SingleLLMRunner._translate_container_paths(item, session_root=session_root, workspace=workspace)

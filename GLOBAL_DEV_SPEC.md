@@ -218,6 +218,7 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
   identity and sanitized public dataset snapshots. The current pinned VGB
   runtime is v0.9.2.
+Run-scoped and materialized container OpenClaw configs force `agents.defaults.skipBootstrap=true` while preserving other defaults. Container path projection uses boundary-aware prefix matching.
 
 ## 3. Core Execution Flows
 

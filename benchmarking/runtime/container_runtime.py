@@ -466,6 +466,11 @@ def materialize_container_config(
         payload.setdefault("plugins", {}).setdefault("entries", {}).setdefault(
             "benchmark-workdir-guard", {}).setdefault("config", {}).setdefault("agentPolicies", {})[agent_id] = dict(workspace_policy)
     payload = rewrite(payload)
+    agents_payload = payload.setdefault("agents", {})
+    defaults = agents_payload.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        raise ContainerRuntimeError("OpenClaw config agents.defaults is invalid", code="container_config_invalid")
+    defaults["skipBootstrap"] = True
     payload.pop("secrets", None)
     entries = payload["agents"]["list"]
     selected = []

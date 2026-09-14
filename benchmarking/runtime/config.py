@@ -61,6 +61,11 @@ def render_run_config(
     runner_model: str,
 ) -> dict[str, Any]:
     payload = _deep_copy_jsonish(base_payload)
+    agents = payload.setdefault("agents", {})
+    defaults = agents.setdefault("defaults", {})
+    if not isinstance(defaults, dict):
+        raise ConfigRenderError("OpenClaw config agents.defaults is not an object")
+    defaults["skipBootstrap"] = True
     tools = payload.setdefault("tools", {})
     web = tools.setdefault("web", {})
     search = web.setdefault("search", {})
