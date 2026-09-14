@@ -49,7 +49,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 迁移遗留问题交接文档](handoff/2026-09-11-benchmark-infra-open-issues-handoff.md)
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 
-## report (6)
+## report (7)
 
 Observed results, validation, and supporting evidence.
 
@@ -59,6 +59,7 @@ Observed results, validation, and supporting evidence.
 - [Provider DNS and Container Name Validation](report/2026-09-11-provider-dns-container-name-validation.md): DNS incident evidence, naming fix, and startup-check verification.
 - [Container Proxy and DNS Follow-up](report/2026-09-11-container-proxy-dns-followup.md): upstream NODATA evidence and shared proxy configuration for preflight and attempts.
 - [OpenClaw Session Race and Timeout Retry Fix Validation](report/2026-09-13-openclaw-session-race-timeout-fix-validation.md): outcome precedence, session ownership evidence, typed timeout/takeover diagnostics, Docker contracts, and Qwen acceptance.
+- [OpenClaw Bootstrap, Rescue Context, and Path Projection Validation](report/2026-09-14-openclaw-bootstrap-rescue-path-fix-validation.md): configuration suppression, frozen rescue context, safe path projection, and validation limits.
 
 ## guide (1)
 

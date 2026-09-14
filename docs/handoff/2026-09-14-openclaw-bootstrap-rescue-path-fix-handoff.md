@@ -1,6 +1,6 @@
 # OpenClaw Benchmark Bootstrap、Rescue Context 与路径投影修复交接文档
 
-状态：`READY_FOR_IMPLEMENTATION`
+状态：`IMPLEMENTED_WITH_VALIDATION_LIMITS`
 
 整理日期：2026-09-14
 

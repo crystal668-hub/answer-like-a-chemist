@@ -22,6 +22,10 @@ from benchmarking.core.convergence import (
     is_complete_rescue_answer,
     summarize_transcript_convergence,
 )
+from benchmarking.core.finalization_context import (
+    build_finalization_context_bundle,
+    write_finalization_context_bundle,
+)
 from benchmarking.core.result_contract import contract_to_payload, parse_agent_stdout
 from benchmarking.runtime.error_capture import capture_execution_error
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
@@ -418,6 +422,24 @@ def _parse_remaining_seconds(value: Any) -> int:
         return 0
 
 
+def _transcript_has_visible_assistant_text(path: Path | None) -> bool:
+    if path is None or not path.is_file():
+        return False
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = item.get("message") if isinstance(item, dict) and isinstance(item.get("message"), dict) else item
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                return True
+            if isinstance(content, list) and any(isinstance(part, dict) and str(part.get("text") or "").strip() for part in content):
+                return True
+    return False
+
+
 def _try_finalization_rescue(
     target: dict[str, Any],
     *,
@@ -426,14 +448,32 @@ def _try_finalization_rescue(
     supervisor: SessionLifecycleSupervisor | None = None,
     answer_schema: dict[str, Any] | None = None,
 ) -> bool:
+    snapshot_meta = supervisor.freeze_primary_snapshot() if supervisor is not None else None
+    snapshot_path = Path(str(snapshot_meta.get("path"))) if snapshot_meta else transcript_path_from_audit({})
+    if snapshot_path is None or not snapshot_path.is_file():
+        _merge_convergence(target, {"finalization_rescue_attempted": False, "finalization_rescue_error": "primary_snapshot_unavailable"})
+        return False
+    try:
+        bundle = build_finalization_context_bundle(
+            snapshot_path,
+            source_session_id=str(getattr(args, "session_id", "")),
+            eval_kind=str(getattr(args, "eval_kind", "") or ""),
+            answer_schema=answer_schema or {},
+            original_task=str(getattr(args, "message", "") or ""),
+            primary_native_output="\n".join(_payload_texts(target)),
+        )
+        context_path = snapshot_path.parent.parent / "finalization-rescue-context.json"
+        write_finalization_context_bundle(bundle, context_path)
+        _merge_convergence(target, {"primary_snapshot": snapshot_meta, "rescue_context": {"path": str(context_path), "sha256": __import__('hashlib').sha256(context_path.read_bytes()).hexdigest(), "included_chars": bundle.included_chars, "omitted_event_count": bundle.omitted_event_count}})
+        rescue_prompt = build_finalization_rescue_prompt(str(getattr(args, "eval_kind", "") or ""), answer_schema=answer_schema) + "\n\nRESTRICTED CONTEXT BUNDLE:\n" + bundle.prompt_projection()
+    except Exception as exc:
+        _merge_convergence(target, {"finalization_rescue_attempted": False, "finalization_rescue_error": str(exc)[:1000]})
+        return False
     try:
         result = run_openclaw(
             args,
             env=env,
-            message_override=build_finalization_rescue_prompt(
-                str(getattr(args, "eval_kind", "") or ""),
-                answer_schema=answer_schema,
-            ),
+            message_override=rescue_prompt,
             supervisor=supervisor,
             invocation_kind="finalization_rescue",
         )
@@ -553,7 +593,8 @@ def merge_convergence_metadata(
                     convergence["recovery_source"] = "single-llm-session-transcript"
             return payload
     if (
-        error_like
+        (bool(_payload_texts(target)) and not current_process_failed and not timeout_like
+         and (not agent_error_kind or _transcript_has_visible_assistant_text(transcript_path)))
         and allow_finalization_rescue
         and env is not None
         and transcript_path is not None

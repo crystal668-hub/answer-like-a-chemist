@@ -442,12 +442,14 @@ def materialize_container_config(
 
     def rewrite(value: Any) -> Any:
         if isinstance(value, str):
-            replacements = tuple(sorted(((host, container) for container, host in
-                                 (path_projection.audit_mappings() if path_projection else {}).items()), key=lambda item: len(item[0]), reverse=True)) + (
+            replacements = tuple([
+                *sorted(((host, container) for container, host in
+                         (path_projection.audit_mappings() if path_projection else {}).items()),
+                        key=lambda item: len(item[0]), reverse=True),
                 (host_workspace_text, "/benchmark/workspace"),
                 (host_skills_text, "/opt/benchmark/skills"),
                 ("/scripts/run_skill.py", "/opt/benchmark/scripts/run_skill.py"),
-            )
+            ])
             for old, new in replacements:
                 if value == old:
                     return new

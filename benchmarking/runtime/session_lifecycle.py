@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -130,6 +131,7 @@ class SessionLifecycleSupervisor:
         self._takeover_reasons: list[str] = []
         self._cleanup: dict[str, Any] = {"status": "pending"}
         self._final_status = "running"
+        self._primary_snapshot: dict[str, Any] | None = None
 
     @classmethod
     def from_environment(
@@ -187,6 +189,19 @@ class SessionLifecycleSupervisor:
         session_id = f"{self.session_id}-{normalized}-{self._followup_count}"
         self._record("followup_allocated", kind=kind, session_id=session_id, session_path=str(self.session_path(session_id)))
         return session_id
+
+    def freeze_primary_snapshot(self) -> dict[str, Any] | None:
+        """Atomically freeze the primary transcript for follow-up consumers."""
+        path = self.session_path(self.session_id)
+        if not path.is_file() or path.is_symlink():
+            return None
+        snapshot_path = self.evidence_path.parent / "session-snapshots" / f"{self.session_id}.primary.jsonl"
+        _atomic_copy(path, snapshot_path)
+        data = snapshot_path.read_bytes()
+        meta = {"source_session_id": self.session_id, "path": str(snapshot_path), "sha256": hashlib.sha256(data).hexdigest(), "byte_size": len(data), "source_fingerprint": session_file_fingerprint(path).to_meta(), "frozen_at": _now()}
+        self._primary_snapshot = meta
+        self._record("primary_snapshot_frozen", **meta)
+        return meta
 
     def invocation_started(self, *, kind: str, session_id: str, child_pid: int) -> None:
         invocation = {
@@ -266,6 +281,7 @@ class SessionLifecycleSupervisor:
             "takeover_reasons": list(self._takeover_reasons),
             "final_status": self._final_status,
             "invocations": list(self._invocations),
+            "primary_snapshot": dict(self._primary_snapshot or {}),
             "events": list(self._events),
             "cleanup": dict(self._cleanup),
         }
