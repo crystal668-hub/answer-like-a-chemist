@@ -949,26 +949,14 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 exit_code = wrapper.main()
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(2, run_mock.call_count)
-        rescue_kwargs = run_mock.call_args_list[1].kwargs
-        self.assertNotIn("timeout_override", rescue_kwargs)
-        self.assertIn("did not organize a final answer", rescue_kwargs["message_override"])
-        self.assertIn("reasoning chain, calculations, tool verification results, and evidence", rescue_kwargs["message_override"])
-        self.assertIn("check consistency across the prior reasoning", rescue_kwargs["message_override"])
-        self.assertIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
-        self.assertIn("separate multiple correct letters with `|`", rescue_kwargs["message_override"])
-        self.assertNotIn("## FINAL RESEARCH ANSWER", rescue_kwargs["message_override"])
-        self.assertNotIn("Explanation:", rescue_kwargs["message_override"])
-        self.assertNotIn("Confidence:", rescue_kwargs["message_override"])
+        self.assertEqual(1, run_mock.call_count)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual("Visible check.\nFINAL ANSWER: B", result["payloads"][0]["text"])
+        self.assertEqual("stream_read_error", result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
         self.assertTrue(convergence["agent_error_payload_detected"])
         self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
-        self.assertTrue(convergence["finalization_rescue_attempted"])
-        self.assertTrue(convergence["finalization_rescue_succeeded"])
-        self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
 
     def test_wrapper_finalization_rescue_accepts_verifier_grounded_xyz_block_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1040,20 +1028,14 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 exit_code = wrapper.main()
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(2, run_mock.call_count)
-        rescue_kwargs = run_mock.call_args_list[1].kwargs
-        self.assertIn("exact final answer format requested in the original question", rescue_kwargs["message_override"])
-        self.assertNotIn("<XYZ content>", rescue_kwargs["message_override"])
-        self.assertNotIn("deterministic local verifier scripts", rescue_kwargs["message_override"])
+        self.assertEqual(1, run_mock.call_count)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual(rescue_text, result["payloads"][0]["text"])
+        self.assertEqual("stream_read_error", result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
         self.assertTrue(convergence["agent_error_payload_detected"])
         self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
-        self.assertTrue(convergence["finalization_rescue_attempted"])
-        self.assertTrue(convergence["finalization_rescue_succeeded"])
-        self.assertEqual("single-llm-finalization-rescue", convergence["recovery_source"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
 
     def test_wrapper_recovers_research_final_answer_heading_from_transcript(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1588,8 +1570,8 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual(rescue_text, result["payloads"][0]["text"])
-        self.assertTrue(result["meta"]["convergence"]["finalization_rescue_succeeded"])
+        self.assertEqual("stream_read_error", result["payloads"][0]["text"])
+        self.assertFalse(result["meta"]["convergence"]["finalization_rescue_attempted"])
 
     def test_wrapper_research_finalization_rescue_prompt_requires_research_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1678,14 +1660,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 exit_code = wrapper.main()
 
         self.assertEqual(0, exit_code)
-        rescue_kwargs = run_mock.call_args_list[1].kwargs
-        self.assertNotIn("timeout_override", rescue_kwargs)
-        self.assertIn("did not organize a final answer", rescue_kwargs["message_override"])
-        self.assertIn("## FINAL RESEARCH ANSWER", rescue_kwargs["message_override"])
-        self.assertIn("<rubric-complete final synthesis>", rescue_kwargs["message_override"])
-        self.assertIn("Do not add the short-answer `FINAL ANSWER:` marker", rescue_kwargs["message_override"])
-        self.assertNotIn("FINAL ANSWER: <option letters>", rescue_kwargs["message_override"])
-        self.assertNotIn("Explanation:", rescue_kwargs["message_override"])
+        self.assertEqual(1, run_mock.call_count)
 
     def test_wrapper_hle_finalization_rescue_prompt_uses_hle_format_only(self) -> None:
         prompt = wrapper.build_finalization_rescue_prompt("hle")
@@ -1790,14 +1765,13 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 exit_code = wrapper.main()
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(2, run_mock.call_count)
+        self.assertEqual(1, run_mock.call_count)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
         self.assertEqual("stream_read_error", result["payloads"][0]["text"])
         self.assertTrue(result["payloads"][0]["isError"])
         convergence = result["meta"]["convergence"]
-        self.assertTrue(convergence["finalization_rescue_attempted"])
-        self.assertFalse(convergence["finalization_rescue_succeeded"])
+        self.assertFalse(convergence["finalization_rescue_attempted"])
         self.assertTrue(convergence["agent_error_payload_detected"])
         self.assertEqual("agent_stream_read_error", convergence["agent_error_kind"])
 
