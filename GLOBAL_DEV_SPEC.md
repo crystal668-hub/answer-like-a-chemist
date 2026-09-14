@@ -119,6 +119,8 @@ registration and dispatch, and `benchmarking.scoring.evaluators/` owns only
 benchmark-specific scoring strategies. `benchmarking.scoring.results` owns the
 stable `EvaluationResult` shape and execution-error construction;
 `benchmarking.scoring.errors` owns scoring and registry exceptions.
+`benchmarking.core.finalization_context` owns bounded, redacted rescue context
+bundles derived from frozen primary transcript snapshots.
 
 ### Skill bundles
 
