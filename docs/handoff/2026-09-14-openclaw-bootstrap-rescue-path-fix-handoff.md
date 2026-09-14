@@ -423,70 +423,70 @@ Workspace seal 后，再将 active workspace prefix 映射到 archive workspace�
 
 ### Phase 0：先补失败测试
 
-- [ ] Run config 即使输入 `skipBootstrap=false`，输出仍为 true，其他
+- [x] Run config 即使输入 `skipBootstrap=false`，输出仍为 true，其他
       `agents.defaults` 字段不变。
-- [ ] Container config 二次强制 `skipBootstrap=true`。
-- [ ] Default skills-on template 精确为 `AGENTS.md`、`TOOLS.md`；skills-off
+- [x] Container config 二次强制 `skipBootstrap=true`。
+- [x] Default skills-on template 精确为 `AGENTS.md`、`TOOLS.md`；skills-off
       精确为 `AGENTS.md`。
-- [ ] Finalization rescue 只在 primary native assistant output 非空且 contract
+- [x] Finalization rescue 只在 primary native assistant output 非空且 contract
       不完整时触发。
-- [ ] 空 payload、timeout、transport failure、process failure、session takeover
+- [x] 空 payload、timeout、transport failure、process failure、session takeover
       均不触发 rescue。
-- [ ] Primary snapshot 在 rescue invocation start 前写出并记录 digest。
-- [ ] Rescue 使用新 session id，context bundle 含原题/schema/必要 evidence。
-- [ ] Bundle 不含 secrets、env、system prompt、encrypted reasoning、hidden
+- [x] Primary snapshot 在 rescue invocation start 前写出并记录 digest。
+- [x] Rescue 使用新 session id，context bundle 含原题/schema/必要 evidence。
+- [x] Bundle 不含 secrets、env、system prompt、encrypted reasoning、hidden
       verifier 或绝对路径。
-- [ ] Bundle 字符预算和 tool call/result pairing 在截断时稳定。
-- [ ] 路径测试覆盖正确 prefix、相似路径、host target 中含
+- [x] Bundle 字符预算和 tool call/result pairing 在截断时稳定。
+- [x] 路径测试覆盖正确 prefix、相似路径、host target 中含
       `/benchmark/workspaces`、单次映射、diagnostic text 不变。
 
 ### Phase 1：Config 和 workspace 模板契约
 
-- [ ] 修改 `benchmarking/runtime/config.py`。
-- [ ] 修改 `benchmarking/runtime/container_runtime.py`。
-- [ ] 保持 `default_workspace_templates()` 的 skills-on/off 文件声明不扩张。
-- [ ] 更新 config/template tests。
+- [x] 修改 `benchmarking/runtime/config.py`。
+- [x] 修改 `benchmarking/runtime/container_runtime.py`。
+- [x] 保持 `default_workspace_templates()` 的 skills-on/off 文件声明不扩张。
+- [x] 更新 config/template tests。
 
 ### Phase 2：Primary snapshot 与 context bundle
 
-- [ ] 在 `session_lifecycle.py` 增加幂等 primary snapshot freeze API。
-- [ ] 实现 snapshot SHA-256 和 metadata。
-- [ ] 实现纯 context bundle 提取和脱敏。
-- [ ] 原子持久化 `finalization-rescue-context.json`。
-- [ ] lifecycle 记录 snapshot/context 构建时序。
+- [x] 在 `session_lifecycle.py` 增加幂等 primary snapshot freeze API。
+- [x] 实现 snapshot SHA-256 和 metadata。
+- [x] 实现纯 context bundle 提取和脱敏。
+- [x] 原子持久化 `finalization-rescue-context.json`。
+- [x] lifecycle 记录 snapshot/context 构建时序。
 
 ### Phase 3：Rescue 触发和独立 session
 
-- [ ] 收窄 `merge_convergence_metadata()` 的 rescue eligibility。
-- [ ] 把 `args.message`、`eval_kind`、answer schema、primary native output 和
+- [x] 收窄 `merge_convergence_metadata()` 的 rescue eligibility。
+- [x] 把 `args.message`、`eval_kind`、answer schema、primary native output 和
       frozen transcript evidence 交给 bundle builder。
-- [ ] 继续使用 `allocate_followup_session("finalization_rescue")`。
-- [ ] Rescue prompt 只引用显式 bundle，不宣称新 session 已有旧 context。
-- [ ] 保持 timeout/current execution error 的 retry semantics。
+- [x] 继续使用 `allocate_followup_session("finalization_rescue")`。
+- [x] Rescue prompt 只引用显式 bundle，不宣称新 session 已有旧 context。
+- [x] 保持 timeout/current execution error 的 retry semantics。
 
 ### Phase 4：路径投影
 
-- [ ] 用边界安全映射替换两次 `str.replace()`。
-- [ ] 限定结构化路径字段，保护原始诊断文本。
-- [ ] seal 后统一重写所有 path-bearing runner metadata。
-- [ ] 验证每个预期归档文件路径实际存在。
+- [x] 用边界安全映射替换两次 `str.replace()`。
+- [x] 限定结构化路径字段，保护原始诊断文本。
+- [x] seal 后统一重写所有 path-bearing runner metadata。
+- [x] 验证每个预期归档文件路径实际存在。
 
 ### Phase 5：验证、规范和提交
 
-- [ ] 运行聚焦测试。
-- [ ] 运行 `uv run pytest -q` 全量测试。
-- [ ] 运行 changed-file Ruff/compile/diff checks。
-- [ ] 重建 `openclaw-benchmark-single-llm:latest`。
-- [ ] 运行无模型 Docker contract/integration tests。
-- [ ] 使用失败题
+- [x] 运行聚焦测试。
+- [x] 运行 `uv run pytest -q` 全量测试。
+- [x] 运行 changed-file Ruff/compile/diff checks。
+- [x] 重建 `openclaw-benchmark-single-llm:latest`。
+- [x] 运行无模型 Docker contract/integration tests。
+- [x] 使用失败题
       `property_calculation_advanced_001_free_energy` 和 GPT-5.6 SOL 做
       skills-off 定向真实模型复跑。
-- [ ] 再做 skills-on/off、`max_concurrent_attempts=2` 验收。
-- [ ] 更新 `GLOBAL_DEV_SPEC.md` 的当前实现描述。
-- [ ] 在 `docs/report/` 新增验收报告，并把本文状态改为 `CLOSED`。
-- [ ] 更新 `docs/README.md` 的 report/handoff 计数和链接。
-- [ ] 确认没有 benchmark 容器、进程或非空 owner lock 残留。
-- [ ] 提交 Git。
+- [x] 再做 skills-on/off、`max_concurrent_attempts=2` 验收。
+- [x] 更新 `GLOBAL_DEV_SPEC.md` 的当前实现描述。
+- [x] 在 `docs/report/` 新增验收报告，并把本文状态改为 `CLOSED`。
+- [x] 更新 `docs/README.md` 的 report/handoff 计数和链接。
+- [x] 确认没有 benchmark 容器、进程或非空 owner lock 残留。
+- [x] 提交 Git。
 
 ## 7. 预期文件边界
 
