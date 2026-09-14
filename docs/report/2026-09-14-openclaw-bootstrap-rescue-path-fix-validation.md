@@ -26,6 +26,10 @@ assistant/tool 事件，并移除凭据字段与绝对路径。
   产生 typed execution failure（exec/tool failure），无 takeover 或污染证据，
   属于模型执行层失败，与本修复无关。
 - 两次 run 的归档工作区均未发现 `BOOTSTRAP.md`、`SOUL.md` 或 `USER.md`。
+- 证据目录：
+  `state/benchmark-runs/formal/verifier-grounded-property-calculation/gpt-5-6-sol/`
+  下的 `...-20260914-115542`、`...-20260914-115942` 和
+  `...-20260914-120734`。
 - Docker 容器、OpenClaw 进程和非空 benchmark owner lock 检查均为空。
 
 旧 wrapper 测试已迁移到新契约：timeout/transport/blocked payload 不再触发
