@@ -265,92 +265,11 @@ def workspace_isolation_failed(item: GroupRecordResult) -> bool:
 
 
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
-    acc = AggregateAccumulator()
+    """Return a reporting bucket using bounded incremental state."""
+    accumulator = AggregateAccumulator()
     for item in items:
-        acc.add(item)
-    return acc.to_dict()
-    """Legacy implementation retained in git history."""
-    return {
-        "count": len(items),
-        "pass_count": sum(1 for item in items if item.evaluation["passed"]),
-        "run_completed_count": sum(1 for item in items if item.run_lifecycle_status == "completed"),
-        "run_failed_count": sum(1 for item in items if item.run_lifecycle_status == "failed"),
-        "protocol_completed_count": sum(1 for item in items if item.protocol_completion_status == "completed"),
-        "protocol_failed_count": sum(1 for item in items if item.protocol_completion_status == "failed"),
-        "evaluable_count": sum(1 for item in items if item.evaluable),
-        "scored_count": sum(1 for item in items if item.scored),
-        "recovered_evaluable_count": sum(1 for item in items if item.evaluable and item.recovery_mode != "none"),
-        "native_evaluable_count": sum(1 for item in items if item.evaluable and item.recovery_mode == "none"),
-        "non_evaluable_count": sum(1 for item in items if not item.evaluable),
-        "degraded_execution_count": sum(1 for item in items if item.degraded_execution),
-        "skill_tool_executed_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("skill_tool_executed")),
-        "skill_model_declared_skip_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("model_declared_skip")),
-        "skill_no_tool_call_count": sum(1 for item in items if item.skills_enabled and skill_audit(item).get("no_skill_tool_call")),
-        "exec_tool_call_total": sum(exec_tool_call_count(item) for item in items),
-        "exec_tool_failure_total": sum(exec_tool_failure_count(item) for item in items),
-        "skill_tool_call_total": sum(skill_tool_call_count(item) for item in items),
-        "skill_tool_failure_total": sum(skill_tool_failure_count(item) for item in items),
-        "openclaw_tool_call_total": sum(openclaw_tool_call_count(item) for item in items),
-        "openclaw_tool_failure_total": sum(openclaw_tool_failure_count(item) for item in items),
-        "missing_skill_doc_read_total": sum(skill_audit_int(item, "missing_skill_doc_read_count", skill_enabled_only=True) for item in items),
-        "tool_result_error_total": sum(skill_audit_int(item, "tool_result_error_count") for item in items),
-        "request_shape_error_total": sum(skill_audit_int(item, "request_shape_error_count") for item in items),
-        "coverage_checklist_present_count": sum(1 for item in items if skill_audit(item).get("coverage_checklist_present")),
-        "session_isolation_ok_count": sum(1 for item in items if session_isolation_audit(item).get("session_isolation_ok") is True),
-        "session_isolation_failed_count": sum(1 for item in items if session_isolation_failed(item)),
-        "session_contaminated_count": sum(1 for item in items if session_contaminated(item)),
-        "workspace_isolation_ok_count": sum(1 for item in items if workspace_isolation_ok(item)),
-        "workspace_isolation_failed_count": sum(1 for item in items if workspace_isolation_failed(item)),
-        "workspace_contaminated_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "confirmed"
-        ),
-        "boundary_warning_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("boundary_status") == "warning"
-        ),
-        "boundary_violation_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("boundary_status") == "violated"
-        ),
-        "scoreable_degraded_boundary_count": sum(
-            1
-            for item in items
-            if workspace_isolation_audit(item).get("adjudication") == "scoreable_degraded"
-        ),
-        "information_contamination_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "confirmed"
-        ),
-        "contamination_indeterminate_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("contamination_status") == "indeterminate"
-        ),
-        "audit_unavailable_count": sum(
-            1 for item in items if workspace_isolation_audit(item).get("audit_execution_status") == "unavailable"
-        ),
-        "boundary_cleanup_failed_count": sum(
-            1
-            for item in items
-            if (workspace_isolation_audit(item).get("cleanup") or {}).get("failed_count", 0)
-        ),
-        "workspace_archive_failed_count": sum(
-            1
-            for item in items
-            if workspace_isolation_audit(item)
-            and workspace_isolation_audit(item).get("archive_ok") is False
-        ),
-        "avg_score": (
-            sum(float(item.evaluation["score"]) for item in scored_items) / score_divisor
-            if score_divisor
-            else 0.0
-        ),
-        "avg_normalized_score": (
-            sum(float(item.evaluation["normalized_score"]) for item in scored_items) / score_divisor
-            if score_divisor
-            else 0.0
-        ),
-        "avg_elapsed_seconds": sum(float(item.elapsed_seconds) for item in items) / len(items),
-        "avg_answer_accuracy": average_optional_metric(items, "answer_accuracy"),
-        "avg_rpf": average_optional_metric(items, "rpf"),
-        "hle_calibration_rmse": hle_calibration_rmse(items),
-    }
-
+        accumulator.add(item)
+    return accumulator.to_dict()
 
 def aggregate_results(results: list[GroupRecordResult]) -> dict[str, Any]:
     grouped: dict[str, list[GroupRecordResult]] = {}
