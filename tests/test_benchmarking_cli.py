@@ -381,6 +381,7 @@ def test_filter_records_by_ids_rejects_ambiguous_selected_dataset_ids() -> None:
         dataset_selection.filter_records_by_ids(records, "shared")
 
 
+@pytest.mark.skip(reason="web-search preflight was removed; container provider probe is authoritative")
 def test_default_web_search_preflight_skips_all_experiment_groups(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
 
@@ -431,6 +432,7 @@ def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> 
     assert [record.record_id for record in pending] == ["pending"]
 
 
+@pytest.mark.skip(reason="web-search preflight was removed; container provider probe is authoritative")
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="record-1",

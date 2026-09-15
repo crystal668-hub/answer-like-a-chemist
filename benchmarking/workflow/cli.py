@@ -61,7 +61,6 @@ from benchmarking.runtime.openclaw_env import (
 from benchmarking.runtime.provider_preflight import check_provider_connection
 from benchmarking.runtime.container_network import resolve_container_network
 from benchmarking.runtime.vgb_bridge import load_release_config
-from benchmarking.runtime.web_search_preflight import run_web_search_preflight
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
@@ -86,6 +85,11 @@ DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
 
 
 register_default_evaluators()
+
+# Kept as a test patch seam for legacy callers; the benchmark no longer invokes
+# a standalone web-search preflight.
+run_benchmark_web_search_preflight = None
+run_web_search_preflight = None
 
 
 def install_cancellation_signal_handlers(
@@ -298,120 +302,6 @@ def record_group_progress_failure(
     progress_writer.group_completed(group_id, status="failed")
 
 
-def run_benchmark_web_search_preflight(
-    *,
-    group_ids: list[str],
-    config_pool: runtime_config_pool.ConfigPool,
-    args: argparse.Namespace,
-    catalog=experiments,
-    wrapper_path: Path | None = None,
-) -> dict[str, Any]:
-    reports: dict[str, Any] = {}
-    for group_id in group_ids:
-        group = catalog.EXPERIMENT_GROUPS[group_id]
-        if not group.websearch:
-            continue
-        spec = catalog.EXPERIMENT_SPECS.get(group_id)
-        agent_id = (
-            spec.resolve_single_agent_id(args.single_agent_id_override)
-            if spec is not None and group.runner == "single_llm"
-            else experiments.JUDGE_AGENT_ID
-        )
-        config_path = config_pool.config_for_group(group)
-        effective_agent_id = agent_id or experiments.JUDGE_AGENT_ID
-        identity = AttemptIdentity(
-            run_id=config_pool.workspace_manager.run_id,
-            invocation_id=config_pool.workspace_manager.invocation_id,
-            group_id=group.id,
-            runner_kind="web_search_preflight",
-            agent_id=effective_agent_id,
-            record_id="web-search-preflight",
-            attempt_index=0,
-            session_id=f"web-search-preflight-{uuid.uuid4().hex[:12]}",
-            template_id="single-llm-skills-on-v1"
-            if bool(getattr(group, "skills_enabled", False))
-            else "single-llm-skills-off-v1",
-        )
-        try:
-            lease = config_pool.workspace_manager.prepare(identity)
-        except WorkspaceIsolationError as exc:
-            reports[group_id] = {
-                "available": False,
-                "error": exc.message,
-                "workspace_isolation": {
-                    "preflight_ok": False,
-                    "archive_ok": False,
-                    "execution_error": dict(exc.details),
-                },
-            }
-            continue
-        environment = os.environ.copy()
-        environment.update(
-            {
-                "BENCHMARK_WORKSPACE_DIR": str(lease.active_workspace),
-                "BENCHMARK_SKILL_SCRATCH_DIR": str(lease.scratch_dir),
-                "BENCHMARK_SKILL_REQUEST_DIR": str(lease.request_dir),
-                "BENCHMARK_SKILL_OUTPUT_DIR": str(lease.output_dir),
-                "BENCHMARK_SKILL_NOTES_DIR": str(lease.notes_dir),
-                "BENCHMARK_PROJECT_ROOT": str(runtime_paths.project_root),
-                "BENCHMARK_SKILL_RUNNER": str(runtime_paths.project_root / "scripts" / "run_skill.py"),
-            }
-        )
-        if wrapper_path is None:
-            from benchmarking.service.single import openclaw_wrapper
-            wrapper_path = Path(openclaw_wrapper.__file__)
-        report = run_web_search_preflight(
-            wrapper_path=wrapper_path,
-            agent_id=effective_agent_id,
-            config_path=config_path,
-            current_python_path=subprocess_utils.current_python(),
-            run_subprocess=subprocess_utils.run_subprocess,
-            base_env=environment,
-        )
-        transcript_path = str(report.get("transcript_path") or "").strip()
-        policy = config_pool.workspace_manager.policy_for_lease(
-            lease,
-            role="single_llm",
-            skills_enabled=bool(getattr(group, "skills_enabled", False)),
-            read_scopes=(runtime_paths.skills_root, runtime_paths.project_root / "scripts" / "run_skill.py"),
-        )
-        contamination_audit = config_pool.workspace_manager.audit_attempt(
-            lease,
-            {"session_isolation": {"postflight_entry_session_file": transcript_path}},
-            environment=environment,
-            policy=policy,
-        )
-        isolation_meta = lease.to_meta()
-        isolation_meta.update(contamination_audit.to_payload())
-        isolation_meta.update({"policy_digest": policy.digest, "policy": policy.to_payload()})
-        if contamination_audit.adjudication == "non_evaluable":
-            report["available"] = False
-            report["error"] = "web_search preflight workspace contamination audit failed"
-        try:
-            archive = config_pool.workspace_manager.seal(
-                lease,
-                AttemptOutcome(
-                    runner_status="completed" if report.get("available") is True else "failed",
-                    archive_reason="attempt_terminal",
-                    contamination_audit=contamination_audit,
-                ),
-            )
-            isolation_meta.update(archive.to_meta())
-        except WorkspaceIsolationError as exc:
-            isolation_meta["archive_ok"] = False
-            isolation_meta["archive_error"] = dict(exc.details)
-            report["available"] = False
-            report["error"] = exc.message
-        report["workspace_isolation"] = isolation_meta
-        reports[group_id] = report
-    return {
-        "enabled": True,
-        "provider": "duckduckgo",
-        "reports": reports,
-        "available": all(bool(report.get("available")) for report in reports.values()) if reports else True,
-        "proxy_env": proxy_environment_report(build_openclaw_subprocess_env(base_env=os.environ.copy())),
-    }
-
 
 
 def main(service=None) -> int:
@@ -576,13 +466,6 @@ def main(service=None) -> int:
         judge_model=args.judge_model,
         single_agent_id_override=args.single_agent_id_override,
     )
-    web_search_preflight = run_benchmark_web_search_preflight(
-        group_ids=[group_id for group_id in group_ids if pending_records_by_group[group_id]],
-        config_pool=config_pool,
-        args=args,
-        catalog=catalog,
-    )
-    run_state.save_json(output_root / "web-search-preflight.json", web_search_preflight)
     judge = judge_runtime.JudgeClient(
         judge_agent=args.judge_agent,
         timeout_seconds=args.judge_timeout,
@@ -656,25 +539,6 @@ def main(service=None) -> int:
                     if not group_records:
                         group_results[group_id] = []
                         continue
-                    preflight_report = dict((web_search_preflight.get("reports") or {}).get(group_id) or {})
-                    if group.websearch and preflight_report.get("available") is not True:
-                        error_message = (
-                            "web_search preflight failed for group "
-                            f"`{group_id}`: {preflight_report.get('error') or 'web_search unavailable'}"
-                        )
-                        group_results[group_id] = materialize_failure_results(
-                            group=group,
-                            records=group_records,
-                            output_root=output_root,
-                            error_message=error_message,
-                        )
-                        record_group_progress_failure(
-                            progress_writer,
-                            group_id=group_id,
-                            records=group_records,
-                            error_message=error_message,
-                        )
-                        continue
                     config_path = config_pool.config_for_group(group)
                     if single_queue:
                         progress_writer.group_started(group_id)
@@ -733,8 +597,6 @@ def main(service=None) -> int:
             completed_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if single_queue:
                 for group_id in wave_group_ids:
-                    if catalog.EXPERIMENT_GROUPS[group_id].websearch and dict((web_search_preflight.get("reports") or {}).get(group_id) or {}).get("available") is not True:
-                        continue
                     if cancellation_token.is_cancelled:
                         progress_writer.group_cancelled(group_id)
                     else:
@@ -920,7 +782,6 @@ def main(service=None) -> int:
         ),
         "groups": [run_state.describe_result_group(group_id, results, catalog.EXPERIMENT_GROUPS) for group_id in aggregate_group_ids],
         "run_groups": [asdict(catalog.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
-        "web_search_preflight": web_search_preflight,
         "convergence_policy": convergence_policy_meta,
         "single_timeout_retry": {
             "max_retries": single_timeout_retries,
@@ -987,10 +848,6 @@ def main(service=None) -> int:
             "path": str(output_root / "skill-routing-inventory.json"),
             "health_check_applied": False,
             "sha256": skill_routing_inventory.get("inventory_sha256", ""),
-        },
-        "web_search_preflight": {
-            **web_search_preflight,
-            "report_path": str(output_root / "web-search-preflight.json"),
         },
         "convergence_policy": convergence_policy_meta,
         "single_timeout_retry": {

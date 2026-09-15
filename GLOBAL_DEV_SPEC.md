@@ -589,7 +589,7 @@ The final run artifact set includes:
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
 - `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
-- `skill-routing-inventory.json`, `web-search-preflight.json`, and (when the
+- `skill-routing-inventory.json` and (when the
   Docker backend is selected) per-attempt container manifests, logs, stats, and
   cleanup spools;
 - `analysis/` status, evidence, and reports when automated analysis is enabled.
