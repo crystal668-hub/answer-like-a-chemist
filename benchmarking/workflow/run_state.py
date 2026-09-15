@@ -19,6 +19,7 @@ from benchmarking.runtime.vgb_bridge import (
 )
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import EXPERIMENT_GROUPS
+from benchmarking.runtime.atomic_io import atomic_write_json
 
 
 def now_stamp() -> str:
@@ -270,8 +271,7 @@ def ensure_dir(path: Path) -> None:
 
 
 def save_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    atomic_write_json(path, payload)
 
 
 def automated_evaluation_launch_failed(output_root: Path, exc: Exception) -> dict[str, Any]:

@@ -108,7 +108,12 @@ execution and the shared attempt/retry/scoring scheduler,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
 `benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
 isolated process bridge, and public package API calls. The scoring evaluator
-only maps benchmark records and verifier results.
+only maps benchmark records and verifier results. `benchmarking.runtime.atomic_io`
+provides the shared same-directory atomic JSON/text writer used by run-state and
+dashboard progress snapshots. `benchmarking.core.reporting` exposes
+`AggregateAccumulator`, a bounded counter/totals collector used to build aggregate
+buckets without retaining an additional copy of record details; its output schema
+remains compatible with `aggregate_bucket`.
 `benchmarking.service.chemdebate.cleanroom.CleanroomRuntime` is the cleanroom dependency
 binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
@@ -297,8 +302,9 @@ For each invocation, the CLI:
    `--max-concurrent-groups` controls ChemQA waves only. Each record runs through either the
    single-LLM runner or the ChemQA runner, then through the registered evaluator
    when the runner result is scoreable.
-5. Uses `benchmarking.workflow.run_state` to persist each record immediately,
-   update run artifacts, aggregate only `scored=true` records, and support
+5. Uses `benchmarking.workflow.run_state` to persist each record immediately using
+   atomic same-directory replacement for JSON evidence, update run artifacts,
+   aggregate only `scored=true` records, and support
    historical per-record resume data; the CLI writes the final results and
    runtime manifest.
 6. Starts detached automated analysis unless `--no-analysis` is selected. A
