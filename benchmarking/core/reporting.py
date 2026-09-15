@@ -42,6 +42,86 @@ class GroupRecordResult:
     full_response_text: str = ""
 
 
+class AggregateAccumulator:
+    """Incrementally accumulate the reporting bucket contract.
+
+    The accumulator keeps counters and numeric totals only; record payloads are
+    never retained.  ``to_dict`` emits the same keys as ``aggregate_bucket``.
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._scored = 0
+        self._score_sum = 0.0
+        self._normalized_sum = 0.0
+        self._elapsed_sum = 0.0
+        self._optional: dict[str, tuple[float, int]] = {"answer_accuracy": (0.0, 0), "rpf": (0.0, 0)}
+        self._hle_sse = 0.0
+        self._hle_count = 0
+        self._counters: dict[str, int] = {}
+
+    def add(self, item: GroupRecordResult) -> None:
+        self.count += 1
+        self._elapsed_sum += float(item.elapsed_seconds)
+        predicates = {
+            "pass_count": bool((item.evaluation or {}).get("passed")),
+            "run_completed_count": item.run_lifecycle_status == "completed",
+            "run_failed_count": item.run_lifecycle_status == "failed",
+            "protocol_completed_count": item.protocol_completion_status == "completed",
+            "protocol_failed_count": item.protocol_completion_status == "failed",
+            "evaluable_count": item.evaluable,
+            "scored_count": item.scored,
+            "recovered_evaluable_count": item.evaluable and item.recovery_mode != "none",
+            "native_evaluable_count": item.evaluable and item.recovery_mode == "none",
+            "non_evaluable_count": not item.evaluable,
+            "degraded_execution_count": item.degraded_execution,
+            "skill_tool_executed_count": item.skills_enabled and bool(skill_audit(item).get("skill_tool_executed")),
+            "skill_model_declared_skip_count": item.skills_enabled and bool(skill_audit(item).get("model_declared_skip")),
+            "skill_no_tool_call_count": item.skills_enabled and bool(skill_audit(item).get("no_skill_tool_call")),
+            "coverage_checklist_present_count": bool(skill_audit(item).get("coverage_checklist_present")),
+            "session_isolation_ok_count": session_isolation_audit(item).get("session_isolation_ok") is True,
+            "session_isolation_failed_count": session_isolation_failed(item),
+            "session_contaminated_count": session_contaminated(item),
+            "workspace_isolation_ok_count": workspace_isolation_ok(item),
+            "workspace_isolation_failed_count": workspace_isolation_failed(item),
+            "workspace_contaminated_count": workspace_isolation_audit(item).get("contamination_status") == "confirmed",
+            "boundary_warning_count": workspace_isolation_audit(item).get("boundary_status") == "warning",
+            "boundary_violation_count": workspace_isolation_audit(item).get("boundary_status") == "violated",
+            "scoreable_degraded_boundary_count": workspace_isolation_audit(item).get("adjudication") == "scoreable_degraded",
+            "information_contamination_count": workspace_isolation_audit(item).get("contamination_status") == "confirmed",
+            "contamination_indeterminate_count": workspace_isolation_audit(item).get("contamination_status") == "indeterminate",
+            "audit_unavailable_count": workspace_isolation_audit(item).get("audit_execution_status") == "unavailable",
+            "boundary_cleanup_failed_count": bool((workspace_isolation_audit(item).get("cleanup") or {}).get("failed_count", 0)),
+            "workspace_archive_failed_count": bool(workspace_isolation_audit(item) and workspace_isolation_audit(item).get("archive_ok") is False),
+        }
+        for key, value in predicates.items():
+            self._counters[key] = self._counters.get(key, 0) + int(value)
+        for key, value in (("exec_tool_call_total", exec_tool_call_count(item)), ("exec_tool_failure_total", exec_tool_failure_count(item)), ("skill_tool_call_total", skill_tool_call_count(item)), ("skill_tool_failure_total", skill_tool_failure_count(item)), ("openclaw_tool_call_total", openclaw_tool_call_count(item)), ("openclaw_tool_failure_total", openclaw_tool_failure_count(item)), ("missing_skill_doc_read_total", skill_audit_int(item, "missing_skill_doc_read_count", skill_enabled_only=True)), ("tool_result_error_total", skill_audit_int(item, "tool_result_error_count")), ("request_shape_error_total", skill_audit_int(item, "request_shape_error_count"))):
+            self._counters[key] = self._counters.get(key, 0) + int(value)
+        if item.scored:
+            self._scored += 1
+            self._score_sum += float(item.evaluation.get("score") or 0.0)
+            self._normalized_sum += float(item.evaluation.get("normalized_score") or 0.0)
+        details = item.evaluation.get("details") or {}
+        for key in self._optional:
+            value = details.get(key)
+            if isinstance(value, (int, float)):
+                total, count = self._optional[key]
+                self._optional[key] = (total + float(value), count + 1)
+        if item.eval_kind == "hle" and isinstance(details.get("confidence"), (int, float)):
+            confidence = max(0.0, min(100.0, float(details["confidence"]))) / 100.0
+            self._hle_sse += (confidence - (1.0 if item.evaluation.get("passed") else 0.0)) ** 2
+            self._hle_count += 1
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {"count": self.count, **self._counters}
+        result.update({"avg_score": self._score_sum / self._scored if self._scored else 0.0, "avg_normalized_score": self._normalized_sum / self._scored if self._scored else 0.0, "avg_elapsed_seconds": self._elapsed_sum / self.count if self.count else 0.0})
+        for key, (total, count) in self._optional.items():
+            result[f"avg_{key}"] = total / count if count else None
+        result["hle_calibration_rmse"] = math.sqrt(self._hle_sse / self._hle_count) if self._hle_count else None
+        return result
+
+
 def average_optional_metric(items: list[GroupRecordResult], key: str) -> float | None:
     values: list[float] = []
     for item in items:
@@ -185,8 +265,11 @@ def workspace_isolation_failed(item: GroupRecordResult) -> bool:
 
 
 def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
-    scored_items = [item for item in items if item.scored]
-    score_divisor = len(scored_items)
+    acc = AggregateAccumulator()
+    for item in items:
+        acc.add(item)
+    return acc.to_dict()
+    """Legacy implementation retained in git history."""
     return {
         "count": len(items),
         "pass_count": sum(1 for item in items if item.evaluation["passed"]),
