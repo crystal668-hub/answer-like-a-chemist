@@ -58,6 +58,7 @@ class ContainerNetworkConfig:
 
 
 def _direct_dns_servers(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Resolve the explicit DNS list used by proxy-free bridge containers."""
     configured = str(environment.get("OPENCLAW_CONTAINER_DNS") or "").strip()
     candidates = [item.strip() for item in configured.split(",") if item.strip()] if configured else []
     if not candidates:
@@ -85,6 +86,8 @@ def resolve_container_network(
     platform: str | None = None,
 ) -> ContainerNetworkConfig:
     runtime_env = runtime_environment(base_env)
+    # This opt-in mode bypasses the host proxy and pins Docker's resolvers so a
+    # benchmark run can test direct provider/PyPI connectivity deterministically.
     direct_dns = str(runtime_env.get("OPENCLAW_CONTAINER_DIRECT_DNS") or "").strip().lower() in {"1", "true", "yes", "on"}
     env = build_openclaw_subprocess_env(base_env=runtime_env, system_proxy_text=system_proxy_text)
     effective_platform = platform or sys.platform
