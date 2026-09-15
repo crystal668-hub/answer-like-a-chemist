@@ -56,6 +56,7 @@ class ContainerAttemptSpec:
     environment: Mapping[str, str] = field(default_factory=dict)
     mounts: tuple[ContainerMount, ...] = ()
     network_mode: str = "host"
+    dns_servers: tuple[str, ...] = ()
     cpu_limit: float | None = None
     memory_limit_bytes: int | None = None
     pids_limit: int | None = None
@@ -149,6 +150,8 @@ class DockerContainerRuntime:
             "--user", "1000:1000", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
             "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m", "--entrypoint", "node",
         ]
+        for dns_server in network.dns_servers:
+            args += ["--dns", dns_server]
         for key, _ in network.proxy_environment:
             args += ["--env", key]
         args += [image, "--input-type=module", "-e", script]
@@ -219,6 +222,8 @@ class DockerContainerRuntime:
             args += ["--memory", str(spec.memory_limit_bytes)]
         if spec.pids_limit is not None:
             args += ["--pids-limit", str(spec.pids_limit)]
+        for dns_server in spec.dns_servers:
+            args += ["--dns", dns_server]
         for key, value in {**labels}.items():
             args += ["--label", f"{key}={value}"]
         for key, value in spec.environment.items():

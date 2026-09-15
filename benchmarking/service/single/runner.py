@@ -1535,6 +1535,7 @@ class SingleLLMRunner:
             environment=container_env,
             mounts=tuple(mounts),
             network_mode=self.container_network.network_mode,
+            dns_servers=self.container_network.dns_servers,
             cpu_limit=self.container_cpus,
             memory_limit_bytes=self.container_memory_bytes,
             pids_limit=self.container_pids_limit,

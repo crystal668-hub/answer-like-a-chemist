@@ -92,6 +92,28 @@ def test_create_builds_hardened_docker_command(tmp_path: Path) -> None:
     assert "--network" in command and "host" in command
 
 
+def test_create_passes_explicit_dns_servers(tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[1] == "create":
+            return subprocess.CompletedProcess(command, 0, "container-id\n", "")
+        if command[1] == "inspect":
+            return subprocess.CompletedProcess(command, 0, '[{"Image":"sha256:image"}]', "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    DockerContainerRuntime(docker_executable="docker", run_subprocess=run).create(
+        ContainerAttemptSpec(
+            identity=identity(), image="benchmark:base", command=("run",),
+            network_mode="bridge", dns_servers=("223.5.5.5", "1.1.1.1"),
+            mounts=(ContainerMount(tmp_path, Path("/benchmark/workspace"), "rw", "workspace"),),
+        )
+    )
+    command = commands[0]
+    assert command[command.index("--dns") + 1 : command.index("--dns") + 4] == ["223.5.5.5", "--dns", "1.1.1.1"]
+
+
 def test_container_names_preserve_full_identity_after_truncation():
     names = []
 

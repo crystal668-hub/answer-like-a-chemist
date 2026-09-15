@@ -266,7 +266,11 @@ For each invocation, the CLI:
    manifest retain startup evidence, including failures. Before scheduling,
    `container_network` resolves one immutable network configuration for the
    invocation from process environment, runtime `.env`, and system proxy
-   fallback. On macOS, loopback proxy URLs map to `host.docker.internal` with
+   fallback. When `OPENCLAW_CONTAINER_DIRECT_DNS=1`, Docker single-LLM containers
+   use bridge networking, clear proxy variables, and receive the explicit IPv4
+   resolvers listed by `OPENCLAW_CONTAINER_DNS` (or the host resolver file when
+   unset); otherwise the historical host-network/proxy behavior remains. On macOS,
+   loopback proxy URLs map to `host.docker.internal` with
    their original port; Linux host networking retains loopback URLs. Lowercase
    proxy overrides take precedence and both cases receive the same values,
    including `NO_PROXY`. The exact configuration is passed to the preflight

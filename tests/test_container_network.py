@@ -40,6 +40,22 @@ def test_linux_host_network_keeps_loopback_proxy():
     assert config.apply({})["HTTPS_PROXY"] == "http://127.0.0.1:7892"
 
 
+def test_direct_dns_mode_disables_proxy_and_uses_configured_resolvers():
+    config = container_network.resolve_container_network(
+        base_env={
+            "OPENCLAW_CONTAINER_DIRECT_DNS": "1",
+            "OPENCLAW_CONTAINER_DNS": "223.5.5.5,1.1.1.1,223.5.5.5",
+            "HTTPS_PROXY": "http://proxy.invalid:7892",
+        },
+        system_proxy_text=SYSTEM_PROXY,
+        platform="darwin",
+    )
+    assert config.network_mode == "bridge"
+    assert config.dns_servers == ("223.5.5.5", "1.1.1.1")
+    assert not any(key.lower().endswith("proxy") for key in config.apply({}))
+    assert config.to_meta()["dns_servers"] == ["223.5.5.5", "1.1.1.1"]
+
+
 def test_process_environment_overrides_dotenv(monkeypatch):
     monkeypatch.setattr(container_network, "dotenv_values", lambda path: {"HTTPS_PROXY": "http://fallback:7892", "QWEN_BASE_URL": "https://provider.example"})
     assert container_network.runtime_environment({"HTTPS_PROXY": "http://explicit:123"}) == {"HTTPS_PROXY": "http://explicit:123", "QWEN_BASE_URL": "https://provider.example"}
