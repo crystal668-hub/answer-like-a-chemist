@@ -1,7 +1,6 @@
 """Restricted, deterministic context extraction for finalization rescue turns."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -10,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 _SECRET_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)")
 _ABS_PATH_RE = re.compile(r"(?:/Users|/home|/tmp|/var|/opt|/benchmark)[^\s\"']*")
@@ -52,17 +51,12 @@ def build_finalization_context_bundle(
     required = [str(original_task or ""), str(eval_kind or ""), json.dumps(answer_schema or {}, ensure_ascii=False)]
     if sum(len(x) for x in required) > max_chars:
         raise ValueError("finalization context required fields exceed character budget")
-    digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    index = TranscriptIndex.from_path(snapshot_path, errors="replace")
+    digest = index.sha256
     events: list[dict[str, Any]] = []
-    snapshot_text = snapshot_path.read_text(encoding="utf-8", errors="replace")
-    observe_transcript_text(snapshot_text)
-    raw_lines = snapshot_text.splitlines()
     budget = max_chars - sum(len(x) for x in required)
-    for line in reversed(raw_lines):
-        try:
-            item = decode_transcript_json(line)
-        except json.JSONDecodeError:
-            continue
+    for entry in reversed(index.entries):
+        item = entry.payload
         if not isinstance(item, dict):
             continue
         msg = item.get("message") if isinstance(item.get("message"), dict) else item
@@ -80,7 +74,7 @@ def build_finalization_context_bundle(
         events.insert(0, event)
         budget -= len(encoded)
     included = sum(len(json.dumps(e, ensure_ascii=False)) for e in events)
-    return FinalizationContextBundle(1, source_session_id, digest, str(eval_kind or ""), _clean(answer_schema or {}), str(_clean(original_task or "")), str(_clean(primary_native_output or "")), events, max(0, len(raw_lines)-len(events)), included, max_chars)
+    return FinalizationContextBundle(1, source_session_id, digest, str(eval_kind or ""), _clean(answer_schema or {}), str(_clean(original_task or "")), str(_clean(primary_native_output or "")), events, max(0, index.line_count-len(events)), included, max_chars)
 
 def write_finalization_context_bundle(bundle: FinalizationContextBundle, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

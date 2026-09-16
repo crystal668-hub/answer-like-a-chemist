@@ -26,9 +26,18 @@ reporting reference 变化仍会更新 canonical payload。取消与
 `cancelled_with_errors` 继续强制完整 terminal snapshot。更大规模的进程级 crash
 矩阵可继续扩充，但 Phase 2 不再受持久化边界阻塞。
 RT-03 的 bucket accumulator 已有 1k/10k 基线并改善聚合耗时，但 CLI 仍持有完整
-结果列表，RSS 仍随详情线性增长，因此 Phase 3 不能标记完成。Phase 2、4、5 尚未
-开始。真实 Docker/VGB 端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance
+结果列表，RSS 仍随详情线性增长，因此 Phase 3 不能标记完成。真实 Docker/VGB
+端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance
 环境补测，当前报告没有把离线数据外推为生产收益。
+
+Phase 2 已在后续实现中完成主路径接入，验收证据见
+[Phase 1-2 validation](../report/2026-09-16-benchmark-runtime-phase-1-2-validation.md)。
+`TranscriptIndex` 保留 fingerprint、bytes/lines、解码失败行号与 hash，并向
+convergence、答案恢复、dependency evidence、workspace audit、provider lifecycle
+和 rescue context 提供共享只读视图。wrapper 和父 runtime 是两个独立进程，因此
+同一物理 transcript 在跨进程边界各读取一次；没有为减少该读取而持久化包含完整
+tool output 的第二份索引。archive recovery 和 frozen rescue snapshot 仍作为独立
+证据源各读取一次。Phase 4、5 尚未开始。
 
 ## 1. 接手须知
 

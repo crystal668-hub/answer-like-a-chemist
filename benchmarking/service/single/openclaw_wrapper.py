@@ -36,6 +36,7 @@ from benchmarking.runtime.session_isolation import (
     reset_agent_main_session_if_stale,
 )
 from benchmarking.runtime.session_lifecycle import SessionLifecycleSupervisor
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 OPENCLAW_STREAM_READ_ERROR_TEXT = "stream_read_error"
 OPENCLAW_AGENT_NO_RESPONSE_FRAGMENT = "Agent couldn't generate a response"
@@ -396,6 +397,7 @@ def _has_complete_answer_in_result(
     *,
     eval_kind: str = "",
     answer_schema: dict[str, Any] | None = None,
+    transcript_index: TranscriptIndex | None = None,
 ) -> bool:
     output = (result.stdout or "").strip() or (result.stderr or "").strip()
     if output:
@@ -411,6 +413,7 @@ def _has_complete_answer_in_result(
             transcript_path,
             eval_kind=eval_kind,
             answer_schema=answer_schema,
+            transcript_index=transcript_index,
         )
     )
 
@@ -422,14 +425,14 @@ def _parse_remaining_seconds(value: Any) -> int:
         return 0
 
 
-def _transcript_has_visible_assistant_text(path: Path | None) -> bool:
+def _transcript_has_visible_assistant_text(
+    path: Path | None,
+    transcript_index: TranscriptIndex | None = None,
+) -> bool:
     if path is None or not path.is_file():
         return False
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    index = transcript_index or TranscriptIndex.from_path(path, errors="replace")
+    for item in index.dict_events():
         msg = item.get("message") if isinstance(item, dict) and isinstance(item.get("message"), dict) else item
         if isinstance(msg, dict) and msg.get("role") == "assistant":
             content = msg.get("content")
@@ -540,6 +543,7 @@ def merge_convergence_metadata(
     supervisor: SessionLifecycleSupervisor | None = None,
     current_process_failed: bool = False,
     allow_finalization_rescue: bool = True,
+    transcript_index: TranscriptIndex | None = None,
 ) -> Any:
     target = _target_result_payload(payload)
     if target is None:
@@ -557,8 +561,17 @@ def merge_convergence_metadata(
         "time_reminder": dict(time_reminder_meta or _base_time_reminder_meta(args)),
     }
     transcript_path = transcript_path_from_audit(audit)
+    if transcript_index is not None and transcript_index.path != transcript_path:
+        raise ValueError("transcript index path does not match convergence transcript")
+    if transcript_index is None and transcript_path is not None and transcript_path.is_file():
+        transcript_index = TranscriptIndex.from_path(transcript_path)
     if transcript_path is not None:
-        convergence_meta.update(summarize_transcript_convergence(transcript_path))
+        convergence_meta.update(
+            summarize_transcript_convergence(
+                transcript_path,
+                transcript_index=transcript_index,
+            )
+        )
     eval_kind = str(getattr(args, "eval_kind", "") or "")
     agent_error_kind = _classify_agent_error_payload(target, eval_kind=eval_kind, answer_schema=answer_schema)
     if agent_error_kind:
@@ -582,6 +595,7 @@ def merge_convergence_metadata(
             transcript_path,
             eval_kind=eval_kind,
             answer_schema=answer_schema,
+            transcript_index=transcript_index,
         )
         if recovered:
             target["payloads"] = [{"text": recovered}]
@@ -594,7 +608,7 @@ def merge_convergence_metadata(
             return payload
     if (
         (bool(_payload_texts(target)) and not current_process_failed and not timeout_like
-         and (not agent_error_kind or _transcript_has_visible_assistant_text(transcript_path)))
+         and (not agent_error_kind or _transcript_has_visible_assistant_text(transcript_path, transcript_index)))
         and allow_finalization_rescue
         and env is not None
         and transcript_path is not None
@@ -775,26 +789,33 @@ def _maybe_run_time_reminder(
     audit: dict[str, Any],
     answer_schema: dict[str, Any] | None = None,
     supervisor: SessionLifecycleSupervisor | None = None,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any], TranscriptIndex | None]:
     reminder_meta = _time_reminder_meta_from_result(primary_result, args)
     if not reminder_meta.get("enabled"):
         reminder_meta["skipped_reason"] = "disabled"
-        return primary_result, reminder_meta
+        return primary_result, reminder_meta, None
     if not reminder_meta.get("due_before_primary_return"):
         reminder_meta["skipped_reason"] = "threshold_not_reached"
-        return primary_result, reminder_meta
+        return primary_result, reminder_meta, None
+    transcript_path = transcript_path_from_audit(audit)
+    transcript_index = (
+        TranscriptIndex.from_path(transcript_path)
+        if transcript_path is not None and transcript_path.is_file()
+        else None
+    )
     if _has_complete_answer_in_result(
         primary_result,
         audit,
         eval_kind=str(getattr(args, "eval_kind", "") or ""),
         answer_schema=answer_schema,
+        transcript_index=transcript_index,
     ):
         reminder_meta["skipped_reason"] = "complete_answer_available"
-        return primary_result, reminder_meta
+        return primary_result, reminder_meta, transcript_index
     remaining_seconds = _parse_remaining_seconds(reminder_meta.get("remaining_seconds_at_primary_return"))
     if remaining_seconds <= 0:
         reminder_meta["skipped_reason"] = "no_remaining_time"
-        return primary_result, reminder_meta
+        return primary_result, reminder_meta, transcript_index
 
     reminder_result = run_openclaw(
         args,
@@ -809,8 +830,8 @@ def _maybe_run_time_reminder(
     if reminder_result.returncode != 0:
         reminder_meta["reminder_returncode"] = reminder_result.returncode
         reminder_meta["reminder_stderr_excerpt"] = str(reminder_result.stderr or "")[:1000]
-        return primary_result, reminder_meta
-    return reminder_result, reminder_meta
+        return primary_result, reminder_meta, None
+    return reminder_result, reminder_meta, None
 
 
 def main() -> int:
@@ -837,7 +858,7 @@ def main() -> int:
                 supervisor=supervisor,
             )
             if result.returncode == 0:
-                result, time_reminder_meta = _maybe_run_time_reminder(
+                result, time_reminder_meta, transcript_index = _maybe_run_time_reminder(
                     result,
                     args=args,
                     env=env,
@@ -856,6 +877,7 @@ def main() -> int:
             else:
                 time_reminder_meta = _base_time_reminder_meta(args)
                 audit = primary_audit
+                transcript_index = None
             if args.json:
                 output = result.stdout.strip() or result.stderr.strip()
                 payload = parse_openclaw_json_output(output)
@@ -869,6 +891,7 @@ def main() -> int:
                     supervisor=supervisor,
                     current_process_failed=result.returncode != 0,
                     allow_finalization_rescue=result.returncode == 0,
+                    transcript_index=transcript_index,
                 )
                 payload = merge_isolation_audit(payload, audit)
                 target = _target_result_payload(payload)

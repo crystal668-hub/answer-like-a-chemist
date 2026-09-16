@@ -32,10 +32,9 @@ from benchmarking.runtime.workspace_policy import (
     WORKSPACE_ISOLATION_SCHEMA_VERSION as _WORKSPACE_ISOLATION_SCHEMA_VERSION,
 )
 from benchmarking.runtime.observability import (
-    decode_transcript_json,
-    observe_transcript_text,
     observed_duration,
 )
+from benchmarking.runtime.transcript_index import TranscriptIndex
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit as _ContaminationAudit,
 )
@@ -904,6 +903,7 @@ class AttemptWorkspaceManager:
         environment: Mapping[str, str] | None = None,
         policy: _WorkspaceAccessPolicy | None = None,
         transcript_path_mappings: Mapping[str, str] | None = None,
+        transcript_index: TranscriptIndex | None = None,
     ) -> _WorkspaceAudit:
         session_isolation = runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, Mapping) else {}
@@ -937,17 +937,13 @@ class AttemptWorkspaceManager:
             read_scopes=allowed_roots,
         )
         try:
-            transcript_text = transcript_path.read_text(encoding="utf-8")
-            observe_transcript_text(transcript_text)
-            transcript_lines = transcript_text.splitlines()
-            payloads: list[tuple[int, Any]] = []
-            for line_number, raw_line in enumerate(transcript_lines, start=1):
-                if not raw_line.strip():
-                    continue
-                value = decode_transcript_json(raw_line)
-                if transcript_path_mappings:
-                    value = _project_transcript_paths(value, transcript_path_mappings)
-                payloads.append((line_number, value))
+            if transcript_index is not None and transcript_index.path != transcript_path:
+                raise ValueError("transcript index path does not match audit transcript")
+            index = transcript_index or TranscriptIndex.from_path(transcript_path)
+            payloads = index.strict_payloads(
+                mappings=transcript_path_mappings,
+                projector=_project_transcript_paths,
+            )
             events, standalone_results = _tool_events_from_transcript(payloads)
         except Exception as exc:
             recovered = self._retry_audit_from_archive(

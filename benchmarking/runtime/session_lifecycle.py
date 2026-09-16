@@ -17,7 +17,7 @@ from benchmarking.runtime.session_isolation import (
     atomic_write_json,
     session_store_path_for_agent,
 )
-from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 TAKEOVER_TEXT = "session file changed while embedded prompt lock was released"
 HTTP_TIMEOUT_RE = re.compile(r"\bHTTP(?:\s+status)?\s*(?:408|504)\b", re.I)
@@ -66,15 +66,7 @@ def session_takeover_reasons(
 def provider_observability(trajectory_path: Path) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
     if trajectory_path.is_file():
-        trajectory_text = trajectory_path.read_text(encoding="utf-8", errors="replace")
-        observe_transcript_text(trajectory_text)
-        for line in trajectory_text.splitlines():
-            try:
-                event = decode_transcript_json(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                events.append(event)
+        events.extend(TranscriptIndex.from_path(trajectory_path, errors="replace").dict_events())
     submitted = next((event for event in events if event.get("type") == "prompt.submitted"), None)
     completed = [event for event in events if event.get("type") == "model.completed"]
     ended = next((event for event in reversed(events) if event.get("type") == "session.ended"), None)

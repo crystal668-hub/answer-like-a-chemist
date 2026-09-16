@@ -119,6 +119,14 @@ thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
 transcript consumers, attempts, audits, archives, scoring, Docker commands, and
 verifier subprocesses contribute counters or monotonic durations without adding
 record content to the metrics payload.
+`benchmarking.runtime.transcript_index` owns disposable, fingerprinted JSONL
+snapshots. A stable primary transcript is decoded once per process boundary and
+the immutable parsed view is shared by convergence, answer recovery, dependency
+evidence, and workspace audit. Provider trajectories, frozen rescue snapshots,
+and archive recovery are distinct evidence sources and receive distinct indexes.
+Malformed-line metadata retains line numbers and hashes without copying raw line
+content; audit remains fail-closed while recovery-oriented views retain the
+existing skip-malformed-line behavior.
 `benchmarking.workflow.run_state.ResultSink` owns canonical per-record writes. It
 uses the atomic writer, rejects symlinks within the output-root boundary, and
 skips byte-identical payloads; reporting-reference enrichment is persisted when
@@ -320,6 +328,9 @@ For each invocation, the CLI:
    Progress events remain append-only and durable. The CLI checkpoints the full
    dashboard state at a bounded interval while run/group terminal and cancellation
    transitions force an immediate atomic snapshot.
+   Within the OpenClaw wrapper, post-turn convergence and answer recovery share a
+   transcript index. After the wrapper exits, the parent runtime builds one index
+   for dependency evidence and workspace audit before sealing the workspace.
 6. Starts detached automated analysis unless `--no-analysis` is selected. A
    cancelled run never launches detached analysis.
 

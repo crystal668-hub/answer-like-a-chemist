@@ -50,7 +50,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 - [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：只读扫描结论、优先级和分阶段重构交接方案。
 
-## report (8)
+## report (9)
 
 Observed results, validation, and supporting evidence.
 
@@ -62,6 +62,7 @@ Observed results, validation, and supporting evidence.
 - [OpenClaw Session Race and Timeout Retry Fix Validation](report/2026-09-13-openclaw-session-race-timeout-fix-validation.md): outcome precedence, session ownership evidence, typed timeout/takeover diagnostics, Docker contracts, and Qwen acceptance.
 - [OpenClaw Bootstrap, Rescue Context, and Path Projection Validation](report/2026-09-14-openclaw-bootstrap-rescue-path-fix-validation.md): configuration suppression, frozen rescue context, safe path projection, and validation limits.
 - [Benchmark Runtime Phase 0 Observability Baseline](report/2026-09-16-benchmark-runtime-phase-0-observability-baseline.md): invocation metrics, deterministic fixture coverage, aggregation comparison, full-suite validation, and remaining measurement limits.
+- [Benchmark Runtime Phase 1-2 Validation](report/2026-09-16-benchmark-runtime-phase-1-2-validation.md): canonical result persistence, progress checkpoints, transcript index equivalence, performance measurements, and process-boundary limits.
 
 ## guide (1)
 

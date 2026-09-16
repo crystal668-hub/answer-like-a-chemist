@@ -20,7 +20,7 @@ from benchmarking.runtime.workspace_audit import (
     _tool_events_from_transcript,
     _tool_result_text,
 )
-from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 FORBIDDEN_DISTRIBUTIONS = frozenset({"verifier-grounded-benchmark"})
@@ -295,22 +295,20 @@ def _build_replay_lock(
     }
 
 
-def dependency_install_events(transcript_path: str | Path | None) -> list[dict[str, Any]]:
+def dependency_install_events(
+    transcript_path: str | Path | None,
+    *,
+    transcript_index: TranscriptIndex | None = None,
+) -> list[dict[str, Any]]:
     if not transcript_path:
         return []
     path = Path(transcript_path).expanduser()
     if path.is_symlink() or not path.is_file():
         return []
-    payloads: list[tuple[int, Any]] = []
-    transcript_text = path.read_text(encoding="utf-8")
-    observe_transcript_text(transcript_text)
-    for line_number, line in enumerate(transcript_text.splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            payloads.append((line_number, decode_transcript_json(line)))
-        except json.JSONDecodeError:
-            continue
+    if transcript_index is not None and transcript_index.path != path:
+        raise ValueError("transcript index path does not match dependency transcript")
+    index = transcript_index or TranscriptIndex.from_path(path)
+    payloads = [(entry.line_number, entry.payload) for entry in index.entries]
     events, _ = _tool_events_from_transcript(payloads)
     process_results: dict[str, list[Any]] = {}
     for event in events:

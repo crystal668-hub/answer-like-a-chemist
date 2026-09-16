@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 FINAL_ANSWER_LINE_RE = re.compile(
     r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
@@ -168,26 +167,33 @@ class ConvergencePolicy:
         return asdict(self)
 
 
-def _iter_transcript_messages(transcript_path: Path) -> list[dict[str, Any]]:
-    return [event["message"] for event in _iter_transcript_events(transcript_path) if isinstance(event.get("message"), dict)]
-
-
-def _iter_transcript_events(transcript_path: Path) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
+def _load_transcript_index(
+    transcript_path: Path,
+    transcript_index: TranscriptIndex | None = None,
+) -> TranscriptIndex | None:
+    if transcript_index is not None:
+        if transcript_index.path != transcript_path:
+            raise ValueError("transcript index path does not match requested transcript")
+        return transcript_index
     if not transcript_path.is_file():
-        return messages
-    transcript_text = transcript_path.read_text(encoding="utf-8")
-    observe_transcript_text(transcript_text)
-    for line in transcript_text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = decode_transcript_json(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict):
-            messages.append(event)
-    return messages
+        return None
+    return TranscriptIndex.from_path(transcript_path)
+
+
+def _iter_transcript_messages(
+    transcript_path: Path,
+    transcript_index: TranscriptIndex | None = None,
+) -> list[dict[str, Any]]:
+    index = _load_transcript_index(transcript_path, transcript_index)
+    return list(index.messages()) if index is not None else []
+
+
+def _iter_transcript_events(
+    transcript_path: Path,
+    transcript_index: TranscriptIndex | None = None,
+) -> list[dict[str, Any]]:
+    index = _load_transcript_index(transcript_path, transcript_index)
+    return list(index.dict_events()) if index is not None else []
 
 
 def _text_from_content(content: Any) -> str:
@@ -202,7 +208,11 @@ def _text_from_content(content: Any) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
-def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
+def summarize_transcript_convergence(
+    transcript_path: Path,
+    *,
+    transcript_index: TranscriptIndex | None = None,
+) -> dict[str, Any]:
     assistant_turn_count = 0
     tool_call_count = 0
     tool_names: list[str] = []
@@ -213,7 +223,7 @@ def summarize_transcript_convergence(transcript_path: Path) -> dict[str, Any]:
     exec_tool_result_error_count = 0
     exec_request_shape_error_count = 0
     coverage_checklist_present = False
-    for event in _iter_transcript_events(transcript_path):
+    for event in _iter_transcript_events(transcript_path, transcript_index):
         if event.get("customType") == "openclaw:prompt-error":
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             error_text = str(data.get("error") or data.get("message") or "").strip()
@@ -531,8 +541,9 @@ def extract_latest_complete_answer_from_transcript_for_eval(
     *,
     eval_kind: str = "",
     answer_schema: dict[str, Any] | None = None,
+    transcript_index: TranscriptIndex | None = None,
 ) -> str:
-    for message in reversed(_iter_transcript_messages(transcript_path)):
+    for message in reversed(_iter_transcript_messages(transcript_path, transcript_index)):
         if message.get("role") != "assistant":
             continue
         text = _text_from_content(message.get("content"))

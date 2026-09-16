@@ -23,9 +23,44 @@ from benchmarking.runtime.workspace_policy import (
     WorkspaceAudit,
     adjudicate_workspace_findings,
 )
+from benchmarking.runtime.observability import finish_runtime_metrics, start_runtime_metrics
+from benchmarking.runtime.transcript_index import TranscriptIndex
 
 
 class AttemptWorkspaceManagerTests(unittest.TestCase):
+    def test_prebuilt_transcript_index_preserves_audit_and_single_read(self):
+        lease = self.manager.prepare(self._identity())
+        transcript = self.root / "indexed-audit.jsonl"
+        transcript.write_text(
+            json.dumps({
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "read-1",
+                        "name": "read",
+                        "arguments": {"path": str(lease.scratch_dir / "notes.txt")},
+                    }],
+                }
+            }) + "\n",
+            encoding="utf-8",
+        )
+        runner_meta = {"session_isolation": {"postflight_entry_session_file": str(transcript)}}
+        metrics = start_runtime_metrics()
+        try:
+            index = TranscriptIndex.from_path(transcript)
+            indexed = self.manager.audit_attempt(lease, runner_meta, transcript_index=index)
+        finally:
+            snapshot = finish_runtime_metrics(metrics)
+        direct = self.manager.audit_attempt(lease, runner_meta)
+
+        self.assertEqual(indexed.to_payload(), direct.to_payload())
+        self.assertEqual(1, snapshot["counters"]["transcript_read_count"])
+        self.manager.seal(
+            lease,
+            AttemptOutcome(runner_status="completed", contamination_audit=indexed),
+        )
+
     def test_image_array_access_to_protected_material_is_audited(self):
         image = self.root / "verifier-resources" / "hidden.png"
         image.parent.mkdir()

@@ -119,9 +119,16 @@ def observed_duration(name: str) -> Callable[[_F], _F]:
 
 
 def observe_transcript_text(text: str) -> None:
+    observe_transcript_snapshot(
+        byte_count=len(text.encode("utf-8", errors="replace")),
+        line_count=len(text.splitlines()),
+    )
+
+
+def observe_transcript_snapshot(*, byte_count: int, line_count: int) -> None:
     increment("transcript_read_count")
-    increment("transcript_bytes", len(text.encode("utf-8", errors="replace")))
-    increment("transcript_lines", len(text.splitlines()))
+    increment("transcript_bytes", byte_count)
+    increment("transcript_lines", line_count)
 
 
 def observe_transcript_decode(*, succeeded: bool) -> None:

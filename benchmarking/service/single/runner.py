@@ -75,6 +75,7 @@ from benchmarking.runtime.error_capture import (
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.observability import observed_duration
+from benchmarking.runtime.transcript_index import TranscriptIndex
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
@@ -893,6 +894,7 @@ class SingleLLMRunner:
         input_bundle: Any,
         environment: dict[str, str],
         policy: WorkspaceAccessPolicy,
+        transcript_index: TranscriptIndex | None = None,
     ) -> WorkspaceAudit:
         if self._contamination_auditor is not None:
             return ensure_workspace_audit(self._contamination_auditor(
@@ -912,6 +914,7 @@ class SingleLLMRunner:
             environment=environment,
             policy=policy,
             transcript_path_mappings=mappings,
+            transcript_index=transcript_index,
         )
 
     def _run_isolated_attempt(
@@ -1076,6 +1079,17 @@ class SingleLLMRunner:
             cleanup_path = lease.notes_dir / "dependency-cleanup.json"
             result.runner_meta["attempt_environment_cleanup"] = read_evidence(cleanup_path)
             result.runner_meta["host_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
+        session_isolation = result.runner_meta.get("session_isolation")
+        session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
+        transcript_path_value = str(session_isolation.get("postflight_entry_session_file") or "").strip()
+        transcript_index: TranscriptIndex | None = None
+        if transcript_path_value:
+            transcript_path = Path(transcript_path_value).expanduser()
+            if transcript_path.is_file() and not transcript_path.is_symlink():
+                try:
+                    transcript_index = TranscriptIndex.from_path(transcript_path)
+                except (OSError, UnicodeError):
+                    transcript_index = None
         if attempt_environment is not None:
             manifest = {}
             try:
@@ -1086,7 +1100,8 @@ class SingleLLMRunner:
                     identity=identity.sentinel_fields(),
                     base_env=attempt_env,
                     install_events=dependency_install_events(
-                        session_isolation.get("postflight_entry_session_file")
+                        session_isolation.get("postflight_entry_session_file"),
+                        transcript_index=transcript_index,
                     ),
                 )
                 dependency_audit = remediate_forbidden_distributions(
@@ -1140,6 +1155,7 @@ class SingleLLMRunner:
             input_bundle=input_bundle,
             environment=attempt_env,
             policy=policy,
+            transcript_index=transcript_index,
         )
         cleanup = self.workspace_manager.cleanup_boundary_writes(audit)
         isolation_meta = lease.to_meta()
