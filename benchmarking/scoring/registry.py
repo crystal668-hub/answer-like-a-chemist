@@ -16,6 +16,7 @@ from benchmarking.scoring.evaluators.superchem import (
     evaluate_superchem_multiple_choice_rpf,
 )
 from benchmarking.scoring.evaluators.verifier_grounded import evaluate_verifier_grounded
+from benchmarking.runtime.observability import observed_duration
 
 Evaluator = Callable[..., Any]
 EVALUATORS: dict[str, Evaluator] = {}
@@ -39,6 +40,7 @@ def register_default_evaluators() -> None:
     EVALUATORS.update(DEFAULT_EVALUATORS)
 
 
+@observed_duration("score")
 def evaluate_record(
     record: BenchmarkRecord,
     *,

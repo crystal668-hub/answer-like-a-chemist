@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "groups": [
+    {"id": "single_llm_skills_on", "skills_enabled": true},
+    {"id": "single_llm_skills_off", "skills_enabled": false}
+  ],
+  "records": [
+    {"id": "vgb-scored", "outcome": "scored", "vgb_processes": 1},
+    {"id": "timeout-retry", "outcome": "completed", "attempts": 2},
+    {"id": "terminal-failure", "outcome": "failed", "attempts": 1},
+    {"id": "cancelled", "outcome": "cancelled", "attempts": 0}
+  ],
+  "large_transcript": {
+    "repeat_count": 1000,
+    "line": "{\"message\":{\"role\":\"assistant\",\"content\":\"evidence\"}}\n"
+  }
+}

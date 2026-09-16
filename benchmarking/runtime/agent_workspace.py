@@ -31,6 +31,11 @@ from benchmarking.runtime.workspace_audit import (
 from benchmarking.runtime.workspace_policy import (
     WORKSPACE_ISOLATION_SCHEMA_VERSION as _WORKSPACE_ISOLATION_SCHEMA_VERSION,
 )
+from benchmarking.runtime.observability import (
+    decode_transcript_json,
+    observe_transcript_text,
+    observed_duration,
+)
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit as _ContaminationAudit,
 )
@@ -556,6 +561,7 @@ class AttemptWorkspaceManager:
             report["items"].append(item)
         return report
 
+    @observed_duration("archive")
     def seal(self, lease: AttemptWorkspaceLease, outcome: AttemptOutcome) -> WorkspaceArchive:
         if lease.archive is not None:
             return lease.archive
@@ -888,6 +894,7 @@ class AttemptWorkspaceManager:
             )
         return None
 
+    @observed_duration("audit")
     def audit_attempt(
         self,
         lease: AttemptWorkspaceLease,
@@ -930,12 +937,14 @@ class AttemptWorkspaceManager:
             read_scopes=allowed_roots,
         )
         try:
-            transcript_lines = transcript_path.read_text(encoding="utf-8").splitlines()
+            transcript_text = transcript_path.read_text(encoding="utf-8")
+            observe_transcript_text(transcript_text)
+            transcript_lines = transcript_text.splitlines()
             payloads: list[tuple[int, Any]] = []
             for line_number, raw_line in enumerate(transcript_lines, start=1):
                 if not raw_line.strip():
                     continue
-                value = json.loads(raw_line)
+                value = decode_transcript_json(raw_line)
                 if transcript_path_mappings:
                     value = _project_transcript_paths(value, transcript_path_mappings)
                 payloads.append((line_number, value))

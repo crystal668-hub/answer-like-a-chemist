@@ -20,6 +20,7 @@ from benchmarking.runtime.workspace_audit import (
     _tool_events_from_transcript,
     _tool_result_text,
 )
+from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 FORBIDDEN_DISTRIBUTIONS = frozenset({"verifier-grounded-benchmark"})
@@ -301,11 +302,13 @@ def dependency_install_events(transcript_path: str | Path | None) -> list[dict[s
     if path.is_symlink() or not path.is_file():
         return []
     payloads: list[tuple[int, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    transcript_text = path.read_text(encoding="utf-8")
+    observe_transcript_text(transcript_text)
+    for line_number, line in enumerate(transcript_text.splitlines(), start=1):
         if not line.strip():
             continue
         try:
-            payloads.append((line_number, json.loads(line)))
+            payloads.append((line_number, decode_transcript_json(line)))
         except json.JSONDecodeError:
             continue
     events, _ = _tool_events_from_transcript(payloads)

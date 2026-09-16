@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.observability import observe_write
+
 
 def write_evidence(path: Path, payload: Any) -> None:
     for parent in (path.parent, path.parent.parent):
@@ -17,8 +19,10 @@ def write_evidence(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        content = json.dumps(payload, indent=2) + "\n"
+        temporary.write_text(content, encoding="utf-8")
         os.replace(temporary, path)
+        observe_write(path, len(content.encode("utf-8")))
     finally:
         temporary.unlink(missing_ok=True)
 

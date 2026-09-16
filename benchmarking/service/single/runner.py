@@ -74,6 +74,7 @@ from benchmarking.runtime.error_capture import (
     capture_execution_error,
 )
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
+from benchmarking.runtime.observability import observed_duration
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
@@ -1316,6 +1317,7 @@ class SingleLLMRunner:
         }
         return result
 
+    @observed_duration("attempt")
     def _execute_attempt(self, **kwargs):
         with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
             return self._run_isolated_attempt(**kwargs)

@@ -31,6 +31,7 @@ from benchmarking.runtime.agent_workspace import (
 from benchmarking.runtime.bundles import RuntimePathProjection
 from benchmarking.runtime.cancellation import CancellationToken
 from benchmarking.runtime.container_network import ContainerNetworkConfig
+from benchmarking.runtime.observability import increment, measure
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -117,16 +118,22 @@ class DockerContainerRuntime:
 
     def _command(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         kwargs.setdefault("timeout", 30 if args[0] in {"create", "start", "logs", "kill", "rm", "stop"} else 15)
+        increment("docker_command_count")
+        increment(f"docker_command_count.{args[0]}")
         try:
-            result = self._run([self._require_docker(), *args], text=True, capture_output=True, check=False, **kwargs)
+            with measure("docker_command"):
+                result = self._run([self._require_docker(), *args], text=True, capture_output=True, check=False, **kwargs)
         except subprocess.TimeoutExpired as exc:
+            increment("docker_command_timeout_count")
             raise ContainerRuntimeError(
                 f"docker {args[0]} exceeded its {kwargs['timeout']}-second command deadline",
                 code="docker_command_timeout", details={"stage": args[0], "timeout_seconds": kwargs["timeout"]},
             ) from exc
         except OSError as exc:
+            increment("docker_command_failure_count")
             raise ContainerRuntimeError(str(exc), code="docker_command_failed") from exc
         if result.returncode != 0:
+            increment("docker_command_failure_count")
             detail = (result.stderr or result.stdout or "").strip()
             raise ContainerRuntimeError(detail[:2000] or f"docker exited {result.returncode}", details={"returncode": result.returncode})
         return result

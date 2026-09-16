@@ -58,51 +58,111 @@ class AggregateAccumulator:
         self._optional: dict[str, tuple[float, int]] = {"answer_accuracy": (0.0, 0), "rpf": (0.0, 0)}
         self._hle_sse = 0.0
         self._hle_count = 0
-        self._counters: dict[str, int] = {}
+        self._counters = {
+            key: 0
+            for key in (
+                "pass_count", "run_completed_count", "run_failed_count",
+                "protocol_completed_count", "protocol_failed_count", "evaluable_count",
+                "scored_count", "recovered_evaluable_count", "native_evaluable_count",
+                "non_evaluable_count", "degraded_execution_count", "skill_tool_executed_count",
+                "skill_model_declared_skip_count", "skill_no_tool_call_count",
+                "exec_tool_call_total", "exec_tool_failure_total", "skill_tool_call_total",
+                "skill_tool_failure_total", "openclaw_tool_call_total",
+                "openclaw_tool_failure_total", "missing_skill_doc_read_total",
+                "tool_result_error_total", "request_shape_error_total",
+                "coverage_checklist_present_count", "session_isolation_ok_count",
+                "session_isolation_failed_count", "session_contaminated_count",
+                "workspace_isolation_ok_count", "workspace_isolation_failed_count",
+                "workspace_contaminated_count", "boundary_warning_count",
+                "boundary_violation_count", "scoreable_degraded_boundary_count",
+                "information_contamination_count", "contamination_indeterminate_count",
+                "audit_unavailable_count", "boundary_cleanup_failed_count",
+                "workspace_archive_failed_count",
+            )
+        }
 
     def add(self, item: GroupRecordResult) -> None:
         self.count += 1
         self._elapsed_sum += float(item.elapsed_seconds)
-        predicates = {
-            "pass_count": bool((item.evaluation or {}).get("passed")),
-            "run_completed_count": item.run_lifecycle_status == "completed",
-            "run_failed_count": item.run_lifecycle_status == "failed",
-            "protocol_completed_count": item.protocol_completion_status == "completed",
-            "protocol_failed_count": item.protocol_completion_status == "failed",
-            "evaluable_count": item.evaluable,
-            "scored_count": item.scored,
-            "recovered_evaluable_count": item.evaluable and item.recovery_mode != "none",
-            "native_evaluable_count": item.evaluable and item.recovery_mode == "none",
-            "non_evaluable_count": not item.evaluable,
-            "degraded_execution_count": item.degraded_execution,
-            "skill_tool_executed_count": item.skills_enabled and bool(skill_audit(item).get("skill_tool_executed")),
-            "skill_model_declared_skip_count": item.skills_enabled and bool(skill_audit(item).get("model_declared_skip")),
-            "skill_no_tool_call_count": item.skills_enabled and bool(skill_audit(item).get("no_skill_tool_call")),
-            "coverage_checklist_present_count": bool(skill_audit(item).get("coverage_checklist_present")),
-            "session_isolation_ok_count": session_isolation_audit(item).get("session_isolation_ok") is True,
-            "session_isolation_failed_count": session_isolation_failed(item),
-            "session_contaminated_count": session_contaminated(item),
-            "workspace_isolation_ok_count": workspace_isolation_ok(item),
-            "workspace_isolation_failed_count": workspace_isolation_failed(item),
-            "workspace_contaminated_count": workspace_isolation_audit(item).get("contamination_status") == "confirmed",
-            "boundary_warning_count": workspace_isolation_audit(item).get("boundary_status") == "warning",
-            "boundary_violation_count": workspace_isolation_audit(item).get("boundary_status") == "violated",
-            "scoreable_degraded_boundary_count": workspace_isolation_audit(item).get("adjudication") == "scoreable_degraded",
-            "information_contamination_count": workspace_isolation_audit(item).get("contamination_status") == "confirmed",
-            "contamination_indeterminate_count": workspace_isolation_audit(item).get("contamination_status") == "indeterminate",
-            "audit_unavailable_count": workspace_isolation_audit(item).get("audit_execution_status") == "unavailable",
-            "boundary_cleanup_failed_count": bool((workspace_isolation_audit(item).get("cleanup") or {}).get("failed_count", 0)),
-            "workspace_archive_failed_count": bool(workspace_isolation_audit(item) and workspace_isolation_audit(item).get("archive_ok") is False),
-        }
-        for key, value in predicates.items():
-            self._counters[key] = self._counters.get(key, 0) + int(value)
-        for key, value in (("exec_tool_call_total", exec_tool_call_count(item)), ("exec_tool_failure_total", exec_tool_failure_count(item)), ("skill_tool_call_total", skill_tool_call_count(item)), ("skill_tool_failure_total", skill_tool_failure_count(item)), ("openclaw_tool_call_total", openclaw_tool_call_count(item)), ("openclaw_tool_failure_total", openclaw_tool_failure_count(item)), ("missing_skill_doc_read_total", skill_audit_int(item, "missing_skill_doc_read_count", skill_enabled_only=True)), ("tool_result_error_total", skill_audit_int(item, "tool_result_error_count")), ("request_shape_error_total", skill_audit_int(item, "request_shape_error_count"))):
-            self._counters[key] = self._counters.get(key, 0) + int(value)
+        evaluation = item.evaluation or {}
+        skill = skill_audit(item)
+        session = session_isolation_audit(item)
+        workspace = workspace_isolation_audit(item)
+        workspace_ok = bool(
+            workspace
+            and workspace.get("preflight_ok") is True
+            and workspace.get("audit_execution_status") == "complete"
+            and workspace.get("adjudication") in {"scoreable", "scoreable_degraded"}
+            and workspace.get("archive_ok") is True
+        )
+        session_failed = session.get("session_isolation_ok") is False
+        session_contamination = session_failed and bool(
+            str(session.get("postflight_entry_session_id") or "").strip()
+            and str(session.get("postflight_entry_session_id") or "").strip()
+            != str(session.get("requested_session_id") or "").strip()
+        )
+        counters = self._counters
+        counters["pass_count"] += int(bool(evaluation.get("passed")))
+        counters["run_completed_count"] += int(item.run_lifecycle_status == "completed")
+        counters["run_failed_count"] += int(item.run_lifecycle_status == "failed")
+        counters["protocol_completed_count"] += int(item.protocol_completion_status == "completed")
+        counters["protocol_failed_count"] += int(item.protocol_completion_status == "failed")
+        counters["evaluable_count"] += int(item.evaluable)
+        counters["scored_count"] += int(item.scored)
+        counters["recovered_evaluable_count"] += int(item.evaluable and item.recovery_mode != "none")
+        counters["native_evaluable_count"] += int(item.evaluable and item.recovery_mode == "none")
+        counters["non_evaluable_count"] += int(not item.evaluable)
+        counters["degraded_execution_count"] += int(item.degraded_execution)
+        counters["skill_tool_executed_count"] += int(item.skills_enabled and bool(skill.get("skill_tool_executed")))
+        counters["skill_model_declared_skip_count"] += int(item.skills_enabled and bool(skill.get("model_declared_skip")))
+        counters["skill_no_tool_call_count"] += int(item.skills_enabled and bool(skill.get("no_skill_tool_call")))
+        counters["coverage_checklist_present_count"] += int(bool(skill.get("coverage_checklist_present")))
+        counters["session_isolation_ok_count"] += int(session.get("session_isolation_ok") is True)
+        counters["session_isolation_failed_count"] += int(session_failed)
+        counters["session_contaminated_count"] += int(session_contamination)
+        counters["workspace_isolation_ok_count"] += int(workspace_ok)
+        counters["workspace_isolation_failed_count"] += int(bool(workspace) and not workspace_ok)
+        contamination = workspace.get("contamination_status")
+        counters["workspace_contaminated_count"] += int(contamination == "confirmed")
+        counters["information_contamination_count"] += int(contamination == "confirmed")
+        counters["contamination_indeterminate_count"] += int(contamination == "indeterminate")
+        counters["boundary_warning_count"] += int(workspace.get("boundary_status") == "warning")
+        counters["boundary_violation_count"] += int(workspace.get("boundary_status") == "violated")
+        counters["scoreable_degraded_boundary_count"] += int(workspace.get("adjudication") == "scoreable_degraded")
+        counters["audit_unavailable_count"] += int(workspace.get("audit_execution_status") == "unavailable")
+        counters["boundary_cleanup_failed_count"] += int(bool((workspace.get("cleanup") or {}).get("failed_count", 0)))
+        counters["workspace_archive_failed_count"] += int(bool(workspace) and workspace.get("archive_ok") is False)
+
+        def audit_int(key: str) -> int:
+            value = skill.get(key)
+            return int(value) if isinstance(value, (int, float)) else 0
+
+        exec_calls = skill.get("exec_tool_call_count")
+        exec_failures = skill.get("exec_tool_failure_count")
+        if not isinstance(exec_calls, (int, float)) and not item.skills_enabled:
+            exec_calls = skill.get("skill_tool_call_count")
+        if not isinstance(exec_failures, (int, float)) and not item.skills_enabled:
+            exec_failures = skill.get("skill_tool_failure_count")
+        openclaw_calls = skill.get("openclaw_tool_call_count")
+        openclaw_failures = skill.get("openclaw_tool_failure_count")
+        if not isinstance(openclaw_calls, (int, float)):
+            openclaw_calls = skill.get("tool_call_count")
+        if not isinstance(openclaw_failures, (int, float)):
+            openclaw_failures = skill.get("tool_failure_count")
+        counters["exec_tool_call_total"] += int(exec_calls) if isinstance(exec_calls, (int, float)) else 0
+        counters["exec_tool_failure_total"] += int(exec_failures) if isinstance(exec_failures, (int, float)) else 0
+        counters["skill_tool_call_total"] += audit_int("skill_tool_call_count") if item.skills_enabled else 0
+        counters["skill_tool_failure_total"] += audit_int("skill_tool_failure_count") if item.skills_enabled else 0
+        counters["openclaw_tool_call_total"] += int(openclaw_calls) if isinstance(openclaw_calls, (int, float)) else 0
+        counters["openclaw_tool_failure_total"] += int(openclaw_failures) if isinstance(openclaw_failures, (int, float)) else 0
+        counters["missing_skill_doc_read_total"] += audit_int("missing_skill_doc_read_count") if item.skills_enabled else 0
+        counters["tool_result_error_total"] += audit_int("tool_result_error_count")
+        counters["request_shape_error_total"] += audit_int("request_shape_error_count")
         if item.scored:
             self._scored += 1
-            self._score_sum += float(item.evaluation.get("score") or 0.0)
-            self._normalized_sum += float(item.evaluation.get("normalized_score") or 0.0)
-        details = item.evaluation.get("details") or {}
+            self._score_sum += float(evaluation.get("score") or 0.0)
+            self._normalized_sum += float(evaluation.get("normalized_score") or 0.0)
+        details = evaluation.get("details") or {}
         for key in self._optional:
             value = details.get(key)
             if isinstance(value, (int, float)):
@@ -110,7 +170,7 @@ class AggregateAccumulator:
                 self._optional[key] = (total + float(value), count + 1)
         if item.eval_kind == "hle" and isinstance(details.get("confidence"), (int, float)):
             confidence = max(0.0, min(100.0, float(details["confidence"]))) / 100.0
-            self._hle_sse += (confidence - (1.0 if item.evaluation.get("passed") else 0.0)) ** 2
+            self._hle_sse += (confidence - (1.0 if evaluation.get("passed") else 0.0)) ** 2
             self._hle_count += 1
 
     def to_dict(self) -> dict[str, Any]:

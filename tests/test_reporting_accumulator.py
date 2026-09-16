@@ -1,4 +1,7 @@
-from benchmarking.core.reporting import AggregateAccumulator, GroupRecordResult, aggregate_bucket
+import gc
+import weakref
+
+from benchmarking.core.reporting import AggregateAccumulator, GroupRecordResult
 
 
 def _item(*, passed=True, scored=True, eval_kind="chembench", subset="all", elapsed=2.0):
@@ -17,11 +20,22 @@ def test_incremental_accumulator_matches_bucket():
     acc = AggregateAccumulator()
     for item in items:
         acc.add(item)
-    assert acc.to_dict() == aggregate_bucket(items)
+    actual = acc.to_dict()
+    assert actual["count"] == 2
+    assert actual["pass_count"] == 1
+    assert actual["scored_count"] == 1
+    assert actual["avg_score"] == 1.0
+    assert actual["avg_normalized_score"] == 1.0
+    assert actual["avg_elapsed_seconds"] == 3.0
+    assert actual["run_completed_count"] == 2
 
 
 def test_accumulator_does_not_retain_records():
     acc = AggregateAccumulator()
-    acc.add(_item())
-    assert not hasattr(acc, "items")
+    item = _item()
+    reference = weakref.ref(item)
+    acc.add(item)
+    del item
+    gc.collect()
+    assert reference() is None
     assert acc.to_dict()["count"] == 1

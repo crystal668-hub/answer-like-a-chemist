@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+
 _SECRET_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)")
 _ABS_PATH_RE = re.compile(r"(?:/Users|/home|/tmp|/var|/opt|/benchmark)[^\s\"']*")
 
@@ -52,11 +54,13 @@ def build_finalization_context_bundle(
         raise ValueError("finalization context required fields exceed character budget")
     digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
     events: list[dict[str, Any]] = []
-    raw_lines = snapshot_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    snapshot_text = snapshot_path.read_text(encoding="utf-8", errors="replace")
+    observe_transcript_text(snapshot_text)
+    raw_lines = snapshot_text.splitlines()
     budget = max_chars - sum(len(x) for x in required)
     for line in reversed(raw_lines):
         try:
-            item = json.loads(line)
+            item = decode_transcript_json(line)
         except json.JSONDecodeError:
             continue
         if not isinstance(item, dict):

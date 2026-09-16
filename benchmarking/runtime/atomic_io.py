@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.observability import observe_write
+
 
 def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Replace a file atomically, keeping the temporary file beside its target."""
@@ -24,6 +26,7 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> N
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        observe_write(path, len(content.encode(encoding)))
     finally:
         temporary.unlink(missing_ok=True)
 

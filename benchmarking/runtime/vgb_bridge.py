@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.runtime import paths as runtime_paths
+from benchmarking.runtime.observability import increment, measure
 
 DEFAULT_RELEASE_CONFIG = (
     runtime_paths.project_root
@@ -286,17 +287,22 @@ def _invoke_api(
             f"Pinned verifier runtime Python is missing: {config.runtime_python}"
         )
     try:
-        completed = subprocess.run(
-            [str(config.runtime_python), "-I", "-c", RUNTIME_API_SCRIPT],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-            cwd=config.runtime_root,
-            env=_runtime_env(),
-        )
+        action = str(payload.get("action") or "unknown")
+        increment("vgb_process_count")
+        increment(f"vgb_process_count.{action}")
+        with measure("vgb_process"):
+            completed = subprocess.run(
+                [str(config.runtime_python), "-I", "-c", RUNTIME_API_SCRIPT],
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+                cwd=config.runtime_root,
+                env=_runtime_env(),
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
+        increment("vgb_process_failure_count")
         raise VerifierGroundedRuntimeError(f"Pinned verifier runtime failed: {exc}") from exc
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or str(completed.returncode)

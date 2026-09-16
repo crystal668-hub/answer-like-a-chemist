@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.observability import decode_transcript_json, observe_transcript_text
+
 FINAL_ANSWER_LINE_RE = re.compile(
     r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
     re.IGNORECASE,
@@ -174,11 +176,13 @@ def _iter_transcript_events(transcript_path: Path) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     if not transcript_path.is_file():
         return messages
-    for line in transcript_path.read_text(encoding="utf-8").splitlines():
+    transcript_text = transcript_path.read_text(encoding="utf-8")
+    observe_transcript_text(transcript_text)
+    for line in transcript_text.splitlines():
         if not line.strip():
             continue
         try:
-            event = json.loads(line)
+            event = decode_transcript_json(line)
         except json.JSONDecodeError:
             continue
         if isinstance(event, dict):

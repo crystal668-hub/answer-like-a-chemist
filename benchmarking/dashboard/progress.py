@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 from benchmarking.runtime.atomic_io import atomic_write_json
+from benchmarking.runtime.observability import increment
 
 
 def timestamp() -> str:
@@ -63,11 +64,14 @@ class ProgressWriter:
         event = {"type": event_type, "timestamp": now, **payload}
         self.progress_root.mkdir(parents=True, exist_ok=True)
         with self.events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            event_line = json.dumps(event, ensure_ascii=False) + "\n"
+            handle.write(event_line)
             # Make the event durable before publishing the matching snapshot.
             # This preserves the event/snapshot ordering across abrupt exits.
             handle.flush()
             os.fsync(handle.fileno())
+        increment("progress_event_write_count")
+        increment("progress_event_write_bytes", len(event_line.encode("utf-8")))
         self._state["updated_at"] = now
         _write_json(self.state_path, self._state)
 

@@ -8,7 +8,6 @@ import os
 import signal
 import sys
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -57,6 +56,12 @@ from benchmarking.runtime.cancellation import (
 from benchmarking.runtime.openclaw_env import (
     build_openclaw_subprocess_env,
     proxy_environment_report,
+)
+from benchmarking.runtime.atomic_io import atomic_write_json
+from benchmarking.runtime.observability import (
+    RuntimeMetrics,
+    finish_runtime_metrics,
+    start_runtime_metrics,
 )
 from benchmarking.runtime.provider_preflight import check_provider_connection
 from benchmarking.runtime.container_network import resolve_container_network
@@ -304,7 +309,7 @@ def record_group_progress_failure(
 
 
 
-def main(service=None) -> int:
+def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
     args = parse_args() if service is None else parse_args(service)
     if service is None:
         from benchmarking.service.single import execution as service
@@ -383,8 +388,9 @@ def main(service=None) -> int:
             timestamp=run_state.now_stamp(),
         )
     run_state.ensure_dir(output_root)
+    runtime_metrics.set_output_root(output_root)
     run_id = output_root.name
-    invocation_id = str(uuid.uuid4())
+    invocation_id = runtime_metrics.invocation_id
     pypi_cutoff = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     workspace_manager = AttemptWorkspaceManager(
         runtime_root=runtime_paths.benchmark_runtime_root / "runs",
@@ -830,6 +836,10 @@ def main(service=None) -> int:
         "container_cleanup": cancellation_token.cleanup_reports,
         "docker_startup": docker_startup,
         "terminal_status": payload["status"],
+        "runtime_metrics": {
+            "schema_version": 1,
+            "path": str(output_root / "runtime-metrics.json"),
+        },
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
@@ -938,6 +948,18 @@ def main(service=None) -> int:
         progress_writer.run_completed(status="completed")
     print(json.dumps({"output_dir": str(output_root), "summary": summary}, indent=2, ensure_ascii=False))
     return 130 if cancellation_token.is_cancelled else 0
+
+
+def main(service=None) -> int:
+    runtime_metrics = start_runtime_metrics()
+    try:
+        return _run_main(service, runtime_metrics=runtime_metrics)
+    finally:
+        snapshot = finish_runtime_metrics(runtime_metrics)
+        if runtime_metrics.output_root is not None:
+            # Metrics are finalized before this write so the artifact never
+            # counts itself or creates a recursive byte total.
+            atomic_write_json(runtime_metrics.output_root / "runtime-metrics.json", snapshot)
 
 
 if __name__ == "__main__":
