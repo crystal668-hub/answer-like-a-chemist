@@ -486,7 +486,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         output_root,
         total_records=sum(len(group_records) for group_records in pending_records_by_group.values()),
         groups=group_ids,
+        checkpoint_interval_seconds=1.0,
     )
+    result_sink = run_state.ResultSink(output_root)
     progress_writer.run_started()
     previous_signal_handlers = install_cancellation_signal_handlers(cancellation_token)
 
@@ -499,7 +501,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
     )
     materialize_failure_results = partial(
         _materialize_group_failure_results,
-        save_json_fn=run_state.save_json,
+        save_json_fn=result_sink.save_json,
         slugify_fn=run_state.slugify,
         classify_subset_fn=classify_subset,
         normalize_answer_tracks_fn=normalize_answer_tracks,
@@ -512,7 +514,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         evaluate_answer_fn=evaluate_invocation_record,
         build_error_group_record_result_fn=build_error_result,
         classify_subset_fn=classify_subset,
-        save_json_fn=run_state.save_json,
+        save_json_fn=result_sink.save_json,
         slugify_fn=run_state.slugify,
     )
 
@@ -677,10 +679,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
                     build_error_group_record_result_fn=build_error_result,
                 )
                 group_results.setdefault(group_id, []).append(entry)
-                run_state.save_json(
-                    output_root / "per-record" / group_id / f"{run_state.slugify(record.record_id)}.json",
-                    asdict(entry),
-                )
+                result_sink.write(entry)
                 progress_writer.record_cancelled(group_id, record.record_id)
             if any(item.run_lifecycle_status == "cancelled" for item in group_results.get(group_id, [])):
                 progress_writer.group_cancelled(group_id)
@@ -733,10 +732,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         release_config=verifier_release_config,
     )
     for item in results:
-        run_state.save_json(
-            output_root / "per-record" / item.group_id / f"{run_state.slugify(item.record_id)}.json",
-            asdict(item),
-        )
+        result_sink.write(item)
     summary = aggregate_results(results)
     workspace_policies: dict[str, dict[str, Any]] = {}
     for item in results:
@@ -840,6 +836,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
             "schema_version": 1,
             "path": str(output_root / "runtime-metrics.json"),
         },
+        "result_sink": result_sink.to_meta(),
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),

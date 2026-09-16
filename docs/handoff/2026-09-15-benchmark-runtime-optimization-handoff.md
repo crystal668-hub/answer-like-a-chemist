@@ -19,8 +19,12 @@ invocation/attempt/audit/archive/score monotonic duration、transcript 读取和
 skills-on/off、失败、retry、取消和大 transcript 场景，完整测试为 927 passed、
 11 skipped。
 
-Phase 1 当前只完成 atomic persistence 和 progress event/snapshot durability；
-ResultSink、progress checkpoint、resume/cancellation 故障注入矩阵仍待完成。
+Phase 1 已完成 atomic persistence、canonical `ResultSink`、progress checkpoint、
+事件先于 snapshot 的 durability 顺序，以及 per-record 已提交但 aggregate 尚未生成
+时的 resume 验收。未变化的 per-record payload 不再在 CLI 聚合阶段重写；public
+reporting reference 变化仍会更新 canonical payload。取消与
+`cancelled_with_errors` 继续强制完整 terminal snapshot。更大规模的进程级 crash
+矩阵可继续扩充，但 Phase 2 不再受持久化边界阻塞。
 RT-03 的 bucket accumulator 已有 1k/10k 基线并改善聚合耗时，但 CLI 仍持有完整
 结果列表，RSS 仍随详情线性增长，因此 Phase 3 不能标记完成。Phase 2、4、5 尚未
 开始。真实 Docker/VGB 端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance

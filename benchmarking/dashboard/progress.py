@@ -25,13 +25,24 @@ def _write_json(path: Path, payload: Any) -> None:
 class ProgressWriter:
     """Append benchmark progress events and keep a dashboard-friendly snapshot."""
 
-    def __init__(self, output_root: str | Path, *, total_records: int, groups: list[str] | tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        output_root: str | Path,
+        *,
+        total_records: int,
+        groups: list[str] | tuple[str, ...],
+        checkpoint_interval_seconds: float = 0.0,
+        monotonic_clock=time.monotonic,
+    ) -> None:
         self.output_root = Path(output_root).expanduser().resolve()
         self.progress_root = self.output_root / "progress"
         self.events_path = self.progress_root / "events.jsonl"
         self.state_path = self.progress_root / "state.json"
         self.total = int(total_records)
         self.groups = [str(group) for group in groups]
+        self.checkpoint_interval_seconds = max(0.0, float(checkpoint_interval_seconds))
+        self._monotonic_clock = monotonic_clock
+        self._last_checkpoint = float("-inf")
         self._lock = threading.Lock()
         self._state: dict[str, Any] = {
             "status": "pending",
@@ -59,7 +70,7 @@ class ProgressWriter:
             "cancellation": {},
         }
 
-    def _emit(self, event_type: str, **payload: Any) -> None:
+    def _emit(self, event_type: str, *, force_checkpoint: bool = False, **payload: Any) -> None:
         now = timestamp()
         event = {"type": event_type, "timestamp": now, **payload}
         self.progress_root.mkdir(parents=True, exist_ok=True)
@@ -73,7 +84,10 @@ class ProgressWriter:
         increment("progress_event_write_count")
         increment("progress_event_write_bytes", len(event_line.encode("utf-8")))
         self._state["updated_at"] = now
-        _write_json(self.state_path, self._state)
+        monotonic_now = self._monotonic_clock()
+        if force_checkpoint or monotonic_now - self._last_checkpoint >= self.checkpoint_interval_seconds:
+            _write_json(self.state_path, self._state)
+            self._last_checkpoint = monotonic_now
 
     def _group(self, group_id: str) -> dict[str, Any]:
         groups = self._state.setdefault("groups", {})
@@ -97,7 +111,7 @@ class ProgressWriter:
             now = timestamp()
             self._state["status"] = "running"
             self._state["started_at"] = self._state.get("started_at") or now
-            self._emit("run_started", total=self.total, groups=self.groups)
+            self._emit("run_started", force_checkpoint=True, total=self.total, groups=self.groups)
 
     def group_started(self, group_id: str) -> None:
         with self._lock:
@@ -106,7 +120,7 @@ class ProgressWriter:
             group["status"] = "running"
             group["started_at"] = group.get("started_at") or now
             group["updated_at"] = now
-            self._emit("group_started", group_id=group_id)
+            self._emit("group_started", force_checkpoint=True, group_id=group_id)
 
     def record_started(self, group_id: str, record_id: str, *, index: int | None = None) -> None:
         with self._lock:
@@ -158,7 +172,7 @@ class ProgressWriter:
             group["current_index"] = None
             group["updated_at"] = now
             group["completed_at"] = now
-            self._emit("group_completed", group_id=group_id, status=status)
+            self._emit("group_completed", force_checkpoint=True, group_id=group_id, status=status)
 
     def group_cancelled(self, group_id: str) -> None:
         with self._lock:
@@ -173,7 +187,7 @@ class ProgressWriter:
                 updated_at=now,
                 completed_at=now,
             )
-            self._emit("group_cancelled", group_id=group_id)
+            self._emit("group_cancelled", force_checkpoint=True, group_id=group_id)
 
     def run_cancelling(self, *, reason: dict[str, Any]) -> None:
         with self._lock:
@@ -181,7 +195,7 @@ class ProgressWriter:
                 return
             self._state["status"] = "cancelling"
             self._state["cancellation"] = dict(reason)
-            self._emit("run_cancelling", reason=dict(reason))
+            self._emit("run_cancelling", force_checkpoint=True, reason=dict(reason))
 
     def run_cancelled(self, *, errors: list[dict[str, Any]] | None = None) -> None:
         with self._lock:
@@ -194,7 +208,7 @@ class ProgressWriter:
             self._state["updated_at"] = now
             self._state["completed_at"] = now
             self._state.setdefault("cancellation", {})["errors"] = errors
-            self._emit("run_cancelled", status=status, errors=errors)
+            self._emit("run_cancelled", force_checkpoint=True, status=status, errors=errors)
 
     def error(self, *, group_id: str | None = None, record_id: str | None = None, message: str) -> None:
         with self._lock:
@@ -212,7 +226,7 @@ class ProgressWriter:
             self._state["status"] = status
             self._state["updated_at"] = now
             self._state["completed_at"] = now
-            self._emit("run_completed", status=status)
+            self._emit("run_completed", force_checkpoint=True, status=status)
 
 
 def _fallback_group_progress(run_root: Path, group_id: str) -> dict[str, Any]:

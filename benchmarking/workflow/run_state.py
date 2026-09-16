@@ -19,7 +19,7 @@ from benchmarking.runtime.vgb_bridge import (
 )
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import EXPERIMENT_GROUPS
-from benchmarking.runtime.atomic_io import atomic_write_json
+from benchmarking.runtime.atomic_io import atomic_write_json, atomic_write_text
 
 
 def now_stamp() -> str:
@@ -39,6 +39,52 @@ LEGACY_SUMMARY_CSV_FILENAMES = (
     "summary_by_group.csv",
     "summary_by_group_and_subset.csv",
 )
+
+
+class ResultSink:
+    """Canonical per-record writer that skips byte-identical rewrites."""
+
+    def __init__(self, output_root: Path) -> None:
+        self.output_root = Path(output_root)
+        self.per_record_root = self.output_root / "per-record"
+        self.write_count = 0
+        self.unchanged_count = 0
+
+    def save_json(self, path: Path, payload: Any) -> None:
+        path = Path(path)
+        try:
+            relative = path.relative_to(self.per_record_root)
+        except ValueError as exc:
+            raise ValueError(f"result path is outside the per-record root: {path}") from exc
+        if ".." in relative.parts:
+            raise ValueError(f"result path escapes the per-record root: {path}")
+        current = path
+        while True:
+            if current.is_symlink():
+                raise OSError(f"refusing result write through symlink: {path}")
+            if current == self.output_root:
+                break
+            if current.parent == current:
+                raise ValueError(f"result path has no output-root boundary: {path}")
+            current = current.parent
+        content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            self.unchanged_count += 1
+            return
+        atomic_write_text(path, content)
+        self.write_count += 1
+
+    def write(self, result: GroupRecordResult) -> None:
+        self.save_json(
+            self.per_record_root / result.group_id / f"{slugify(result.record_id)}.json",
+            asdict(result),
+        )
+
+    def to_meta(self) -> dict[str, int]:
+        return {
+            "write_count": self.write_count,
+            "unchanged_count": self.unchanged_count,
+        }
 
 
 def remove_legacy_summary_csvs(output_root: Path) -> None:

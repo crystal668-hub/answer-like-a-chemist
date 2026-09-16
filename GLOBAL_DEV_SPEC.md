@@ -119,6 +119,10 @@ thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
 transcript consumers, attempts, audits, archives, scoring, Docker commands, and
 verifier subprocesses contribute counters or monotonic durations without adding
 record content to the metrics payload.
+`benchmarking.workflow.run_state.ResultSink` owns canonical per-record writes. It
+uses the atomic writer, rejects symlinks within the output-root boundary, and
+skips byte-identical payloads; reporting-reference enrichment is persisted when
+it changes the canonical payload.
 `benchmarking.service.chemdebate.cleanroom.CleanroomRuntime` is the cleanroom dependency
 binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
@@ -313,6 +317,9 @@ For each invocation, the CLI:
    historical per-record resume data; the CLI writes the final results and
    runtime manifest. It finalizes invocation observability separately after the
    business artifacts so `runtime-metrics.json` does not count its own write.
+   Progress events remain append-only and durable. The CLI checkpoints the full
+   dashboard state at a bounded interval while run/group terminal and cancellation
+   transitions force an immediate atomic snapshot.
 6. Starts detached automated analysis unless `--no-analysis` is selected. A
    cancelled run never launches detached analysis.
 

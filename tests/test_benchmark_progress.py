@@ -34,6 +34,29 @@ def test_progress_writer_records_events_and_state_snapshot(tmp_path: Path) -> No
     assert state["total"] == 2
 
 
+def test_progress_writer_checkpoints_periodically_and_forces_terminal_state(tmp_path: Path) -> None:
+    ticks = iter((0.0, 0.1, 0.2, 0.3, 0.4))
+    writer = dashboard_progress.ProgressWriter(
+        tmp_path,
+        total_records=1,
+        groups=["g1"],
+        checkpoint_interval_seconds=10.0,
+        monotonic_clock=lambda: next(ticks),
+    )
+    writer.run_started()
+    initial = json.loads((tmp_path / "progress/state.json").read_text(encoding="utf-8"))
+    writer.record_started("g1", "r1", index=1)
+    writer.record_completed("g1", "r1", status="completed", score=1.0)
+    before_terminal = json.loads((tmp_path / "progress/state.json").read_text(encoding="utf-8"))
+    writer.group_completed("g1")
+    terminal = json.loads((tmp_path / "progress/state.json").read_text(encoding="utf-8"))
+
+    assert initial["completed"] == 0
+    assert before_terminal["completed"] == 0
+    assert terminal["completed"] == 1
+    assert terminal["groups"]["g1"]["status"] == "completed"
+
+
 def test_load_progress_prefers_state_json(tmp_path: Path) -> None:
     write_json(
         tmp_path / "progress" / "state.json",
