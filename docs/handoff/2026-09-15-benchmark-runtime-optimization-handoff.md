@@ -52,8 +52,12 @@ fingerprint 变化会失效，失败不会缓存。每题 `evaluate_one` 仍启�
 `isolated`。协议、取消、进程组清理、有界恢复及 100 次请求回收已通过真实 fixture
 子进程测试；三轮 120 请求 shadow 输出完全一致。完整测试为 972 passed、11 skipped、
 164 subtests。见 [worker 验收](../report/2026-09-16-verifier-worker-validation.md) 和
-[设计](../design/2026-09-16-verifier-worker-design.md)。真实 pinned-release 重复/乱序
-及 RDKit/xTB acceptance 尚未执行，因此不得默认启用；Phase 5 尚未开始。
+[设计](../design/2026-09-16-verifier-worker-design.md)。真实 pinned v0.9.2 acceptance
+现已覆盖 rdkit、xtb、property basic/advanced、重复/乱序、失败恢复序列和 100 次回收
+边界；624 个响应逐字段一致，中位 wall time 18.04→13.06 秒，进程数 104→2。真实
+文件 validation cache 基准为 121.85→35.22 ms/1000 次。wheel module/native 状态风险
+仍存在，因此不得默认启用；本批完整测试为 987 passed、11 skipped、164 subtests，
+5 个既有 SWIG warnings。Phase 5 尚未开始。
 
 ## 1. 接手须知
 

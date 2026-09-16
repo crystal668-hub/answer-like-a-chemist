@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
+import os
 import resource
 import statistics
 import subprocess
@@ -22,7 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from benchmarking.runtime import vgb_bridge as bridge
-from benchmarking.runtime.atomic_io import atomic_write_json
+from benchmarking.runtime.atomic_io import atomic_write_json, atomic_write_text
 from benchmarking.runtime.cancellation import CancellationToken, OwnedProcessRegistry
 from benchmarking.runtime.observability import start_runtime_metrics, finish_runtime_metrics
 from benchmarking.runtime.vgb_worker import VerifierWorker
@@ -48,9 +50,25 @@ def fixture_config(root: Path, *, install: bool = False) -> bridge.ReleaseConfig
 
 def requests(args):
     if args.requests:
+        loaded = []
+        repeatable = []
         with Path(args.requests).open(encoding="utf-8") as handle:
             for line in handle:
-                yield json.loads(line)
+                request = json.loads(line)
+                should_repeat = bool(request.pop("repeatable", False))
+                result_path = request.pop("answer_result_path", None)
+                if result_path:
+                    payload = json.loads(Path(result_path).expanduser().resolve().read_text(encoding="utf-8"))
+                    request["answer_text"] = str(payload.get("answer_text") or payload.get("full_response_text") or "")
+                loaded.append(request)
+                if should_repeat:
+                    repeatable.append(request)
+        if args.cycle_requests_to:
+            yield from loaded[: args.cycle_requests_to]
+            remaining = max(0, args.cycle_requests_to - len(loaded))
+            yield from itertools.islice(itertools.cycle(repeatable or loaded), remaining)
+        else:
+            yield from loaded
     else:
         answers = ["FINAL ANSWER: CCO", "invalid", "FINAL ANSWER: 1.25", "infrastructure", "FINAL ANSWER: CCO"]
         for index in range(args.records):
@@ -64,6 +82,8 @@ def rss(who):
 
 
 def measure_mode(args):
+    cwd_before = os.getcwd()
+    environment_before = hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest()
     config = bridge.load_release_config(Path(args.release_config)) if args.release_config else fixture_config(Path(args.output) / "fixture")
     run_root = Path(args.output) / f"{args.mode}-{args.repeat}"
     run_root.mkdir(parents=True, exist_ok=False)
@@ -103,7 +123,10 @@ def measure_mode(args):
         "largest_reaped_child_peak_rss_bytes": rss(resource.RUSAGE_CHILDREN),
         "process_count": snapshot["counters"].get("vgb_process_count", 0),
         "input_sha256": input_digest.hexdigest(), "output_sha256": digest.hexdigest(), "output_bytes": output_bytes,
-        "worker": worker.to_meta() if worker else None}
+        "worker": worker.to_meta() if worker else None,
+        "process_cwd_before": cwd_before, "process_cwd_after": os.getcwd(),
+        "environment_sha256_before": environment_before,
+        "environment_sha256_after": hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest()}
     atomic_write_json(run_root / "measurement.json", report)
     return report
 
@@ -114,6 +137,7 @@ def main():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--release-config")
     parser.add_argument("--requests")
+    parser.add_argument("--cycle-requests-to", type=int)
     parser.add_argument("--output", type=Path, default=ROOT / "state/benchmark-runs/temporary/vgb-worker/offline" /
                         f"vgb-worker-offline-{time.strftime('%Y%m%d-%H%M%S')}")
     parser.add_argument("--mode", choices=("isolated", "worker"))
@@ -123,12 +147,23 @@ def main():
         parser.error("--release-config and --requests must be supplied together")
     if args.records < 1 or args.repeats < 1:
         parser.error("record and repeat counts must be positive")
+    if args.cycle_requests_to is not None and args.cycle_requests_to < 1:
+        parser.error("--cycle-requests-to must be positive")
     if args.mode:
         measure_mode(args)
         return 0
     args.output.mkdir(parents=True, exist_ok=False)
     if not args.release_config:
         fixture_config(args.output / "fixture", install=True)
+    resolved_requests = args.requests
+    if args.requests:
+        resolved = list(requests(args))
+        resolved_requests_path = args.output / "prepared-requests.jsonl"
+        atomic_write_text(
+            resolved_requests_path,
+            "".join(json.dumps(request, ensure_ascii=False, sort_keys=True) + "\n" for request in resolved),
+        )
+        resolved_requests = str(resolved_requests_path)
     measurements = []
     for repeat in range(args.repeats):
         # Alternate execution order to reduce warm filesystem bias.
@@ -136,13 +171,27 @@ def main():
             command = [sys.executable, str(Path(__file__).resolve()), "--mode", mode, "--repeat", str(repeat),
                        "--output", str(args.output), "--records", str(args.records)]
             if args.release_config:
-                command += ["--release-config", args.release_config, "--requests", args.requests]
+                command += ["--release-config", args.release_config, "--requests", resolved_requests]
             subprocess.run(command, check=True)
             measurements.append(json.loads((args.output / f"{mode}-{repeat}/measurement.json").read_text()))
     signatures = {(m["input_sha256"], m["output_sha256"], m["output_bytes"], m["records"]) for m in measurements}
     equal = len(signatures) == 1
+    field_audits = []
+    if args.release_config:
+        for repeat in range(args.repeats):
+            isolated = [json.loads(line) for line in (args.output / f"isolated-{repeat}/results.jsonl").read_text().splitlines()]
+            worker = [json.loads(line) for line in (args.output / f"worker-{repeat}/results.jsonl").read_text().splitlines()]
+            for index, (old, new) in enumerate(zip(isolated, worker, strict=True), start=1):
+                differences = {
+                    key: {"isolated": old.get(key), "worker": new.get(key)}
+                    for key in sorted(set(old) | set(new))
+                    if old.get(key) != new.get(key)
+                }
+                field_audits.append({"repeat": repeat + 1, "request": index,
+                    "status": "passed" if not differences else "failed", "differences": differences})
+        equal = equal and all(item["status"] == "passed" for item in field_audits)
     report = {"kind": "pinned_release" if args.release_config else "offline_fixture", "equivalent": equal,
-        "measurements": measurements, "medians": {}}
+        "measurements": measurements, "field_audit": field_audits, "medians": {}}
     for mode in ("isolated", "worker"):
         selected = [m for m in measurements if m["mode"] == mode]
         report["medians"][mode] = {key: statistics.median(m[key] for m in selected) for key in (

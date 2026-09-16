@@ -765,9 +765,11 @@ boundary. Processes still run as the same local user.
 ### Current risks
 
 - Experimental verifier workers retain Python/native module state within each
-  generation despite reloading track objects per request. Offline fixture shadow
-  equivalence does not establish pinned-release scientific equivalence, so the
-  default remains isolated. IPC limits do not bound native allocations or stderr
+  generation despite reloading track objects per request. Pinned-release shadow
+  acceptance covers selected RDKit, xTB, and property tasks, repeated/reordered
+  requests, failures, and the recycle boundary, but does not establish equivalence
+  for every task or native-library state, so the default remains isolated. IPC
+  limits do not bound native allocations or stderr
   disk usage. Process-group cleanup cannot contain descendants that deliberately
   create a different session. `scripts/benchmark_vgb_worker.py` provides offline
   fixture and explicit pinned-release shadow measurement in separate processes.

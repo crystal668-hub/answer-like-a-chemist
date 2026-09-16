@@ -1,7 +1,7 @@
 # Verifier Worker Validation
 
 日期：2026-09-16
-状态：`EXPERIMENTAL_COMPLETE_WITH_LIMITS`
+状态：`PINNED_RELEASE_ACCEPTED_EXPERIMENTAL`
 范围：RT-04 第二步；代码基线 `24a998b`，默认评分路径仍为 isolated。
 
 ## 实现与设计审查
@@ -53,19 +53,42 @@ identity/hash、generation、PID 及 stderr 路径。失败 traceback 和完整 
 RSS 来自独立进程的 getrusage high-water mark；child 数值不是所有后代同时 RSS 之和。
 这是轻量确定性 fixture 的 IPC/import 收益，不代表真实化学计算加速比例。
 
-## 未完成的 acceptance 与后续
+## Pinned v0.9.2 shadow acceptance
 
-没有付费模型或 Docker run。检测到本机 pinned v0.9.2 runtime，但本轮没有执行真实
-RDKit/xTB/property wheel scoring。默认模式不得切换。后续以固定人工/历史答案构造
-JSONL（track、task_id、answer_text），运行：
+本机 pinned v0.9.2 wheel、manifest 和 runtime Python 已重新验证。固定请求由历史
+RDKit/xTB 答案及 pinned public property gold 物化，不调用模型。请求覆盖 rdkit、xtb、
+property_calculation_basic、property_calculation_advanced，包含重复、乱序、A→B→A、
+成功→失败→成功及 100 次回收边界。只有便宜请求循环到 104 条，每个测量进程只执行
+一次成功和一次 parse-failure xTB 请求。
 
 ```bash
 uv run python scripts/benchmark_vgb_worker.py \
   --release-config benchmarking/resources/verifier_grounded/release.json \
-  --requests <prepared-requests.jsonl> --repeats 3
+  --requests state/benchmark-runs/temporary/vgb-worker/pinned/vgb-worker-pinned-20260916-requests.jsonl \
+  --cycle-requests-to 104 --repeats 3
 ```
 
-脚本比较完整响应，任何不一致均返回非零；真实包若含随机/时间字段，必须逐字段解释，
-不能默默剔除后宣称等价。模块/native 全局状态、cwd/environment 变化及长序列仍需要
-真实 release acceptance。定期回收不构成 native 内存硬上限；stderr 保留也有磁盘成本。
-Phase 5 未在本次变更中实施。
+证据：[`shadow-report.json`](../../state/benchmark-runs/temporary/vgb-worker/pinned/vgb-worker-pinned-20260916-174145/shadow-report.json)，
+同目录保留物化后的完整 `prepared-requests.jsonl`、每轮完整 results、runtime metrics、
+worker lifecycle 和 stderr。三轮共 624 个 isolated/worker 响应逐字段比较，score、
+properties、constraint scores、failure type、message、versions 和完整响应均无差异；
+没有剔除动态字段。每轮 worker 104 次成功请求并在 100 次后回收，process count 为 2。
+
+| 指标（三轮中位数） | isolated | worker |
+| --- | ---: | ---: |
+| 104 次 wall time | 18.037 s | 13.057 s |
+| 首题 latency | 265.99 ms | 262.49 ms |
+| 单题 latency 中位数 | 134.49 ms | 86.77 ms |
+| verifier processes | 104 | 2 |
+| parent peak RSS | 27,459,584 B | 27,344,896 B |
+| largest reaped child peak RSS | 67,092,480 B | 67,076,096 B |
+| result bytes | 110,648 | 110,648 |
+
+parent cwd 和 environment hash 在每个进程评分前后不变。对 wheel Python 源码的静态
+审查发现 module-level `@cache`/`@lru_cache` 以及单次 evaluate 内的 evidence cache，
+但未发现评分路径改变 cwd。真实重复/乱序输出相同降低了已选任务的状态残留风险，
+不能证明所有 105 个任务或 native 库状态等价。定期回收不构成 native 内存硬上限，
+stderr 保留也有磁盘成本，因此默认仍为 isolated。没有付费模型或 Docker run。
+
+本批收尾后的完整测试：`987 passed, 11 skipped, 164 subtests passed`，另有 5 个既有
+SWIG deprecation warnings。

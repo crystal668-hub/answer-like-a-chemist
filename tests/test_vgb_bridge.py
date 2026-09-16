@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+import hashlib
+import json
+import time
 from unittest.mock import patch
 
 import pytest
@@ -177,3 +182,62 @@ def test_invocation_validation_cache_does_not_cache_failures(monkeypatch) -> Non
     with pytest.raises(bridge.VerifierGroundedRuntimeError):
         cache.validate(config)
     assert len(calls) == 2
+
+
+def _materialize_runtime_files(config: bridge.ReleaseConfig, content: bytes) -> None:
+    config.wheel_path.parent.mkdir(parents=True, exist_ok=True)
+    config.wheel_path.write_bytes(content)
+    config.runtime_python.parent.mkdir(parents=True, exist_ok=True)
+    config.runtime_python.write_text("fixture runtime", encoding="utf-8")
+    config.runtime_manifest.write_text(json.dumps({
+        **config.identity,
+        "source_commit": config.source_commit,
+        "source_tag": config.source_tag,
+        "wheel_path": str(config.wheel_path),
+    }), encoding="utf-8")
+
+
+def test_validation_cache_real_file_change_failure_and_recovery(monkeypatch, tmp_path) -> None:
+    content = b"real fingerprint fixture"
+    monkeypatch.setattr(bridge.runtime_paths, "data_root", tmp_path / "data")
+    monkeypatch.setattr(bridge.runtime_paths, "project_state_root", tmp_path / "state")
+    config = bridge.ReleaseConfig(
+        package="fixture", version="1", source_commit="commit", source_tag="tag",
+        wheel_filename="fixture.whl", wheel_sha256=hashlib.sha256(content).hexdigest(),
+        wheel_size=len(content), tracks={},
+    )
+    _materialize_runtime_files(config, content)
+    cache = bridge.InvocationValidationCache()
+    assert cache.validate(config)["source_tag"] == "tag"
+    assert cache.validate(config)["source_tag"] == "tag"
+
+    config.runtime_manifest.write_text("{}", encoding="utf-8")
+    with pytest.raises(bridge.VerifierGroundedRuntimeError, match="does not match"):
+        cache.validate(config)
+    _materialize_runtime_files(config, content)
+    assert cache.validate(config)["source_tag"] == "tag"
+    assert cache.to_meta() == {"hit_count": 1, "miss_count": 3, "failure_count": 1}
+
+
+def test_validation_cache_serializes_concurrent_misses(monkeypatch) -> None:
+    config = bridge.load_release_config()
+    cache = bridge.InvocationValidationCache()
+    calls = []
+
+    def validate(_config):
+        calls.append(1)
+        time.sleep(0.01)
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "_validate_runtime_files_uncached", validate)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _: cache.validate(config), range(16)))
+    assert results == [{"ok": True}] * 16
+    assert len(calls) == 1
+    assert cache.to_meta() == {"hit_count": 15, "miss_count": 1, "failure_count": 0}
+
+
+def test_validation_fingerprint_includes_release_configuration() -> None:
+    config = bridge.load_release_config()
+    changed = replace(config, source_tag="v0.9.2-reconfigured")
+    assert bridge._validation_fingerprint(config) != bridge._validation_fingerprint(changed)
