@@ -5,6 +5,7 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from benchmarking.runtime.agent_workspace import (
@@ -750,17 +751,50 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         for root in (source, copied):
             root.mkdir()
             (root / SENTINEL_FILENAME).write_text("sentinel", encoding="utf-8")
-            (root / "first.txt").write_text("first", encoding="utf-8")
-            (root / "second.txt").write_text("second", encoding="utf-8")
-            (root / "linked.txt").symlink_to("first.txt")
+            scratch = root / "scratch"
+            scratch.mkdir()
+            (scratch / "first.txt").write_text("first", encoding="utf-8")
+            (scratch / "second.txt").write_text("second", encoding="utf-8")
+            (scratch / "linked.txt").symlink_to("first.txt")
 
         sentinel_sha256 = hashlib.sha256(b"sentinel").hexdigest()
         self.manager._validate_copied_workspace(source, copied, sentinel_sha256)
-        (copied / "linked.txt").unlink()
-        (copied / "linked.txt").symlink_to("second.txt")
+        (copied / "scratch" / "linked.txt").unlink()
+        (copied / "scratch" / "linked.txt").symlink_to("second.txt")
 
         with self.assertRaisesRegex(RuntimeError, "symlink inventory mismatch"):
             self.manager._validate_copied_workspace(source, copied, sentinel_sha256)
+
+    def test_cross_filesystem_copy_validation_rejects_unsafe_target(self) -> None:
+        source = self.root / "copy-safe-source"
+        copied = self.root / "copy-unsafe-destination"
+        for root in (source, copied):
+            (root / "scratch").mkdir(parents=True)
+            (root / SENTINEL_FILENAME).write_text("sentinel", encoding="utf-8")
+            (root / "scratch" / "result.txt").write_text("result", encoding="utf-8")
+        (copied / "control-link").symlink_to("scratch/result.txt")
+        with self.assertRaises(WorkspaceIsolationError) as raised:
+            self.manager._validate_copied_workspace(
+                source, copied, hashlib.sha256(b"sentinel").hexdigest()
+            )
+        self.assertEqual("symlink_outside_scratch", raised.exception.details["reason"])
+
+    def test_cross_filesystem_copy_validation_detects_source_change(self) -> None:
+        source = self.root / "copy-changing-source"
+        copied = self.root / "copy-changing-destination"
+        for root in (source, copied):
+            (root / "scratch").mkdir(parents=True)
+            (root / SENTINEL_FILENAME).write_text("sentinel", encoding="utf-8")
+            (root / "scratch" / "result.txt").write_text("result", encoding="utf-8")
+        expected = self.manager._validate_runtime_tree(source)
+        (source / "scratch" / "late.txt").write_text("late", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "source workspace changed"):
+            self.manager._validate_copied_workspace(
+                source,
+                copied,
+                hashlib.sha256(b"sentinel").hexdigest(),
+                expected_source_inventory=expected,
+            )
 
     def test_uv_cache_git_markers_are_allowed_only_as_regular_files_under_cache(self) -> None:
         lease = self.manager.prepare(self._identity())
@@ -826,6 +860,47 @@ class AttemptWorkspaceManagerTests(unittest.TestCase):
         self.assertEqual("openclaw-benchmark-workspace-archive", manifest["kind"])
         self.assertEqual("completed", manifest["runner_status"])
         self.assertGreaterEqual(manifest["file_count"], 4)
+
+    def test_simulated_cross_filesystem_seal_revalidates_copy(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        (lease.output_dir / "result.txt").write_text("result", encoding="utf-8")
+        link = lease.scratch_dir / "result-link"
+        link.symlink_to("outputs/result.txt")
+        final_parent = self.manager._archive_path(lease.identity).parent
+        original_stat = Path.stat
+
+        def different_device(path, *args, **kwargs):
+            value = original_stat(path, *args, **kwargs)
+            if path == final_parent:
+                return SimpleNamespace(st_dev=value.st_dev + 1)
+            return value
+
+        with patch.object(Path, "stat", different_device):
+            archive = self.manager.seal(lease, AttemptOutcome(runner_status="completed"))
+        self.assertEqual(1, archive.payload["symlink_count"])
+        self.assertTrue((archive.workspace / "scratch" / "result-link").is_symlink())
+        self.assertEqual("result", (archive.workspace / "scratch" / "result-link").read_text())
+
+    def test_simulated_cross_filesystem_copy_failure_quarantines_source(self) -> None:
+        lease = self.manager.prepare(self._identity())
+        final_parent = self.manager._archive_path(lease.identity).parent
+        original_stat = Path.stat
+
+        def different_device(path, *args, **kwargs):
+            value = original_stat(path, *args, **kwargs)
+            if path == final_parent:
+                return SimpleNamespace(st_dev=value.st_dev + 1)
+            return value
+
+        with (
+            patch.object(Path, "stat", different_device),
+            patch("benchmarking.runtime.agent_workspace.shutil.copytree", side_effect=OSError("copy failed")),
+            self.assertRaises(WorkspaceIsolationError) as raised,
+        ):
+            self.manager.seal(lease, AttemptOutcome(runner_status="failed"))
+        self.assertEqual("workspace_archive_failed", raised.exception.code)
+        self.assertFalse(lease.active_workspace.exists())
+        self.assertEqual(1, len(list(self.manager.quarantine_root.iterdir())))
 
     def test_archive_collision_does_not_overwrite_and_quarantines_managed_workspace(self) -> None:
         identity = self._identity()

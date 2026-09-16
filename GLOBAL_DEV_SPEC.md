@@ -677,6 +677,12 @@ does not synthesize attempt identities or place legacy snapshots inside a run's
   count plus deterministic link-manifest digest, with separate count and digest
   fields for dangling links. Cross-filesystem copies must match both regular-file
   statistics and the symbolic-link inventory.
+- Runtime archive validation produces regular-file statistics, symlink inventory,
+  dangling-link inventory, forbidden-path checks, and special-file checks in one
+  tree traversal. Same-filesystem relocation is independently revalidated at the
+  destination. Cross-filesystem copying revalidates both source and destination,
+  detects source inventory changes during the copy, and separately verifies the
+  copied sentinel hash before publishing the archive.
 - Structured file tools use workspace-relative `scratch/...` paths. Shell
   commands enter scratch through runner-provided environment variables.
 - A canonical base `AGENTS.md` plus a minimal role overlay defines the same

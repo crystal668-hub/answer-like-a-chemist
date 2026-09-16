@@ -60,8 +60,12 @@ fingerprint 变化会失效，失败不会缓存。每题 `evaluate_one` 仍启�
 5 个既有 SWIG warnings。Phase 5A Docker wait 已完成真实无模型验收：managed client
 在 timeout/cancel 场景把 wait CLI 从 2 次降为 1 次并保留 TERM finalization、二次取消、
 typed failure、cleanup 和 orphan recovery 契约；见 Phase 5 Docker wait 报告。Phase 5B
-archive inventory 尚未完成。此提交后的完整测试为 991 passed、11 skipped、164
-subtests，5 个既有 SWIG warnings。
+archive inventory 也已实现并通过同文件系统、跨设备分支模拟、symlink/dangling、
+损坏目标、source mutation 和 quarantine 测试。10k 文件基准中同文件系统等价遍历
+4→2 次、0.865→0.449 秒；跨设备分支 8→3 次、1.704→0.678 秒。本机没有第二个可写
+文件系统，不能声称真实异盘 acceptance。Docker wait 提交后的完整测试为 991 passed、
+11 skipped、164 subtests，5 个既有 SWIG warnings；archive 收尾后的完整测试为
+997 passed、11 skipped、164 subtests，5 个既有 SWIG warnings。
 
 ## 1. 接手须知
 

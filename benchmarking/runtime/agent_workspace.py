@@ -32,6 +32,7 @@ from benchmarking.runtime.workspace_policy import (
     WORKSPACE_ISOLATION_SCHEMA_VERSION as _WORKSPACE_ISOLATION_SCHEMA_VERSION,
 )
 from benchmarking.runtime.observability import (
+    increment,
     observed_duration,
 )
 from benchmarking.runtime.transcript_index import TranscriptIndex
@@ -120,39 +121,93 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _tree_stats(root: Path) -> tuple[int, int]:
+@dataclass(frozen=True)
+class _TreeInventory:
+    file_count: int
+    total_bytes: int
+    symlink_count: int
+    symlink_manifest_sha256: str
+    dangling_symlink_count: int
+    dangling_symlink_manifest_sha256: str
+
+    def tree_stats(self) -> tuple[int, int]:
+        return self.file_count, self.total_bytes
+
+    def symlink_stats(self) -> tuple[int, str, int, str]:
+        return (
+            self.symlink_count,
+            self.symlink_manifest_sha256,
+            self.dangling_symlink_count,
+            self.dangling_symlink_manifest_sha256,
+        )
+
+
+def _inventory_tree(root: Path, *, validate_runtime: bool = False) -> _TreeInventory:
     file_count = 0
     total_bytes = 0
-    for path in root.rglob("*"):
-        mode = path.lstat().st_mode
-        if stat.S_ISREG(mode):
-            file_count += 1
-            total_bytes += path.lstat().st_size
-    return file_count, total_bytes
-
-
-def _symlink_stats(root: Path) -> tuple[int, str, int, str]:
     digest = hashlib.sha256()
     dangling_digest = hashlib.sha256()
     count = 0
     dangling_count = 0
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        if not path.is_symlink():
-            continue
-        count += 1
-        entry = (
-            path.relative_to(root).as_posix().encode("utf-8")
-            + b"\0symlink\0"
-            + os.readlink(path).encode("utf-8")
-            + b"\0"
-        )
-        digest.update(entry)
-        try:
-            path.resolve(strict=True)
-        except FileNotFoundError:
-            dangling_count += 1
-            dangling_digest.update(entry)
-    return count, digest.hexdigest(), dangling_count, dangling_digest.hexdigest()
+    symlink_entries: list[tuple[str, bytes, bool]] = []
+    pending = [root]
+    scratch_root = root / "scratch"
+    increment("workspace_inventory_traversal_count")
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: item.name)
+        for entry in children:
+            path = Path(entry.path)
+            relative = PurePosixPath(path.relative_to(root).as_posix())
+            stat_result = entry.stat(follow_symlinks=False)
+            mode = stat_result.st_mode
+            increment("workspace_inventory_entry_count")
+            if stat.S_ISREG(mode):
+                file_count += 1
+                total_bytes += stat_result.st_size
+            if stat.S_ISLNK(mode):
+                count += 1
+                link_entry = relative.as_posix().encode("utf-8") + b"\0symlink\0" + os.readlink(path).encode("utf-8") + b"\0"
+                dangling = False
+                try:
+                    path.resolve(strict=True)
+                except FileNotFoundError:
+                    dangling_count += 1
+                    dangling = True
+                except (RuntimeError, OSError):
+                    pass
+                symlink_entries.append((relative.as_posix(), link_entry, dangling))
+                if validate_runtime:
+                    AttemptWorkspaceManager._validate_scratch_symlink(path, scratch_root=scratch_root)
+            elif validate_runtime and not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise WorkspaceIsolationError(
+                    "workspace_path_unsafe",
+                    "Existing managed workspace contains a symlink, special file, or Git metadata.",
+                    details={"path": str(path)},
+                )
+            if validate_runtime and ".git" in relative.parts and not _is_allowed_uv_cache_git_marker(relative, mode):
+                raise WorkspaceIsolationError(
+                    "workspace_path_unsafe",
+                    "Existing managed workspace contains a symlink, special file, or Git metadata.",
+                    details={"path": str(path)},
+                )
+            if stat.S_ISDIR(mode):
+                pending.append(path)
+    for _, link_entry, dangling in sorted(symlink_entries):
+        digest.update(link_entry)
+        if dangling:
+            dangling_digest.update(link_entry)
+    return _TreeInventory(file_count, total_bytes, count, digest.hexdigest(), dangling_count,
+                          dangling_digest.hexdigest())
+
+
+def _tree_stats(root: Path) -> tuple[int, int]:
+    return _inventory_tree(root).tree_stats()
+
+
+def _symlink_stats(root: Path) -> tuple[int, str, int, str]:
+    return _inventory_tree(root).symlink_stats()
 
 
 def _is_allowed_uv_cache_git_marker(relative: PurePosixPath, mode: int) -> bool:
@@ -586,7 +641,7 @@ class AttemptWorkspaceManager:
                 expected_identity=lease.identity,
                 expected_template_sha256=lease.template_sha256,
             )
-            self._validate_runtime_tree(lease.active_workspace)
+            source_inventory = self._validate_runtime_tree(lease.active_workspace)
             final_archive.parent.mkdir(parents=True, exist_ok=True)
             temporary_archive.mkdir(mode=0o700)
             temporary_workspace = temporary_archive / "workspace"
@@ -594,18 +649,16 @@ class AttemptWorkspaceManager:
             if lease.active_workspace.stat().st_dev == final_archive.parent.stat().st_dev:
                 os.replace(lease.active_workspace, temporary_workspace)
                 managed_location = temporary_archive
+                archive_inventory = self._validate_runtime_tree(temporary_workspace)
             else:
                 shutil.copytree(lease.active_workspace, temporary_workspace, symlinks=True)
-                self._validate_copied_workspace(lease.active_workspace, temporary_workspace, sentinel_sha256)
+                archive_inventory = self._validate_copied_workspace(
+                    lease.active_workspace,
+                    temporary_workspace,
+                    sentinel_sha256,
+                    expected_source_inventory=source_inventory,
+                )
                 managed_location = lease.active_workspace
-            self._validate_runtime_tree(temporary_workspace)
-            file_count, total_bytes = _tree_stats(temporary_workspace)
-            (
-                symlink_count,
-                symlink_manifest_sha256,
-                dangling_symlink_count,
-                dangling_symlink_manifest_sha256,
-            ) = _symlink_stats(temporary_workspace)
             sealed_at = _utc_now()
             manifest_payload = {
                 "kind": ARCHIVE_KIND,
@@ -617,12 +670,12 @@ class AttemptWorkspaceManager:
                 "sealed_at": sealed_at,
                 "source_workspace": str(lease.active_workspace),
                 "archive_workspace": str(final_archive / "workspace"),
-                "file_count": file_count,
-                "total_bytes": total_bytes,
-                "symlink_count": symlink_count,
-                "symlink_manifest_sha256": symlink_manifest_sha256,
-                "dangling_symlink_count": dangling_symlink_count,
-                "dangling_symlink_manifest_sha256": dangling_symlink_manifest_sha256,
+                "file_count": archive_inventory.file_count,
+                "total_bytes": archive_inventory.total_bytes,
+                "symlink_count": archive_inventory.symlink_count,
+                "symlink_manifest_sha256": archive_inventory.symlink_manifest_sha256,
+                "dangling_symlink_count": archive_inventory.dangling_symlink_count,
+                "dangling_symlink_manifest_sha256": archive_inventory.dangling_symlink_manifest_sha256,
                 "sentinel_sha256": sentinel_sha256,
                 "workspace_isolation": _ensure_workspace_audit(outcome.contamination_audit).to_payload(),
                 "scratch_contract_version": SCRATCH_CONTRACT_VERSION,
@@ -1304,28 +1357,8 @@ class AttemptWorkspaceManager:
         )
 
     @staticmethod
-    def _validate_runtime_tree(root: Path) -> None:
-        scratch_root = root / "scratch"
-        for path in root.rglob("*"):
-            mode = path.lstat().st_mode
-            relative = path.relative_to(root)
-            if path.is_symlink():
-                AttemptWorkspaceManager._validate_scratch_symlink(
-                    path,
-                    scratch_root=scratch_root,
-                )
-            elif not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-                raise WorkspaceIsolationError(
-                    "workspace_path_unsafe",
-                    "Existing managed workspace contains a symlink, special file, or Git metadata.",
-                    details={"path": str(path)},
-                )
-            if ".git" in relative.parts and not _is_allowed_uv_cache_git_marker(relative, mode):
-                raise WorkspaceIsolationError(
-                    "workspace_path_unsafe",
-                    "Existing managed workspace contains a symlink, special file, or Git metadata.",
-                    details={"path": str(path)},
-                )
+    def _validate_runtime_tree(root: Path) -> _TreeInventory:
+        return _inventory_tree(root, validate_runtime=True)
 
     @staticmethod
     def _validate_scratch_symlink(path: Path, *, scratch_root: Path) -> None:
@@ -1621,14 +1654,28 @@ class AttemptWorkspaceManager:
         )
 
     @staticmethod
-    def _validate_copied_workspace(source: Path, copied: Path, sentinel_sha256: str) -> None:
-        if _tree_stats(source) != _tree_stats(copied):
+    def _validate_copied_workspace(
+        source: Path,
+        copied: Path,
+        sentinel_sha256: str,
+        *,
+        expected_source_inventory: _TreeInventory | None = None,
+    ) -> _TreeInventory:
+        source_inventory = AttemptWorkspaceManager._validate_runtime_tree(source)
+        copied_inventory = AttemptWorkspaceManager._validate_runtime_tree(copied)
+        if expected_source_inventory is not None and (
+            source_inventory.tree_stats() != expected_source_inventory.tree_stats()
+            or source_inventory.symlink_stats() != expected_source_inventory.symlink_stats()
+        ):
+            raise RuntimeError("cross-filesystem source workspace changed during copy")
+        if source_inventory.tree_stats() != copied_inventory.tree_stats():
             raise RuntimeError("cross-filesystem workspace copy size/count mismatch")
-        if _symlink_stats(source) != _symlink_stats(copied):
+        if source_inventory.symlink_stats() != copied_inventory.symlink_stats():
             raise RuntimeError("cross-filesystem workspace symlink inventory mismatch")
         copied_sentinel = copied / SENTINEL_FILENAME
         if _sha256_file(copied_sentinel) != sentinel_sha256:
             raise RuntimeError("cross-filesystem workspace sentinel hash mismatch")
+        return copied_inventory
 
     def _quarantine_managed_path(
         self,
