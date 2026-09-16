@@ -211,26 +211,30 @@ def iter_results_from_output_root(output_root: Path, *, group_ids: list[str]):
 
 
 def write_results_json_stream(path: Path, metadata: dict[str, Any], result_paths: list[Path]) -> None:
-    """Write a compatible top-level payload while decoding one record at a time."""
+    """Write byte-compatible indented JSON while decoding one record at a time."""
+    def write_indented(handle, payload: Any, *, spaces: int) -> None:
+        encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+        handle.write(encoded.replace("\n", "\n" + " " * spaces))
+
     def writer(handle):
         handle.write("{\n")
         keys = list(metadata)
         for index, key in enumerate(keys):
             if index:
                 handle.write(",\n")
-            handle.write(json.dumps(key, ensure_ascii=False) + ": ")
-            json.dump(metadata[key], handle, ensure_ascii=False, indent=2)
+            handle.write("  " + json.dumps(key, ensure_ascii=False) + ": ")
+            write_indented(handle, metadata[key], spaces=2)
         if keys:
             handle.write(",\n")
-        handle.write('"results": [')
+        handle.write('  "results": [')
         for index, result_path in enumerate(result_paths):
             if index:
                 handle.write(",")
-            handle.write("\n")
-            json.dump(asdict(load_group_record_result(result_path)), handle, ensure_ascii=False, indent=2)
+            handle.write("\n    ")
+            write_indented(handle, asdict(load_group_record_result(result_path)), spaces=4)
         if result_paths:
-            handle.write("\n")
-        handle.write("]\n}")
+            handle.write("\n  ")
+        handle.write("]\n}\n")
     atomic_write_json_stream(path, writer)
 
 

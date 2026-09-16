@@ -26,10 +26,32 @@ class PersistedResultRef:
     record_id: str
     run_lifecycle_status: str
     error: str | None = None
-    archive_error: str | None = None
+    archive_failed: bool = False
+    archive_error: Any | None = None
     cleanup_failed_count: int = 0
     score: float | None = None
     path: str | None = None
+
+
+def persisted_result_ref(entry: GroupRecordResult, *, path: Path) -> PersistedResultRef:
+    """Keep the terminal state needed after the canonical payload is durable."""
+    evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+    score = evaluation.get("normalized_score", evaluation.get("score"))
+    isolation = (entry.runner_meta or {}).get("workspace_isolation") or {}
+    isolation = isolation if isinstance(isolation, dict) else {}
+    cleanup = isolation.get("cleanup")
+    cleanup = cleanup if isinstance(cleanup, dict) else {}
+    return PersistedResultRef(
+        entry.group_id,
+        entry.record_id,
+        entry.run_lifecycle_status,
+        entry.error,
+        archive_failed=isolation.get("archive_ok") is False,
+        archive_error=isolation.get("archive_error"),
+        cleanup_failed_count=int(cleanup.get("failed_count") or 0),
+        score=float(score) if isinstance(score, (int, float)) else None,
+        path=str(path),
+    )
 
 
 def build_cancelled_group_record_result(
@@ -140,16 +162,9 @@ def run_group(
         progress_writer.run_cancelling(reason=reason.to_payload() if reason is not None else {})
 
     def persisted_ref(entry: GroupRecordResult) -> PersistedResultRef:
-        evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
-        score = evaluation.get("normalized_score", evaluation.get("score"))
-        isolation = (entry.runner_meta or {}).get("workspace_isolation") or {}
-        cleanup = isolation.get("cleanup") if isinstance(isolation, dict) else {}
-        return PersistedResultRef(
-            group.id, entry.record_id, entry.run_lifecycle_status, entry.error,
-            archive_error=(isolation.get("archive_error") if isinstance(isolation, dict) else None),
-            cleanup_failed_count=int((cleanup or {}).get("failed_count") or 0) if isinstance(cleanup, dict) else 0,
-            score=float(score) if isinstance(score, (int, float)) else None,
-            path=str(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json"),
+        return persisted_result_ref(
+            entry,
+            path=output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json",
         )
 
     if cancellation_token is not None and cancellation_token.is_cancelled:
@@ -417,6 +432,12 @@ def run_group(
                     status=str(entry_status or "completed"),
                     score=float(score) if isinstance(score, (int, float)) else None,
                 )
+        if not retain_results:
+            answer_text = None
+            evaluation = None
+            entry_evaluation = None
+            answer = None
+            runner_meta = None
     if progress_writer is not None and manage_group_lifecycle:
         if any(item.run_lifecycle_status == "cancelled" for item in group_results):
             progress_writer.group_cancelled(group.id)

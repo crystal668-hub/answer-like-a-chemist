@@ -462,9 +462,11 @@ def materialize_group_failure_results(
     normalize_answer_tracks_fn: Callable[..., tuple[str, str]],
     build_execution_error_evaluation_fn: Callable[..., Any],
     deep_copy_jsonish_fn: Callable[[Any], Any],
-) -> list[GroupRecordResult]:
-    group_results = [
-        build_error_group_record_result(
+    result_reference_fn: Callable[[GroupRecordResult, Path], Any] | None = None,
+) -> list[Any]:
+    group_results: list[Any] = []
+    for record in records:
+        entry = build_error_group_record_result(
             group=group,
             record=record,
             error_message=error_message,
@@ -473,8 +475,7 @@ def materialize_group_failure_results(
             build_execution_error_evaluation_fn=build_execution_error_evaluation_fn,
             deep_copy_jsonish_fn=deep_copy_jsonish_fn,
         )
-        for record in records
-    ]
-    for entry in group_results:
-        save_json_fn(output_root / "per-record" / str(getattr(group, "id", "")) / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+        path = output_root / "per-record" / str(getattr(group, "id", "")) / f"{slugify_fn(entry.record_id)}.json"
+        save_json_fn(path, asdict(entry))
+        group_results.append(result_reference_fn(entry, path) if result_reference_fn is not None else entry)
     return group_results

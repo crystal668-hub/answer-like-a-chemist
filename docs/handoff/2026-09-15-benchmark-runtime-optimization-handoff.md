@@ -25,12 +25,17 @@ Phase 1 已完成 atomic persistence、canonical `ResultSink`、progress checkpo
 reporting reference 变化仍会更新 canonical payload。取消与
 `cancelled_with_errors` 继续强制完整 terminal snapshot。更大规模的进程级 crash
 矩阵可继续扩充，但 Phase 2 不再受持久化边界阻塞。
-RT-03 已完成主路径实现：聚合改为单遍多层 accumulator，CLI 在 canonical per-record
+RT-03 已完成主路径及离线严格验收：聚合改为单遍多层 accumulator，CLI 在 canonical per-record
 写入后仅保留轻量引用，最终 `results.json` 从确定顺序的 per-record 文件逐条读取并
 原子流式写出。失败、取消、历史 schema up-conversion 和 reporting reference 继续
-保留完整详情。离线基准显示 64 KiB 详情下 10k 记录峰值 RSS 由约 874 MB 降至约
-39 MB；最终文件约 2.63 GB，说明 JSON 输出字节仍随详情线性增长。真实 Docker/VGB
-端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance 环境补测。
+保留完整详情。轻量引用的 archive failure 布尔契约已修复，缺失/空错误文本仍保持
+`cancelled_with_errors`；archive 成功与 cleanup 失败独立处理。等工作量三轮独立
+进程矩阵覆盖 1k/10k 轻量、1k×64 KiB 和 10k×16 KiB，每对完整输出 SHA-256 相同；
+中位 RSS 分别由约 42.5→30.0 MB、188.7→48.9 MB、1.19 GB→31.2 MB、
+2.14 GB→50.3 MB，代价是流式读取/编码 wall time 增加。历史约 874→39 MB 的单次
+smoke 工作量不等，不再视为端到端验收。真实 Docker/VGB run 仍未执行。
+本次收尾后的完整测试为 982 passed、11 skipped、164 subtests，5 个既有 SWIG
+warnings。
 
 Phase 2 已在后续实现中完成主路径接入，验收证据见
 [Phase 1-2 validation](../report/2026-09-16-benchmark-runtime-phase-1-2-validation.md)。

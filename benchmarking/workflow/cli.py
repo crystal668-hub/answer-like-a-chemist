@@ -82,21 +82,66 @@ from benchmarking.workflow import (
 )
 from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.workflow.errors import BenchmarkError as _BenchmarkError
-from benchmarking.workflow.orchestration import PersistedResultRef
+from benchmarking.workflow.orchestration import PersistedResultRef, persisted_result_ref
 
 
 def _persisted_ref_for_entry(entry: _GroupRecordResult, output_root: Path) -> PersistedResultRef:
-    evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
-    score = evaluation.get("normalized_score", evaluation.get("score"))
-    isolation = (entry.runner_meta or {}).get("workspace_isolation") or {}
-    cleanup = isolation.get("cleanup") if isinstance(isolation, dict) else {}
-    return PersistedResultRef(
-        entry.group_id, entry.record_id, entry.run_lifecycle_status, entry.error,
-        archive_error=isolation.get("archive_error") if isinstance(isolation, dict) else None,
-        cleanup_failed_count=int((cleanup or {}).get("failed_count") or 0) if isinstance(cleanup, dict) else 0,
-        score=float(score) if isinstance(score, (int, float)) else None,
-        path=str(output_root / "per-record" / entry.group_id / f"{run_state.slugify(entry.record_id)}.json"),
+    return persisted_result_ref(
+        entry,
+        path=output_root / "per-record" / entry.group_id / f"{run_state.slugify(entry.record_id)}.json",
     )
+
+
+def _cancelled_result_errors(entries: list[PersistedResultRef]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry.run_lifecycle_status != "cancelled":
+            continue
+        if entry.archive_failed:
+            errors.append(
+                {
+                    "stage": "workspace_seal",
+                    "group_id": entry.group_id,
+                    "record_id": entry.record_id,
+                    "error": entry.archive_error or "workspace archive failed",
+                }
+            )
+        if entry.cleanup_failed_count > 0:
+            errors.append(
+                {
+                    "stage": "workspace_cleanup",
+                    "group_id": entry.group_id,
+                    "record_id": entry.record_id,
+                    "failed_count": entry.cleanup_failed_count,
+                }
+            )
+    return errors
+
+
+def _result_paths_for_aggregation(
+    *,
+    output_root: Path,
+    selected_group_ids: list[str],
+    aggregate_group_ids: list[str],
+    group_results: dict[str, list[PersistedResultRef]],
+    records: list[Any],
+    merge_existing_per_record: bool,
+) -> list[Path]:
+    if merge_existing_per_record:
+        return [
+            path
+            for group_id in aggregate_group_ids
+            for path in sorted((output_root / "per-record" / group_id).glob("*.json"))
+        ]
+    record_order = {record.record_id: index for index, record in enumerate(records)}
+    paths: list[Path] = []
+    for group_id in selected_group_ids:
+        entries = sorted(
+            group_results.get(group_id, []),
+            key=lambda entry: record_order.get(entry.record_id, len(record_order)),
+        )
+        paths.extend(Path(entry.path) for entry in entries if entry.path)
+    return paths
 
 DEFAULT_BENCHMARK_ROOT = runtime_paths.benchmarks_root
 DEFAULT_OPENCLAW_CONFIG = runtime_paths.openclaw_config
@@ -536,6 +581,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
+        result_reference_fn=lambda entry, path: persisted_result_ref(entry, path=path),
     )
     execute_group = partial(
         _orchestration.run_group,
@@ -548,7 +594,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         retain_results=False,
     )
 
-    group_results: dict[str, list[_GroupRecordResult]] = {}
+    group_results: dict[str, list[PersistedResultRef]] = {}
     cancellation_errors: list[dict[str, Any]] = []
     try:
         for wave_index, wave_group_ids in enumerate(group_waves, start=1):
@@ -629,10 +675,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
                             output_root=output_root,
                             error_message=error_message,
                         )
-                        group_results.setdefault(group_id, []).extend(
-                            _persisted_ref_for_entry(item, output_root) for item in failure_results
-                        )
-                        del failure_results
+                        group_results.setdefault(group_id, []).extend(failure_results)
                         record_group_progress_failure(
                             progress_writer,
                             group_id=group_id,
@@ -726,45 +769,23 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
                 progress_writer.group_cancelled(group_id)
             elif not pending_records_by_group[group_id]:
                 progress_writer.group_completed(group_id, status="completed")
-        for entries in group_results.values():
-            for entry in entries:
-                if entry.run_lifecycle_status != "cancelled":
-                    continue
-                if entry.archive_error:
-                    cancellation_errors.append(
-                        {
-                            "stage": "workspace_seal",
-                            "group_id": entry.group_id,
-                            "record_id": entry.record_id,
-                            "error": entry.archive_error,
-                        }
-                    )
-                if entry.cleanup_failed_count > 0:
-                    cancellation_errors.append(
-                        {
-                            "stage": "workspace_cleanup",
-                            "group_id": entry.group_id,
-                            "record_id": entry.record_id,
-                            "failed_count": entry.cleanup_failed_count,
-                        }
-                    )
+        cancellation_errors.extend(
+            _cancelled_result_errors([entry for entries in group_results.values() for entry in entries])
+        )
 
     aggregate_group_ids = run_state.resolve_aggregate_group_ids(
         group_ids,
         output_root=output_root,
         merge_existing_per_record=args.merge_existing_per_record,
     )
-    if args.merge_existing_per_record:
-        result_paths = [
-            path for group_id in aggregate_group_ids
-            for path in sorted((output_root / "per-record" / group_id).glob("*.json"))
-        ]
-    else:
-        record_order = {record.record_id: index for index, record in enumerate(records)}
-        result_paths = []
-        for group_id in group_ids:
-            entries = sorted(group_results.get(group_id, []), key=lambda entry: record_order.get(entry.record_id, len(record_order)))
-            result_paths.extend(Path(entry.path) for entry in entries if getattr(entry, "path", None))
+    result_paths = _result_paths_for_aggregation(
+        output_root=output_root,
+        selected_group_ids=group_ids,
+        aggregate_group_ids=aggregate_group_ids,
+        group_results=group_results,
+        records=records,
+        merge_existing_per_record=args.merge_existing_per_record,
+    )
 
     has_property_results = False
     for path in result_paths:

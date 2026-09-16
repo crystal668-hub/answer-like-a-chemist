@@ -133,6 +133,12 @@ accumulators. CLI execution retains lightweight persisted result references afte
 canonical per-record writes; final `results.json` is atomically rebuilt by reading
 those files one at a time, preserving the legacy `results` array and historical
 schema up-conversion. The output file size still scales with retained detail size.
+Lightweight references preserve archive failure independently from optional error
+text, so cancellation terminal status remains `cancelled_with_errors` when sealing
+failed without a diagnostic message. Aggregate reconstruction either reads all
+existing groups in aggregate order with sorted filenames, or, when merging is
+disabled, follows selected-group and input-record order using only current-run
+references. Streaming output retains the ordinary indented JSON byte layout.
 `benchmarking.runtime.observability` owns the process-local, invocation-scoped,
 thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
 transcript consumers, attempts, audits, archives, scoring, Docker commands, and
