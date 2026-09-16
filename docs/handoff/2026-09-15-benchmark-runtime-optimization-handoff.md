@@ -9,6 +9,23 @@
 重构方案。本文没有修改运行逻辑，也没有执行 benchmark 或性能测试；当前代码
 和 [GLOBAL_DEV_SPEC.md](../../GLOBAL_DEV_SPEC.md) 仍是系统现状的唯一来源。
 
+## 0. 2026-09-16 实施状态
+
+Phase 0 已在提交 `644bf96` 完成代码级和离线观测基线，并由
+[验收报告](../report/2026-09-16-benchmark-runtime-phase-0-observability-baseline.md)
+记录证据。每次 CLI invocation 现在生成独立的 `runtime-metrics.json`，覆盖
+invocation/attempt/audit/archive/score monotonic duration、transcript 读取和 JSON
+解码、Docker 命令、VGB 进程、状态写入和 peak RSS。确定性 fixture 覆盖 VGB、
+skills-on/off、失败、retry、取消和大 transcript 场景，完整测试为 927 passed、
+11 skipped。
+
+Phase 1 当前只完成 atomic persistence 和 progress event/snapshot durability；
+ResultSink、progress checkpoint、resume/cancellation 故障注入矩阵仍待完成。
+RT-03 的 bucket accumulator 已有 1k/10k 基线并改善聚合耗时，但 CLI 仍持有完整
+结果列表，RSS 仍随详情线性增长，因此 Phase 3 不能标记完成。Phase 2、4、5 尚未
+开始。真实 Docker/VGB 端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance
+环境补测，当前报告没有把离线数据外推为生产收益。
+
 ## 1. 接手须知
 
 ### 1.1 仓库边界和工作流

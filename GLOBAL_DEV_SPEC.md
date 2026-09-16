@@ -66,7 +66,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, invocation observability, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -114,6 +114,11 @@ dashboard progress snapshots. `benchmarking.core.reporting` exposes
 `AggregateAccumulator`, a bounded counter/totals collector used to build aggregate
 buckets without retaining an additional copy of record details; its output schema
 remains compatible with `aggregate_bucket`.
+`benchmarking.runtime.observability` owns the process-local, invocation-scoped,
+thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
+transcript consumers, attempts, audits, archives, scoring, Docker commands, and
+verifier subprocesses contribute counters or monotonic durations without adding
+record content to the metrics payload.
 `benchmarking.service.chemdebate.cleanroom.CleanroomRuntime` is the cleanroom dependency
 binding. `benchmarking.workflow.cli` does not re-export these component APIs.
 
@@ -306,7 +311,8 @@ For each invocation, the CLI:
    atomic same-directory replacement for JSON evidence, update run artifacts,
    aggregate only `scored=true` records, and support
    historical per-record resume data; the CLI writes the final results and
-   runtime manifest.
+   runtime manifest. It finalizes invocation observability separately after the
+   business artifacts so `runtime-metrics.json` does not count its own write.
 6. Starts detached automated analysis unless `--no-analysis` is selected. A
    cancelled run never launches detached analysis.
 
@@ -591,7 +597,7 @@ service is required.
 
 The final run artifact set includes:
 
-- `results.json` and `runtime-manifest.json`;
+- `results.json`, `runtime-manifest.json`, and `runtime-metrics.json`;
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
 - `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
