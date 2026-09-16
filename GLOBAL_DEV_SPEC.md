@@ -107,7 +107,10 @@ of collector status. `benchmarking.workflow.attempt_queue` owns staged synchrono
 execution and the shared attempt/retry/scoring scheduler,
 `benchmarking.runtime.judge` owns judge execution and isolation, and
 `benchmarking.runtime.vgb_bridge` owns the pinned verifier-grounded release,
-isolated process bridge, and public package API calls. The scoring evaluator
+isolated process bridge, public package API calls, and invocation-owned immutable
+runtime validation cache. The cache keys release/config identity plus wheel,
+manifest, and runtime-Python fingerprints; only successful validation is cached,
+and changed fingerprints invalidate it. The scoring evaluator
 only maps benchmark records and verifier results. `benchmarking.runtime.atomic_io`
 provides the shared same-directory atomic JSON/text writer used by run-state and
 dashboard progress snapshots. `benchmarking.core.reporting` exposes

@@ -39,7 +39,11 @@ convergence、答案恢复、dependency evidence、workspace audit、provider li
 和 rescue context 提供共享只读视图。wrapper 和父 runtime 是两个独立进程，因此
 同一物理 transcript 在跨进程边界各读取一次；没有为减少该读取而持久化包含完整
 tool output 的第二份索引。archive recovery 和 frozen rescue snapshot 仍作为独立
-证据源各读取一次。Phase 4、5 尚未开始。
+证据源各读取一次。Phase 4 的第一步已完成：CLI invocation 创建显式
+`InvocationValidationCache`，在评分和 property reporting reference 读取之间共享
+成功的 immutable runtime validation；wheel、manifest、runtime Python 或 release
+fingerprint 变化会失效，失败不会缓存。每题 `evaluate_one` 仍启动独立 Python 进程，
+因此 verifier worker 尚未启用；Phase 5 尚未开始。
 
 ## 1. 接手须知
 

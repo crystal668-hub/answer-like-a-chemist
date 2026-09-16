@@ -64,6 +64,7 @@ Observed results, validation, and supporting evidence.
 - [Benchmark Runtime Phase 0 Observability Baseline](report/2026-09-16-benchmark-runtime-phase-0-observability-baseline.md): invocation metrics, deterministic fixture coverage, aggregation comparison, full-suite validation, and remaining measurement limits.
 - [Benchmark Runtime Phase 1-2 Validation](report/2026-09-16-benchmark-runtime-phase-1-2-validation.md): canonical result persistence, progress checkpoints, transcript index equivalence, performance measurements, and process-boundary limits.
 - [Benchmark Runtime Phase 3 Validation](report/2026-09-16-benchmark-runtime-phase-3-validation.md): bounded result memory, incremental aggregation, streaming results writer, and offline RSS evidence.
+- [Benchmark Runtime Phase 4 Validation Cache](report/2026-09-16-benchmark-runtime-phase-4-validation-cache.md): invocation-scoped immutable verifier runtime validation cache and limits.
 
 ## guide (1)
 

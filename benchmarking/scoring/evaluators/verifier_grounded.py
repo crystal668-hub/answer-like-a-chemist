@@ -6,6 +6,7 @@ from typing import Any
 from benchmarking.core.answer_processing import resolve_candidate_answer_text
 from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.runtime.vgb_bridge import (
+    InvocationValidationCache,
     ReleaseConfig,
     VerifierGroundedRuntimeError,
     evaluate_answer,
@@ -40,6 +41,7 @@ def run_verifier_grounded_evaluation(
     record: BenchmarkRecord,
     answer_text: str,
     release_config: ReleaseConfig | None = None,
+    validation_cache: InvocationValidationCache | None = None,
 ) -> dict[str, Any]:
     config = _verifier_grounded_config(record)
     release = config.get("release")
@@ -58,6 +60,7 @@ def run_verifier_grounded_evaluation(
             answer_text=answer_text,
             release_identity=release,
             release_config=release_config,
+            validation_cache=validation_cache,
         )
     except VerifierGroundedRuntimeError as exc:
         raise EvaluationError(str(exc)) from exc

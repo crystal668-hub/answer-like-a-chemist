@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,44 @@ class ReleaseConfig:
         }
 
 
+class InvocationValidationCache:
+    """Invocation-owned cache for successful immutable runtime validation."""
+
+    def __init__(self) -> None:
+        self._entries: dict[tuple[Any, ...], dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self.hit_count = 0
+        self.miss_count = 0
+        self.failure_count = 0
+
+    def validate(self, config: ReleaseConfig) -> dict[str, Any]:
+        key = _validation_fingerprint(config)
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is not None:
+                self.hit_count += 1
+                increment("vgb_validation_cache_hit_count")
+                return dict(cached)
+            self.miss_count += 1
+            increment("vgb_validation_cache_miss_count")
+            try:
+                manifest = _validate_runtime_files_uncached(config)
+            except Exception:
+                self.failure_count += 1
+                increment("vgb_validation_failure_count")
+                raise
+            self._entries[key] = manifest
+        increment("vgb_validation_count")
+        return dict(manifest)
+
+    def to_meta(self) -> dict[str, int]:
+        return {"hit_count": self.hit_count, "miss_count": self.miss_count, "failure_count": self.failure_count}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
 def load_release_config(path: Path = DEFAULT_RELEASE_CONFIG) -> ReleaseConfig:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -156,12 +195,14 @@ def describe_installed_release(
     config: ReleaseConfig,
     *,
     require_manifest: bool = True,
+    validation_cache: InvocationValidationCache | None = None,
 ) -> dict[str, Any]:
     return _invoke_api(
         config,
         {"action": "describe", "tracks": list(config.tracks)},
         timeout=180.0,
         require_manifest=require_manifest,
+        validation_cache=validation_cache,
     )
 
 
@@ -169,6 +210,7 @@ def load_public_reference_answers(
     track: str,
     *,
     release_config: ReleaseConfig | None = None,
+    validation_cache: InvocationValidationCache | None = None,
 ) -> list[dict[str, Any]]:
     config = release_config or load_release_config()
     track_config = config.tracks.get(track)
@@ -184,6 +226,7 @@ def load_public_reference_answers(
         {"action": "reference_answers", "track": track, "task_ids": task_ids},
         timeout=180.0,
         require_manifest=True,
+        validation_cache=validation_cache,
     )
     answers = result.get("reference_answers")
     if not isinstance(answers, list) or not all(isinstance(item, dict) for item in answers):
@@ -205,6 +248,7 @@ def evaluate_answer(
     answer_text: str,
     release_identity: dict[str, Any],
     release_config: ReleaseConfig | None = None,
+    validation_cache: InvocationValidationCache | None = None,
 ) -> dict[str, Any]:
     config = release_config or load_release_config()
     if release_identity != config.identity:
@@ -229,13 +273,20 @@ def evaluate_answer(
         },
         timeout=float(track_config.get("timeout_seconds") or 120.0),
         require_manifest=True,
+        validation_cache=validation_cache,
     )
     if not isinstance(result, dict):
         raise VerifierGroundedRuntimeError("Pinned verifier runtime returned a non-object result")
     return result
 
 
-def validate_runtime_files(config: ReleaseConfig) -> dict[str, Any]:
+def validate_runtime_files(config: ReleaseConfig, *, validation_cache: InvocationValidationCache | None = None) -> dict[str, Any]:
+    if validation_cache is not None:
+        return validation_cache.validate(config)
+    return _validate_runtime_files_uncached(config)
+
+
+def _validate_runtime_files_uncached(config: ReleaseConfig) -> dict[str, Any]:
     if not config.wheel_path.is_file():
         raise VerifierGroundedRuntimeError(
             f"Pinned verifier wheel is missing: {config.wheel_path}"
@@ -279,9 +330,10 @@ def _invoke_api(
     *,
     timeout: float,
     require_manifest: bool,
+    validation_cache: InvocationValidationCache | None = None,
 ) -> dict[str, Any]:
     if require_manifest:
-        validate_runtime_files(config)
+        validate_runtime_files(config, validation_cache=validation_cache)
     if not config.runtime_python.is_file():
         raise VerifierGroundedRuntimeError(
             f"Pinned verifier runtime Python is missing: {config.runtime_python}"
@@ -316,6 +368,33 @@ def _invoke_api(
     if not isinstance(result, dict):
         raise VerifierGroundedRuntimeError("Pinned verifier runtime produced a non-object result")
     return result
+
+
+def _validation_fingerprint(config: ReleaseConfig) -> tuple[Any, ...]:
+    def stat_fingerprint(path: Path) -> tuple[Any, ...] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+    try:
+        manifest_digest = sha256_file(config.runtime_manifest)
+    except OSError:
+        manifest_digest = None
+    return (
+        tuple(sorted({
+            **config.identity,
+            "source_commit": config.source_commit,
+            "source_tag": config.source_tag,
+            "wheel_filename": config.wheel_filename,
+            "wheel_size": config.wheel_size,
+            "wheel_path": str(config.wheel_path),
+        }.items())),
+        stat_fingerprint(config.wheel_path),
+        manifest_digest,
+        stat_fingerprint(config.runtime_python),
+    )
 
 
 def _runtime_env() -> dict[str, str]:

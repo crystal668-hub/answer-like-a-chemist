@@ -313,7 +313,7 @@ def apply_verifier_grounded_reporting_references(
     return results
 
 
-def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig | None = None) -> dict[tuple[str, str], str]:
+def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig | None = None, validation_cache: Any | None = None) -> dict[tuple[str, str], str]:
     """Load public property gold once for streaming per-record enrichment."""
     try:
         config = release_config or load_release_config()
@@ -327,7 +327,10 @@ def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig |
         if not dataset:
             continue
         try:
-            samples = load_public_reference_answers(track, release_config=config)
+            if validation_cache is None:
+                samples = load_public_reference_answers(track, release_config=config)
+            else:
+                samples = load_public_reference_answers(track, release_config=config, validation_cache=validation_cache)
         except VerifierGroundedRuntimeError as exc:
             raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
         for sample in samples:

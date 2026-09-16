@@ -62,7 +62,7 @@ from benchmarking.runtime.observability import (
 )
 from benchmarking.runtime.provider_preflight import check_provider_connection
 from benchmarking.runtime.container_network import resolve_container_network
-from benchmarking.runtime.vgb_bridge import load_release_config
+from benchmarking.runtime.vgb_bridge import load_release_config, InvocationValidationCache, validate_runtime_files
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
@@ -367,7 +367,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         else None
     )
     evaluator_overrides = None
+    vgb_validation_cache = InvocationValidationCache() if verifier_release_config is not None else None
     if verifier_release_config is not None:
+        validate_runtime_files(verifier_release_config, validation_cache=vgb_validation_cache)
         for record in records:
             if record.grading.kind == "verifier_grounded":
                 validate_verifier_grounded_release(
@@ -377,6 +379,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         verifier_runner = partial(
             run_verifier_grounded_evaluation,
             release_config=verifier_release_config,
+            validation_cache=vgb_validation_cache,
         )
         evaluator_overrides = {
             "verifier_grounded": partial(
@@ -756,7 +759,10 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         if str(raw_payload.get("dataset") or "").startswith("verifier_grounded_property_calculation"):
             has_property_results = True
             break
-    references = (run_state.verifier_grounded_reporting_reference_map(release_config=verifier_release_config)
+    references = (run_state.verifier_grounded_reporting_reference_map(
+                      release_config=verifier_release_config,
+                      validation_cache=vgb_validation_cache,
+                  )
                   if has_property_results else {})
 
     def iter_final_results():
@@ -830,6 +836,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
+        "verifier_validation_cache": (
+            vgb_validation_cache.to_meta() if vgb_validation_cache is not None else None
+        ),
         "groups": group_descriptions,
         "run_groups": [asdict(catalog.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "convergence_policy": convergence_policy_meta,
@@ -878,6 +887,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         "result_sink": result_sink.to_meta(),
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
+        ),
+        "verifier_validation_cache": (
+            vgb_validation_cache.to_meta() if vgb_validation_cache is not None else None
         ),
         "execution_plan": {
             "mode": service.SCHEDULING_MODE,

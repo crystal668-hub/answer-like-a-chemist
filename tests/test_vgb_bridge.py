@@ -74,6 +74,18 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     assert "verifier_specs" not in payload
 
 
+def test_evaluate_answer_forwards_invocation_validation_cache() -> None:
+    config = bridge.load_release_config()
+    cache = bridge.InvocationValidationCache()
+    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
+    with patch.object(bridge, "_invoke_api", return_value=expected) as invoke:
+        bridge.evaluate_answer(
+            track="rdkit", task_id="rdkit_qed_max_001", answer_text="FINAL ANSWER: CCO",
+            release_identity=config.identity, release_config=config, validation_cache=cache,
+        )
+    assert invoke.call_args.kwargs["validation_cache"] is cache
+
+
 def test_evaluate_answer_uses_invocation_release_after_default_changes() -> None:
     invocation_config = bridge.load_release_config()
     changed_default = bridge.ReleaseConfig(
@@ -131,3 +143,37 @@ def test_load_public_reference_answers_rejects_incomplete_pinned_inventory() -> 
         },
     ), pytest.raises(bridge.VerifierGroundedRuntimeError, match="inventory"):
         bridge.load_public_reference_answers("property_calculation_advanced")
+
+
+def test_invocation_validation_cache_reuses_success_and_invalidates_fingerprint(monkeypatch) -> None:
+    config = bridge.load_release_config()
+    cache = bridge.InvocationValidationCache()
+    calls = []
+    fingerprint = [("first",)]
+    monkeypatch.setattr(bridge, "_validation_fingerprint", lambda _config: fingerprint[0])
+    monkeypatch.setattr(bridge, "_validate_runtime_files_uncached", lambda _config: calls.append(1) or {"ok": True})
+
+    result = cache.validate(config)
+    result["mutated"] = True
+    assert cache.validate(config) == {"ok": True}
+    fingerprint[0] = ("second",)
+    assert cache.validate(config) == {"ok": True}
+    assert len(calls) == 2
+    assert cache.to_meta() == {"hit_count": 1, "miss_count": 2, "failure_count": 0}
+
+
+def test_invocation_validation_cache_does_not_cache_failures(monkeypatch) -> None:
+    config = bridge.load_release_config()
+    cache = bridge.InvocationValidationCache()
+    calls = []
+
+    def fail(_config):
+        calls.append(1)
+        raise bridge.VerifierGroundedRuntimeError("invalid runtime")
+
+    monkeypatch.setattr(bridge, "_validate_runtime_files_uncached", fail)
+    with pytest.raises(bridge.VerifierGroundedRuntimeError):
+        cache.validate(config)
+    with pytest.raises(bridge.VerifierGroundedRuntimeError):
+        cache.validate(config)
+    assert len(calls) == 2
