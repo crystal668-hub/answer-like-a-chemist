@@ -114,6 +114,11 @@ dashboard progress snapshots. `benchmarking.core.reporting` exposes
 `AggregateAccumulator`, a bounded counter/totals collector used to build aggregate
 buckets without retaining an additional copy of record details; its output schema
 remains compatible with `aggregate_bucket`.
+`aggregate_results` consumes iterables in one pass and keeps only per-bucket
+accumulators. CLI execution retains lightweight persisted result references after
+canonical per-record writes; final `results.json` is atomically rebuilt by reading
+those files one at a time, preserving the legacy `results` array and historical
+schema up-conversion. The output file size still scales with retained detail size.
 `benchmarking.runtime.observability` owns the process-local, invocation-scoped,
 thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
 transcript consumers, attempts, audits, archives, scoring, Docker commands, and

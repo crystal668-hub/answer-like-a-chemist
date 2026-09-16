@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -324,61 +324,60 @@ def workspace_isolation_failed(item: GroupRecordResult) -> bool:
     return bool(audit and not workspace_isolation_ok(item))
 
 
-def aggregate_bucket(items: list[GroupRecordResult]) -> dict[str, Any]:
+def aggregate_bucket(items: Iterable[GroupRecordResult]) -> dict[str, Any]:
     """Return a reporting bucket using bounded incremental state."""
     accumulator = AggregateAccumulator()
     for item in items:
         accumulator.add(item)
     return accumulator.to_dict()
 
-def aggregate_results(results: list[GroupRecordResult]) -> dict[str, Any]:
-    grouped: dict[str, list[GroupRecordResult]] = {}
+def aggregate_results(results: Iterable[GroupRecordResult]) -> dict[str, Any]:
+    """Aggregate records in one pass without retaining record payloads."""
+    groups: dict[str, dict[str, Any]] = {}
+    group_order: list[str] = []
     for item in results:
-        grouped.setdefault(item.group_id, []).append(item)
+        group = groups.get(item.group_id)
+        if group is None:
+            group = {
+                "meta": {
+                    "group_label": item.group_label,
+                    "runner": item.runner,
+                    "websearch": item.websearch,
+                    "skills_enabled": item.skills_enabled,
+                },
+                "bucket": AggregateAccumulator(),
+                "eval": {},
+                "subset": {},
+            }
+            groups[item.group_id] = group
+            group_order.append(item.group_id)
+        group["bucket"].add(item)
+        eval_acc = group["eval"].setdefault(item.eval_kind, AggregateAccumulator())
+        eval_acc.add(item)
+        subset_acc = group["subset"].setdefault(item.subset, AggregateAccumulator())
+        subset_acc.add(item)
 
     summary_groups: dict[str, Any] = {}
     summary_group_subset: dict[str, dict[str, Any]] = {}
-    for group_id, items in grouped.items():
-        by_eval_kind: dict[str, list[GroupRecordResult]] = {}
-        by_subset: dict[str, list[GroupRecordResult]] = {}
-        for item in items:
-            by_eval_kind.setdefault(item.eval_kind, []).append(item)
-            by_subset.setdefault(item.subset, []).append(item)
-        bucket = aggregate_bucket(items)
+    for group_id in group_order:
+        group = groups[group_id]
+        meta = group["meta"]
         summary_groups[group_id] = {
-            "group_label": items[0].group_label,
-            "runner": items[0].runner,
-            "websearch": items[0].websearch,
-            "skills_enabled": items[0].skills_enabled,
-            **bucket,
-            "by_eval_kind": {
-                eval_kind: {
-                    key: value
-                    for key, value in aggregate_bucket(eval_items).items()
-                }
-                for eval_kind, eval_items in by_eval_kind.items()
-            },
-            "by_subset": {
-                subset: {
-                    key: value
-                    for key, value in aggregate_bucket(subset_items).items()
-                }
-                for subset, subset_items in by_subset.items()
-            },
+            **meta,
+            **group["bucket"].to_dict(),
+            "by_eval_kind": {key: value.to_dict() for key, value in group["eval"].items()},
+            "by_subset": {key: value.to_dict() for key, value in group["subset"].items()},
         }
-        for subset, subset_items in by_subset.items():
+        for subset, accumulator in group["subset"].items():
             summary_group_subset[f"{group_id}::{subset}"] = {
                 "group_id": group_id,
-                "group_label": items[0].group_label,
-                "runner": items[0].runner,
-                "websearch": items[0].websearch,
-                "skills_enabled": items[0].skills_enabled,
+                **meta,
                 "subset": subset,
-                **aggregate_bucket(subset_items),
+                **accumulator.to_dict(),
             }
 
     return {
-        "group_order": list(grouped.keys()),
+        "group_order": group_order,
         "groups": summary_groups,
         "group_subset": summary_group_subset,
     }

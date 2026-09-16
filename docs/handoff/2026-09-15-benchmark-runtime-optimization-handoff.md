@@ -25,10 +25,12 @@ Phase 1 已完成 atomic persistence、canonical `ResultSink`、progress checkpo
 reporting reference 变化仍会更新 canonical payload。取消与
 `cancelled_with_errors` 继续强制完整 terminal snapshot。更大规模的进程级 crash
 矩阵可继续扩充，但 Phase 2 不再受持久化边界阻塞。
-RT-03 的 bucket accumulator 已有 1k/10k 基线并改善聚合耗时，但 CLI 仍持有完整
-结果列表，RSS 仍随详情线性增长，因此 Phase 3 不能标记完成。真实 Docker/VGB
-端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance
-环境补测，当前报告没有把离线数据外推为生产收益。
+RT-03 已完成主路径实现：聚合改为单遍多层 accumulator，CLI 在 canonical per-record
+写入后仅保留轻量引用，最终 `results.json` 从确定顺序的 per-record 文件逐条读取并
+原子流式写出。失败、取消、历史 schema up-conversion 和 reporting reference 继续
+保留完整详情。离线基准显示 64 KiB 详情下 10k 记录峰值 RSS 由约 874 MB 降至约
+39 MB；最终文件约 2.63 GB，说明 JSON 输出字节仍随详情线性增长。真实 Docker/VGB
+端到端 run 的 wall time、命令数和 RSS 仍需在后续 acceptance 环境补测。
 
 Phase 2 已在后续实现中完成主路径接入，验收证据见
 [Phase 1-2 validation](../report/2026-09-16-benchmark-runtime-phase-1-2-validation.md)。

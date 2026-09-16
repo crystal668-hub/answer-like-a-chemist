@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,20 @@ from benchmarking.core.contracts import RunnerResult
 
 class OrchestrationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class PersistedResultRef:
+    """Small runtime handle used after a result has been written to disk."""
+
+    group_id: str
+    record_id: str
+    run_lifecycle_status: str
+    error: str | None = None
+    archive_error: str | None = None
+    cleanup_failed_count: int = 0
+    score: float | None = None
+    path: str | None = None
 
 
 def build_cancelled_group_record_result(
@@ -117,6 +131,7 @@ def run_group(
     progress_writer: Any | None = None,
     cancellation_token: CancellationToken | None = None,
     manage_group_lifecycle: bool = True,
+    retain_results: bool = True,
 ) -> list[GroupRecordResult]:
     def mark_cancelling() -> None:
         if progress_writer is None or cancellation_token is None:
@@ -124,8 +139,32 @@ def run_group(
         reason = cancellation_token.reason
         progress_writer.run_cancelling(reason=reason.to_payload() if reason is not None else {})
 
+    def persisted_ref(entry: GroupRecordResult) -> PersistedResultRef:
+        evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+        score = evaluation.get("normalized_score", evaluation.get("score"))
+        isolation = (entry.runner_meta or {}).get("workspace_isolation") or {}
+        cleanup = isolation.get("cleanup") if isinstance(isolation, dict) else {}
+        return PersistedResultRef(
+            group.id, entry.record_id, entry.run_lifecycle_status, entry.error,
+            archive_error=(isolation.get("archive_error") if isinstance(isolation, dict) else None),
+            cleanup_failed_count=int((cleanup or {}).get("failed_count") or 0) if isinstance(cleanup, dict) else 0,
+            score=float(score) if isinstance(score, (int, float)) else None,
+            path=str(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json"),
+        )
+
     if cancellation_token is not None and cancellation_token.is_cancelled:
         mark_cancelling()
+        if not retain_results:
+            refs = []
+            for record in records:
+                entry = build_cancelled_group_record_result(group=group, record=record, build_error_group_record_result_fn=build_error_group_record_result_fn)
+                save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+                refs.append(persisted_ref(entry))
+                if progress_writer is not None:
+                    progress_writer.record_cancelled(group.id, entry.record_id)
+            if progress_writer is not None:
+                progress_writer.group_cancelled(group.id)
+            return refs
         group_results = [
             build_cancelled_group_record_result(
                 group=group,
@@ -134,18 +173,32 @@ def run_group(
             )
             for record in records
         ]
+        refs = []
         for entry in group_results:
             save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+            if not retain_results:
+                refs.append(persisted_ref(entry))
             if progress_writer is not None:
                 progress_writer.record_cancelled(group.id, entry.record_id)
         if progress_writer is not None:
             progress_writer.group_cancelled(group.id)
-        return group_results
+        return refs if not retain_results else group_results
     try:
         runner = build_runner_fn(runner_kind=group.runner, **runner_options_factory())
     except Exception as exc:
         if cancellation_token is not None and cancellation_token.is_cancelled:
             mark_cancelling()
+            if not retain_results:
+                refs = []
+                for record in records:
+                    entry = build_cancelled_group_record_result(group=group, record=record, build_error_group_record_result_fn=build_error_group_record_result_fn)
+                    save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+                    refs.append(persisted_ref(entry))
+                    if progress_writer is not None:
+                        progress_writer.record_cancelled(group.id, entry.record_id)
+                if progress_writer is not None:
+                    progress_writer.group_cancelled(group.id)
+                return refs
             group_results = [
                 build_cancelled_group_record_result(
                     group=group,
@@ -154,20 +207,35 @@ def run_group(
                 )
                 for record in records
             ]
+            refs = []
             for entry in group_results:
                 save_json_fn(
                     output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json",
                     asdict(entry),
                 )
+                if not retain_results:
+                    refs.append(persisted_ref(entry))
                 if progress_writer is not None:
                     progress_writer.record_cancelled(group.id, entry.record_id)
             if progress_writer is not None:
                 progress_writer.group_cancelled(group.id)
-            return group_results
+            return refs if not retain_results else group_results
         error_message = f"Failed to initialize runner for group `{group.id}`: {exc}"
         if progress_writer is not None and manage_group_lifecycle:
             progress_writer.group_started(group.id)
             progress_writer.error(group_id=group.id, message=error_message)
+        if not retain_results:
+            refs = []
+            for index, record in enumerate(records, start=1):
+                entry = build_error_group_record_result_fn(group=group, record=record, error_message=error_message)
+                save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+                refs.append(persisted_ref(entry))
+                if progress_writer is not None:
+                    progress_writer.record_started(group.id, str(entry.record_id), index=index)
+                    progress_writer.record_completed(group.id, str(entry.record_id), status="failed", score=0.0)
+            if progress_writer is not None and manage_group_lifecycle:
+                progress_writer.group_completed(group.id, status="failed")
+            return refs
         group_results = [
             build_error_group_record_result_fn(
                 group=group,
@@ -176,16 +244,19 @@ def run_group(
             )
             for record in records
         ]
+        refs = []
         for index, entry in enumerate(group_results, start=1):
             save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(entry.record_id)}.json", asdict(entry))
+            if not retain_results:
+                refs.append(persisted_ref(entry))
             if progress_writer is not None:
                 progress_writer.record_started(group.id, str(entry.record_id), index=index)
                 progress_writer.record_completed(group.id, str(entry.record_id), status="failed", score=0.0)
         if progress_writer is not None and manage_group_lifecycle:
             progress_writer.group_completed(group.id, status="failed")
-        return group_results
+        return refs if not retain_results else group_results
 
-    group_results: list[GroupRecordResult] = []
+    group_results: list[Any] = []
     if progress_writer is not None and manage_group_lifecycle:
         progress_writer.group_started(group.id)
     for index, record in enumerate(records, start=1):
@@ -196,8 +267,8 @@ def run_group(
                 record=record,
                 build_error_group_record_result_fn=build_error_group_record_result_fn,
             )
-            group_results.append(entry)
             save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
+            group_results.append(entry if retain_results else persisted_ref(entry))
             if progress_writer is not None:
                 progress_writer.record_cancelled(group.id, record.record_id)
             continue
@@ -326,18 +397,24 @@ def run_group(
                 )
             if progress_writer is not None:
                 progress_writer.error(group_id=group.id, record_id=record.record_id, message=str(exc))
-        group_results.append(entry)
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
+        entry_status = entry.run_lifecycle_status
+        entry_evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+        group_results.append(entry if retain_results else persisted_ref(entry))
+        # The canonical per-record file is now the durable source of detail.
+        # Drop runner output and the full entry immediately in bounded mode.
+        run_result = None
+        if not retain_results:
+            del entry
         if progress_writer is not None:
-            if entry.run_lifecycle_status == "cancelled":
+            if entry_status == "cancelled":
                 progress_writer.record_cancelled(group.id, record.record_id)
             else:
-                evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
-                score = evaluation.get("normalized_score", evaluation.get("score"))
+                score = entry_evaluation.get("normalized_score", entry_evaluation.get("score"))
                 progress_writer.record_completed(
                     group.id,
                     record.record_id,
-                    status=str(entry.run_lifecycle_status or "completed"),
+                    status=str(entry_status or "completed"),
                     score=float(score) if isinstance(score, (int, float)) else None,
                 )
     if progress_writer is not None and manage_group_lifecycle:

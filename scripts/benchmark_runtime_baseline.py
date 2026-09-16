@@ -6,6 +6,7 @@ import json
 import resource
 import sys
 import time
+import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results
+from benchmarking.workflow.run_state import iter_results_from_output_root, write_results_json_stream
+from dataclasses import asdict
 
 
 def build_result(index: int, *, payload_bytes: int) -> GroupRecordResult:
@@ -62,8 +65,34 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--records", type=int, required=True)
     parser.add_argument("--payload-bytes", type=int, default=0)
+    parser.add_argument("--streaming", action="store_true")
     args = parser.parse_args()
     started = time.perf_counter()
+    if args.streaming:
+        with tempfile.TemporaryDirectory(prefix="runtime-baseline-") as temp_dir:
+            root = Path(temp_dir)
+            paths = []
+            for index in range(args.records):
+                item = build_result(index, payload_bytes=args.payload_bytes)
+                path = root / "per-record" / item.group_id / f"{item.record_id}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(asdict(item), ensure_ascii=False), encoding="utf-8")
+                paths.append(path)
+            generated = time.perf_counter()
+            summary = aggregate_results(iter_results_from_output_root(root, group_ids=["single_llm_skills_on", "single_llm_skills_off"]))
+            aggregated = time.perf_counter()
+            output_path = root / "results.json"
+            ordered_paths = [path for group_id in ("single_llm_skills_on", "single_llm_skills_off")
+                             for path in sorted(root.joinpath("per-record", group_id).glob("*.json"))]
+            write_results_json_stream(output_path, {"summary": summary}, ordered_paths)
+            finished = time.perf_counter()
+            print(json.dumps({"records": args.records, "payload_bytes": args.payload_bytes,
+                "streaming": True, "generation_seconds": generated - started,
+                "aggregation_seconds": aggregated - generated, "serialization_seconds": finished - aggregated,
+                "summary_bytes": len(json.dumps(summary, ensure_ascii=False).encode()),
+                "results_json_bytes": output_path.stat().st_size, "peak_rss_bytes": peak_rss_bytes(),
+                "group_order": summary["group_order"]}, sort_keys=True))
+            return 0
     results = [build_result(index, payload_bytes=args.payload_bytes) for index in range(args.records)]
     generated = time.perf_counter()
     summary = aggregate_results(results)

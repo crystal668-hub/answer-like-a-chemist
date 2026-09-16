@@ -19,7 +19,7 @@ from benchmarking.runtime.vgb_bridge import (
 )
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import EXPERIMENT_GROUPS
-from benchmarking.runtime.atomic_io import atomic_write_json, atomic_write_text
+from benchmarking.runtime.atomic_io import atomic_write_json, atomic_write_text, atomic_write_json_stream
 
 
 def now_stamp() -> str:
@@ -200,15 +200,42 @@ def resolve_aggregate_group_ids(
 
 
 
-def load_results_from_output_root(output_root: Path, *, group_ids: list[str]) -> list[GroupRecordResult]:
-    results: list[GroupRecordResult] = []
+def iter_results_from_output_root(output_root: Path, *, group_ids: list[str]):
+    """Yield canonical per-record results in deterministic group/file order."""
     for group_id in group_ids:
         group_dir = output_root / "per-record" / group_id
         if not group_dir.is_dir():
             continue
         for path in sorted(group_dir.glob("*.json")):
-            results.append(load_group_record_result(path))
-    return results
+            yield load_group_record_result(path)
+
+
+def write_results_json_stream(path: Path, metadata: dict[str, Any], result_paths: list[Path]) -> None:
+    """Write a compatible top-level payload while decoding one record at a time."""
+    def writer(handle):
+        handle.write("{\n")
+        keys = list(metadata)
+        for index, key in enumerate(keys):
+            if index:
+                handle.write(",\n")
+            handle.write(json.dumps(key, ensure_ascii=False) + ": ")
+            json.dump(metadata[key], handle, ensure_ascii=False, indent=2)
+        if keys:
+            handle.write(",\n")
+        handle.write('"results": [')
+        for index, result_path in enumerate(result_paths):
+            if index:
+                handle.write(",")
+            handle.write("\n")
+            json.dump(asdict(load_group_record_result(result_path)), handle, ensure_ascii=False, indent=2)
+        if result_paths:
+            handle.write("\n")
+        handle.write("]\n}")
+    atomic_write_json_stream(path, writer)
+
+
+def load_results_from_output_root(output_root: Path, *, group_ids: list[str]) -> list[GroupRecordResult]:
+    return list(iter_results_from_output_root(output_root, group_ids=group_ids))
 
 
 def apply_verifier_grounded_reporting_references(
@@ -284,6 +311,40 @@ def apply_verifier_grounded_reporting_references(
             + ", ".join(unmatched_datasets)
         )
     return results
+
+
+def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig | None = None) -> dict[tuple[str, str], str]:
+    """Load public property gold once for streaming per-record enrichment."""
+    try:
+        config = release_config or load_release_config()
+    except VerifierGroundedRuntimeError as exc:
+        raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
+    mapping: dict[tuple[str, str], str] = {}
+    for track, track_config in config.tracks.items():
+        if not track.startswith("property_calculation") or not isinstance(track_config, dict):
+            continue
+        dataset = str(track_config.get("dataset") or "")
+        if not dataset:
+            continue
+        try:
+            samples = load_public_reference_answers(track, release_config=config)
+        except VerifierGroundedRuntimeError as exc:
+            raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
+        for sample in samples:
+            task_id = str(sample.get("task_id") or "").strip()
+            answer = {key: value for key, value in sample.items() if key != "task_id"}
+            if task_id and answer:
+                mapping[(dataset, task_id)] = json.dumps(answer, ensure_ascii=False, separators=(",", ":"))
+    return mapping
+
+
+def apply_verifier_grounded_reporting_reference(item: GroupRecordResult, references: dict[tuple[str, str], str]) -> GroupRecordResult:
+    if str(getattr(item, "dataset", "")).startswith("verifier_grounded_property_calculation"):
+        key = (str(item.dataset), str(item.record_id))
+        if key not in references:
+            raise BenchmarkError(f"Verifier-grounded property-calculation result is missing public gold for: {item.record_id}")
+        item.reference_answer = references[key]
+    return item
 
 
 def write_wave_status(

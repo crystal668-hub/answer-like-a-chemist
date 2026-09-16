@@ -63,6 +63,7 @@ Observed results, validation, and supporting evidence.
 - [OpenClaw Bootstrap, Rescue Context, and Path Projection Validation](report/2026-09-14-openclaw-bootstrap-rescue-path-fix-validation.md): configuration suppression, frozen rescue context, safe path projection, and validation limits.
 - [Benchmark Runtime Phase 0 Observability Baseline](report/2026-09-16-benchmark-runtime-phase-0-observability-baseline.md): invocation metrics, deterministic fixture coverage, aggregation comparison, full-suite validation, and remaining measurement limits.
 - [Benchmark Runtime Phase 1-2 Validation](report/2026-09-16-benchmark-runtime-phase-1-2-validation.md): canonical result persistence, progress checkpoints, transcript index equivalence, performance measurements, and process-boundary limits.
+- [Benchmark Runtime Phase 3 Validation](report/2026-09-16-benchmark-runtime-phase-3-validation.md): bounded result memory, incremental aggregation, streaming results writer, and offline RSS evidence.
 
 ## guide (1)
 

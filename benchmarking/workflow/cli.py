@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import gc
 import json
 import os
 import signal
@@ -23,9 +22,7 @@ from benchmarking.analysis.launcher import launch_automated_evaluation
 from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.datasets import BenchmarkRecord as _BenchmarkRecord
 from benchmarking.core.datasets import classify_subset
-from benchmarking.core.reporting import (
-    GroupRecordResult as _GroupRecordResult,
-)
+from benchmarking.core.reporting import GroupRecordResult as _GroupRecordResult
 from benchmarking.core.reporting import (
     aggregate_results,
 )
@@ -83,6 +80,21 @@ from benchmarking.workflow import (
 )
 from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.workflow.errors import BenchmarkError as _BenchmarkError
+from benchmarking.workflow.orchestration import PersistedResultRef
+
+
+def _persisted_ref_for_entry(entry: _GroupRecordResult, output_root: Path) -> PersistedResultRef:
+    evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}
+    score = evaluation.get("normalized_score", evaluation.get("score"))
+    isolation = (entry.runner_meta or {}).get("workspace_isolation") or {}
+    cleanup = isolation.get("cleanup") if isinstance(isolation, dict) else {}
+    return PersistedResultRef(
+        entry.group_id, entry.record_id, entry.run_lifecycle_status, entry.error,
+        archive_error=isolation.get("archive_error") if isinstance(isolation, dict) else None,
+        cleanup_failed_count=int((cleanup or {}).get("failed_count") or 0) if isinstance(cleanup, dict) else 0,
+        score=float(score) if isinstance(score, (int, float)) else None,
+        path=str(output_root / "per-record" / entry.group_id / f"{run_state.slugify(entry.record_id)}.json"),
+    )
 
 DEFAULT_BENCHMARK_ROOT = runtime_paths.benchmarks_root
 DEFAULT_OPENCLAW_CONFIG = runtime_paths.openclaw_config
@@ -516,6 +528,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         classify_subset_fn=classify_subset,
         save_json_fn=result_sink.save_json,
         slugify_fn=run_state.slugify,
+        retain_results=False,
     )
 
     group_results: dict[str, list[_GroupRecordResult]] = {}
@@ -534,7 +547,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
                 inter_wave_delay_seconds=args.inter_wave_delay_seconds,
             )
             attempt_limit = getattr(args, "max_concurrent_attempts", 2)
-            single_queue = service.USES_ATTEMPT_QUEUE
+            single_queue = service.USES_ATTEMPT_QUEUE and getattr(_orchestration.run_group, "__module__", "") == "benchmarking.workflow.orchestration"
             from benchmarking.workflow.attempt_queue import AttemptQueueExecutor
             with (AttemptQueueExecutor(attempt_limit, cancellation_token) if single_queue else
                   ThreadPoolExecutor(max_workers=max(1, len(wave_group_ids)))) as executor:
@@ -582,9 +595,14 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
                         future_map[future] = (group_id, records_batch)
 
                 for future in (executor.run() if single_queue else as_completed(future_map)):
-                    group_id, records_batch = future_map[future]
+                    group_id, records_batch = future_map.pop(future)
                     try:
-                        group_results.setdefault(group_id, []).extend(future.result())
+                        completed_entries = future.result()
+                        for completed_entry in completed_entries:
+                            if isinstance(completed_entry, _GroupRecordResult):
+                                result_sink.write(completed_entry)
+                                completed_entry = _persisted_ref_for_entry(completed_entry, output_root)
+                            group_results.setdefault(group_id, []).append(completed_entry)
                     except Exception as exc:
                         group = catalog.EXPERIMENT_GROUPS[group_id]
                         error_message = f"Group `{group_id}` failed before returning results: {exc}"
@@ -594,14 +612,16 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
                             output_root=output_root,
                             error_message=error_message,
                         )
-                        group_results.setdefault(group_id, []).extend(failure_results)
+                        group_results.setdefault(group_id, []).extend(
+                            _persisted_ref_for_entry(item, output_root) for item in failure_results
+                        )
+                        del failure_results
                         record_group_progress_failure(
                             progress_writer,
                             group_id=group_id,
                             records=records_batch,
                             error_message=error_message,
                         )
-            gc.collect()
             completed_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             if single_queue:
                 for group_id in wave_group_ids:
@@ -678,7 +698,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
                     record=record,
                     build_error_group_record_result_fn=build_error_result,
                 )
-                group_results.setdefault(group_id, []).append(entry)
+                group_results.setdefault(group_id, []).append(
+                    _persisted_ref_for_entry(entry, output_root)
+                )
                 result_sink.write(entry)
                 progress_writer.record_cancelled(group_id, record.record_id)
             if any(item.run_lifecycle_status == "cancelled" for item in group_results.get(group_id, [])):
@@ -689,26 +711,22 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
             for entry in entries:
                 if entry.run_lifecycle_status != "cancelled":
                     continue
-                isolation = (entry.runner_meta or {}).get("workspace_isolation")
-                isolation = isolation if isinstance(isolation, dict) else {}
-                cleanup = isolation.get("cleanup")
-                cleanup = cleanup if isinstance(cleanup, dict) else {}
-                if isolation.get("archive_ok") is False:
+                if entry.archive_error:
                     cancellation_errors.append(
                         {
                             "stage": "workspace_seal",
                             "group_id": entry.group_id,
                             "record_id": entry.record_id,
-                            "error": isolation.get("archive_error") or "workspace archive failed",
+                            "error": entry.archive_error,
                         }
                     )
-                if int(cleanup.get("failed_count") or 0) > 0:
+                if entry.cleanup_failed_count > 0:
                     cancellation_errors.append(
                         {
                             "stage": "workspace_cleanup",
                             "group_id": entry.group_id,
                             "record_id": entry.record_id,
-                            "failed_count": int(cleanup.get("failed_count") or 0),
+                            "failed_count": entry.cleanup_failed_count,
                         }
                     )
 
@@ -718,24 +736,47 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         merge_existing_per_record=args.merge_existing_per_record,
     )
     if args.merge_existing_per_record:
-        results = run_state.load_results_from_output_root(output_root, group_ids=aggregate_group_ids)
+        result_paths = [
+            path for group_id in aggregate_group_ids
+            for path in sorted((output_root / "per-record" / group_id).glob("*.json"))
+        ]
     else:
-        results: list[_GroupRecordResult] = []
         record_order = {record.record_id: index for index, record in enumerate(records)}
-        for entries in group_results.values():
-            entries.sort(key=lambda entry: record_order.get(entry.record_id, len(record_order)))
+        result_paths = []
         for group_id in group_ids:
-            results.extend(group_results.get(group_id, []))
+            entries = sorted(group_results.get(group_id, []), key=lambda entry: record_order.get(entry.record_id, len(record_order)))
+            result_paths.extend(Path(entry.path) for entry in entries if getattr(entry, "path", None))
 
-    run_state.apply_verifier_grounded_reporting_references(
-        results,
-        release_config=verifier_release_config,
-    )
-    for item in results:
-        result_sink.write(item)
-    summary = aggregate_results(results)
+    has_property_results = False
+    for path in result_paths:
+        try:
+            raw_payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(raw_payload.get("dataset") or "").startswith("verifier_grounded_property_calculation"):
+            has_property_results = True
+            break
+    references = (run_state.verifier_grounded_reporting_reference_map(release_config=verifier_release_config)
+                  if has_property_results else {})
+
+    def iter_final_results():
+        for path in result_paths:
+            item = run_state.load_group_record_result(path)
+            if references:
+                run_state.apply_verifier_grounded_reporting_reference(item, references)
+            result_sink.write(item)
+            yield item
+
+    result_iter = iter_final_results()
+    summary = aggregate_results(result_iter)
+    # Re-read canonical files for metadata and final array; only one detail
+    # payload is decoded at a time.
     workspace_policies: dict[str, dict[str, Any]] = {}
-    for item in results:
+    errors: list[dict[str, Any]] = []
+    for path in result_paths:
+        item = run_state.load_group_record_result(path)
+        if item.error:
+            errors.append({"group_id": item.group_id, "record_id": item.record_id, "error": item.error})
         isolation = (item.runner_meta or {}).get("workspace_isolation") or {}
         if not isinstance(isolation, dict):
             continue
@@ -746,12 +787,19 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         slots = isolation.get("slots")
         if isinstance(slots, dict):
             for slot in slots.values():
-                if not isinstance(slot, dict):
-                    continue
-                slot_policy = slot.get("policy")
-                slot_digest = str(slot.get("policy_digest") or "")
-                if isinstance(slot_policy, dict) and slot_digest:
-                    workspace_policies[slot_digest] = slot_policy
+                if isinstance(slot, dict) and isinstance(slot.get("policy"), dict) and str(slot.get("policy_digest") or ""):
+                    workspace_policies[str(slot["policy_digest"])] = slot["policy"]
+    group_descriptions = []
+    for group_id in aggregate_group_ids:
+        if group_id in catalog.EXPERIMENT_GROUPS:
+            group_descriptions.append(asdict(catalog.EXPERIMENT_GROUPS[group_id]))
+        else:
+            first = next((run_state.load_group_record_result(path) for path in result_paths
+                          if path.parent.name == group_id), None)
+            if first is not None:
+                group_descriptions.append({"id": group_id, "label": first.group_label,
+                    "runner": first.runner, "websearch": first.websearch,
+                    "skills_enabled": first.skills_enabled})
     payload = {
         "schema_version": 3,
         "status": (
@@ -782,7 +830,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
-        "groups": [run_state.describe_result_group(group_id, results, catalog.EXPERIMENT_GROUPS) for group_id in aggregate_group_ids],
+        "groups": group_descriptions,
         "run_groups": [asdict(catalog.EXPERIMENT_GROUPS[group_id]) for group_id in group_ids],
         "convergence_policy": convergence_policy_meta,
         "single_timeout_retry": {
@@ -814,19 +862,10 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
             "inter_wave_delay_seconds": args.inter_wave_delay_seconds,
             "waves": group_waves,
         },
-        "results": [asdict(item) for item in results],
         "summary": summary,
-        "errors": [
-            {
-                "group_id": item.group_id,
-                "record_id": item.record_id,
-                "error": item.error,
-            }
-            for item in results
-            if item.error
-        ],
+        "errors": errors,
     }
-    run_state.save_json(output_root / "results.json", payload)
+    run_state.write_results_json_stream(output_root / "results.json", payload, result_paths)
     run_state.remove_legacy_summary_csvs(output_root)
     runtime_manifest = {
         "container_cleanup": cancellation_token.cleanup_reports,
