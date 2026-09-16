@@ -57,7 +57,11 @@ fingerprint 变化会失效，失败不会缓存。每题 `evaluate_one` 仍启�
 边界；624 个响应逐字段一致，中位 wall time 18.04→13.06 秒，进程数 104→2。真实
 文件 validation cache 基准为 121.85→35.22 ms/1000 次。wheel module/native 状态风险
 仍存在，因此不得默认启用；本批完整测试为 987 passed、11 skipped、164 subtests，
-5 个既有 SWIG warnings。Phase 5 尚未开始。
+5 个既有 SWIG warnings。Phase 5A Docker wait 已完成真实无模型验收：managed client
+在 timeout/cancel 场景把 wait CLI 从 2 次降为 1 次并保留 TERM finalization、二次取消、
+typed failure、cleanup 和 orphan recovery 契约；见 Phase 5 Docker wait 报告。Phase 5B
+archive inventory 尚未完成。此提交后的完整测试为 991 passed、11 skipped、164
+subtests，5 个既有 SWIG warnings。
 
 ## 1. 接手须知
 

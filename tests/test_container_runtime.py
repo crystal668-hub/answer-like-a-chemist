@@ -49,6 +49,64 @@ def test_repeated_cancellation_skips_grace_wait():
     assert token.reason.source == "first"
 
 
+def test_wait_client_start_failure_is_typed():
+    def fail(*args, **kwargs):
+        raise OSError("cannot spawn")
+
+    runtime = DockerContainerRuntime(
+        docker_executable="docker", popen_subprocess=fail, use_wait_client=True
+    )
+    with pytest.raises(ContainerRuntimeError) as error:
+        runtime._start_wait_client("owned")
+    assert error.value.code == "docker_wait_start_failed"
+    assert error.value.details["container_id"] == "owned"
+
+
+def test_wait_client_nonzero_exit_is_typed():
+    class Process:
+        returncode = 9
+        def communicate(self):
+            return "", "daemon lost container"
+
+    from benchmarking.runtime.container_runtime import _DockerWaitClient
+    with pytest.raises(ContainerRuntimeError) as error:
+        _DockerWaitClient(Process()).result()
+    assert error.value.code == "docker_wait_failed"
+    assert error.value.details["returncode"] == 9
+
+
+def test_managed_wait_repeated_cancellation_forces_without_new_wait_client():
+    from benchmarking.runtime.cancellation import CancellationReason, CancellationToken
+    from benchmarking.runtime.container_runtime import ContainerAttemptHandle
+
+    commands = []
+    token = CancellationToken()
+    token.cancel(CancellationReason(source="first"))
+    token.cancel(CancellationReason(source="second"))
+
+    class WaitClient:
+        def wait(self, timeout):
+            return False
+        def result(self):
+            raise AssertionError("forced wait must not report completion")
+        def close(self):
+            pass
+
+    runtime = DockerContainerRuntime(
+        docker_executable="docker",
+        run_subprocess=lambda cmd, **kwargs: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
+        use_wait_client=True,
+    )
+    result = runtime.terminate(
+        ContainerAttemptHandle("owned", "owned", identity(), "image"),
+        cancellation_token=token,
+        _wait_client=WaitClient(),
+    )
+    assert result["forced"] is True
+    assert result["repeat_cancellation"] is True
+    assert commands == [["docker", "kill", "--signal", "TERM", "owned"], ["docker", "kill", "owned"]]
+
+
 def test_command_timeout_does_not_persist_environment_secrets():
     def run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])

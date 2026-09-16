@@ -392,9 +392,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - Single-LLM admission uses a FIFO cancellation-aware count limit. Each retry
   acquires a new lease; backoff and scoring do not hold the lease. CPU, memory,
   and PID options are per-container hard limits, not admission resource weights.
-  Failed container removal cancels further scheduling. Docker wait polls for
-  cancellation and gives the container supervisor a bounded evidence-finalizing
-  stop window before removal.
+  Failed container removal cancels further scheduling. One managed `docker wait`
+  client per container lifecycle polls for cancellation without repeatedly
+  starting Docker CLIs and gives the container supervisor a bounded
+  evidence-finalizing stop window before removal.
 - Docker lifecycle CLI commands have explicit outer timeouts. Graceful termination
   sends TERM and polls for up to 420 seconds; a repeated cancellation skips the
   remaining grace and forces termination. Removal failures stop admission and

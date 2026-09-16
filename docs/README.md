@@ -52,7 +52,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 - [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：只读扫描结论、优先级和分阶段重构交接方案。
 
-## report (12)
+## report (13)
 
 Observed results, validation, and supporting evidence.
 
@@ -69,6 +69,7 @@ Observed results, validation, and supporting evidence.
 - [Benchmark Runtime Phase 4 Validation Cache](report/2026-09-16-benchmark-runtime-phase-4-validation-cache.md): invocation-scoped immutable verifier runtime validation cache and limits.
 
 - [Verifier Worker Validation](report/2026-09-16-verifier-worker-validation.md): fault tests, offline shadow equivalence, latency/RSS and pinned-release acceptance limits.
+- [Benchmark Runtime Phase 5 Docker Wait Validation](report/2026-09-16-benchmark-runtime-phase-5-docker-wait.md): managed Docker wait client, cancellation/finalization contracts, and real no-model Docker evidence.
 
 ## guide (1)
 

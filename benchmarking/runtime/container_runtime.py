@@ -31,7 +31,7 @@ from benchmarking.runtime.agent_workspace import (
 from benchmarking.runtime.bundles import RuntimePathProjection
 from benchmarking.runtime.cancellation import CancellationToken
 from benchmarking.runtime.container_network import ContainerNetworkConfig
-from benchmarking.runtime.observability import increment, measure
+from benchmarking.runtime.observability import active_runtime_metrics, increment, measure
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -102,14 +102,84 @@ class CommandRunner(Protocol):
     def __call__(self, command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]: ...
 
 
+class _DockerWaitClient:
+    """One long-lived docker wait CLI process owned by a lifecycle operation."""
+
+    def __init__(self, process: subprocess.Popen[str]) -> None:
+        self.process = process
+        self.started = time.monotonic()
+        self._observed = False
+
+    def wait(self, timeout: float) -> bool:
+        try:
+            self.process.wait(timeout=max(0.01, timeout))
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+
+    def result(self) -> str:
+        stdout, stderr = self.process.communicate()
+        if self.process.returncode != 0:
+            detail = (stderr or stdout or "").strip()
+            raise ContainerRuntimeError(
+                detail[:2000] or f"docker wait exited {self.process.returncode}",
+                code="docker_wait_failed",
+                details={"returncode": self.process.returncode},
+            )
+        return stdout
+
+    def close(self) -> None:
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=1)
+        finally:
+            if not self._observed:
+                metrics = active_runtime_metrics()
+                if metrics is not None:
+                    metrics.duration("docker_command", time.monotonic() - self.started)
+                    metrics.duration("docker_wait_client", time.monotonic() - self.started)
+                self._observed = True
+
+
 def _identity_labels(identity: AttemptIdentity) -> dict[str, str]:
     return {f"benchmark.{key}": str(value) for key, value in identity.sentinel_fields().items()}
 
 
 class DockerContainerRuntime:
-    def __init__(self, *, docker_executable: str | None = None, run_subprocess: CommandRunner = subprocess.run) -> None:
+    def __init__(self, *, docker_executable: str | None = None, run_subprocess: CommandRunner = subprocess.run,
+                 popen_subprocess: Any = subprocess.Popen, use_wait_client: bool | None = None) -> None:
         self.docker = docker_executable or shutil.which("docker")
         self._run = run_subprocess
+        self._popen = popen_subprocess
+        # Injected command runners are used by contract tests and cannot safely
+        # be mixed with a real Popen wait client.
+        self._use_wait_client = use_wait_client if use_wait_client is not None else run_subprocess is subprocess.run
+
+    def _start_wait_client(self, container_id: str) -> _DockerWaitClient:
+        increment("docker_command_count")
+        increment("docker_command_count.wait")
+        increment("docker_wait_client_count")
+        try:
+            process = self._popen(
+                [self._require_docker(), "wait", container_id],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            increment("docker_command_failure_count")
+            raise ContainerRuntimeError(
+                f"unable to start docker wait client: {exc}",
+                code="docker_wait_start_failed",
+                details={"container_id": container_id},
+            ) from exc
+        return _DockerWaitClient(process)
 
     def _require_docker(self) -> str:
         if not self.docker:
@@ -303,11 +373,47 @@ class DockerContainerRuntime:
         cancelled = False
         termination = {}
         deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        if not self._use_wait_client:
+            return self._collect_legacy(handle, timeout_seconds=timeout_seconds, cancellation_token=cancellation_token)
+        wait_client = self._start_wait_client(handle.container_id)
+        try:
+            while True:
+                cancelled = cancellation_token is not None and cancellation_token.is_cancelled
+                timed_out = deadline is not None and time.monotonic() >= deadline
+                if cancelled or timed_out:
+                    # Share the wait client while the supervisor finalizes evidence.
+                    termination = self.terminate(
+                        handle, cancellation_token=cancellation_token, _wait_client=wait_client
+                    )
+                    break
+                interval = min(0.25, max(0.01, deadline - time.monotonic())) if deadline is not None else 0.25
+                if wait_client.wait(interval):
+                    wait_client.result()
+                    break
+        finally:
+            wait_client.close()
+        logs = self._command(["logs", handle.container_id])
+        inspect = self.inspect(handle.container_id)
+        config = inspect.get("Config")
+        if isinstance(config, dict) and isinstance(config.get("Env"), list):
+            config["Env"] = [f"{item.split('=', 1)[0]}=<redacted>" for item in config["Env"]]
+        state = inspect.get("State") if isinstance(inspect.get("State"), dict) else {}
+        try:
+            stats = self.stats(handle.container_id)
+        except ContainerRuntimeError:
+            stats = {}
+        return ContainerAttemptResult(handle, state.get("ExitCode"), logs.stdout, logs.stderr, timed_out, cancelled, bool(state.get("OOMKilled")), inspect=inspect, stats=stats, cleanup={"termination": termination})
+
+    def _collect_legacy(self, handle: ContainerAttemptHandle, *, timeout_seconds: float | None,
+                        cancellation_token: CancellationToken | None) -> ContainerAttemptResult:
+        timed_out = False
+        cancelled = False
+        termination = {}
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         while True:
             cancelled = cancellation_token is not None and cancellation_token.is_cancelled
             timed_out = deadline is not None and time.monotonic() >= deadline
             if cancelled or timed_out:
-                # Give the container supervisor time to stop the agent and preserve evidence.
                 termination = self.terminate(handle, cancellation_token=cancellation_token)
                 break
             interval = min(1.0, max(0.01, deadline - time.monotonic())) if deadline is not None else 1.0
@@ -327,26 +433,50 @@ class DockerContainerRuntime:
             stats = self.stats(handle.container_id)
         except ContainerRuntimeError:
             stats = {}
-        return ContainerAttemptResult(handle, state.get("ExitCode"), logs.stdout, logs.stderr, timed_out, cancelled, bool(state.get("OOMKilled")), inspect=inspect, stats=stats, cleanup={"termination": termination})
+        return ContainerAttemptResult(handle, state.get("ExitCode"), logs.stdout, logs.stderr, timed_out, cancelled,
+                                      bool(state.get("OOMKilled")), inspect=inspect, stats=stats,
+                                      cleanup={"termination": termination})
 
     def stop(self, handle: ContainerAttemptHandle, *, grace_seconds: float) -> None:
         self._command(["stop", "--time", str(max(0, int(grace_seconds))), handle.container_id], timeout=max(0, grace_seconds) + 30)
 
-    def terminate(self, handle: ContainerAttemptHandle, *, cancellation_token: CancellationToken | None = None, grace_seconds: float = 420) -> dict[str, Any]:
+    def terminate(self, handle: ContainerAttemptHandle, *, cancellation_token: CancellationToken | None = None,
+                  grace_seconds: float = 420, _wait_client: _DockerWaitClient | None = None) -> dict[str, Any]:
         self._command(["kill", "--signal", "TERM", handle.container_id])
+        if not self._use_wait_client and _wait_client is None:
+            deadline = time.monotonic() + grace_seconds
+            while time.monotonic() < deadline:
+                if cancellation_token is not None and cancellation_token.request_count > 1:
+                    break
+                try:
+                    self._command(["wait", handle.container_id], timeout=min(1, max(0.01, deadline - time.monotonic())))
+                    return {"term_sent": True, "forced": False, "grace_seconds": grace_seconds}
+                except ContainerRuntimeError as exc:
+                    if exc.code != "docker_command_timeout":
+                        raise
+            self.kill(handle)
+            return {"term_sent": True, "forced": True, "grace_seconds": grace_seconds,
+                    "repeat_cancellation": cancellation_token is not None and cancellation_token.request_count > 1}
         deadline = time.monotonic() + grace_seconds
-        while time.monotonic() < deadline:
-            if cancellation_token is not None and cancellation_token.request_count > 1:
-                break
-            try:
-                self._command(["wait", handle.container_id], timeout=min(1, max(0.01, deadline - time.monotonic())))
-                return {"term_sent": True, "forced": False, "grace_seconds": grace_seconds}
-            except ContainerRuntimeError as exc:
-                if exc.code != "docker_command_timeout":
-                    raise
-        self.kill(handle)
-        return {"term_sent": True, "forced": True, "grace_seconds": grace_seconds,
-                "repeat_cancellation": cancellation_token is not None and cancellation_token.request_count > 1}
+        owns_wait_client = _wait_client is None
+        wait_client = _wait_client
+        try:
+            while time.monotonic() < deadline:
+                if cancellation_token is not None and cancellation_token.request_count > 1:
+                    break
+                if wait_client is None:
+                    wait_client = self._start_wait_client(handle.container_id)
+                if wait_client.wait(min(0.25, max(0.01, deadline - time.monotonic()))):
+                    wait_client.result()
+                    return {"term_sent": True, "forced": False, "grace_seconds": grace_seconds}
+            self.kill(handle)
+            if wait_client is not None and wait_client.wait(30):
+                wait_client.result()
+            return {"term_sent": True, "forced": True, "grace_seconds": grace_seconds,
+                    "repeat_cancellation": cancellation_token is not None and cancellation_token.request_count > 1}
+        finally:
+            if owns_wait_client and wait_client is not None:
+                wait_client.close()
 
     def kill(self, handle: ContainerAttemptHandle) -> None:
         self._command(["kill", handle.container_id])
