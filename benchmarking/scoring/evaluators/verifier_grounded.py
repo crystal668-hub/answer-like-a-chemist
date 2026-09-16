@@ -13,6 +13,7 @@ from benchmarking.runtime.vgb_bridge import (
 )
 from benchmarking.scoring.errors import EvaluationError
 from benchmarking.scoring.results import EvaluationResult
+from benchmarking.runtime.vgb_worker import VerifierWorker
 
 
 def _verifier_grounded_config(record: BenchmarkRecord) -> dict[str, Any]:
@@ -42,6 +43,7 @@ def run_verifier_grounded_evaluation(
     answer_text: str,
     release_config: ReleaseConfig | None = None,
     validation_cache: InvocationValidationCache | None = None,
+    worker: VerifierWorker | None = None,
 ) -> dict[str, Any]:
     config = _verifier_grounded_config(record)
     release = config.get("release")
@@ -61,6 +63,7 @@ def run_verifier_grounded_evaluation(
             release_identity=release,
             release_config=release_config,
             validation_cache=validation_cache,
+            worker=worker,
         )
     except VerifierGroundedRuntimeError as exc:
         raise EvaluationError(str(exc)) from exc

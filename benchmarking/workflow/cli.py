@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from dataclasses import asdict
 from datetime import UTC, datetime
 from functools import partial
@@ -63,6 +64,7 @@ from benchmarking.runtime.observability import (
 from benchmarking.runtime.provider_preflight import check_provider_connection
 from benchmarking.runtime.container_network import resolve_container_network
 from benchmarking.runtime.vgb_bridge import load_release_config, InvocationValidationCache, validate_runtime_files
+from benchmarking.runtime.vgb_worker import VerifierWorker
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
@@ -140,6 +142,8 @@ def parse_args(service=None) -> argparse.Namespace:
     if service is None:
         from benchmarking.service.single import execution as service
     parser = argparse.ArgumentParser(description=f"Run {service.NAME} benchmark experiments ({service.STATUS}).")
+    parser.add_argument("--verifier-mode", choices=("isolated", "worker"), default="isolated",
+                        help="Verifier scoring transport; worker is experimental and opt-in")
     parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT), help="formal-benchmarks/ 根目录")
     parser.add_argument("--openclaw-config", default=str(DEFAULT_OPENCLAW_CONFIG), help="基础 OpenClaw 配置文件")
     parser.add_argument(
@@ -321,7 +325,7 @@ def record_group_progress_failure(
 
 
 
-def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
+def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitStack) -> int:
     args = parse_args() if service is None else parse_args(service)
     if service is None:
         from benchmarking.service.single import execution as service
@@ -506,6 +510,16 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
     result_sink = run_state.ResultSink(output_root)
     progress_writer.run_started()
     previous_signal_handlers = install_cancellation_signal_handlers(cancellation_token)
+    verifier_worker = None
+    if verifier_release_config is not None and getattr(args, "verifier_mode", "isolated") == "worker":
+        verifier_worker = VerifierWorker(
+            verifier_release_config,
+            evidence_root=output_root / "verifier-worker" / invocation_id,
+            cancellation_token=cancellation_token, process_registry=process_registry,
+            validation_cache=vgb_validation_cache,
+        )
+        resources.callback(verifier_worker.close)
+        verifier_runner.keywords["worker"] = verifier_worker
 
     build_error_result = partial(
         _build_error_group_record_result,
@@ -649,6 +663,8 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
             if wave_index < len(group_waves) and args.inter_wave_delay_seconds > 0:
                 cancellation_token.wait(args.inter_wave_delay_seconds)
     finally:
+        if verifier_worker is not None:
+            verifier_worker.close()
         cancellation_errors.extend(cancellation_token.cleanup_errors)
         if cancellation_token.is_cancelled:
             reason = cancellation_token.reason
@@ -885,6 +901,8 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
             "path": str(output_root / "runtime-metrics.json"),
         },
         "result_sink": result_sink.to_meta(),
+        "verifier_transport": (verifier_worker.to_meta() if verifier_worker is not None
+                               else {"mode": "isolated"}),
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
@@ -1001,7 +1019,8 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics) -> int:
 def main(service=None) -> int:
     runtime_metrics = start_runtime_metrics()
     try:
-        return _run_main(service, runtime_metrics=runtime_metrics)
+        with ExitStack() as resources:
+            return _run_main(service, runtime_metrics=runtime_metrics, resources=resources)
     finally:
         snapshot = finish_runtime_metrics(runtime_metrics)
         if runtime_metrics.output_root is not None:

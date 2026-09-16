@@ -7,7 +7,10 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from benchmarking.runtime.vgb_worker import VerifierWorker
 
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime.observability import increment, measure
@@ -19,7 +22,7 @@ DEFAULT_RELEASE_CONFIG = (
     / "verifier_grounded"
     / "release.json"
 )
-RUNTIME_API_SCRIPT = r"""
+RUNTIME_API_BODY = r"""
 import importlib.metadata
 import json
 import sys
@@ -67,8 +70,8 @@ elif action == "reference_answers":
     result = {"reference_answers": reference_answers}
 else:
     raise ValueError(f"Unsupported verifier runtime action: {action}")
-print(json.dumps(result, ensure_ascii=False))
 """.strip()
+RUNTIME_API_SCRIPT = RUNTIME_API_BODY + "\nprint(json.dumps(result, ensure_ascii=False))"
 
 
 class VerifierGroundedRuntimeError(RuntimeError):
@@ -249,6 +252,7 @@ def evaluate_answer(
     release_identity: dict[str, Any],
     release_config: ReleaseConfig | None = None,
     validation_cache: InvocationValidationCache | None = None,
+    worker: VerifierWorker | None = None,
 ) -> dict[str, Any]:
     config = release_config or load_release_config()
     if release_identity != config.identity:
@@ -263,18 +267,13 @@ def evaluate_answer(
         raise VerifierGroundedRuntimeError(
             f"Task {task_id!r} is not part of pinned verifier track {track!r}"
         )
-    result = _invoke_api(
-        config,
-        {
-            "action": "evaluate_one",
-            "track": track,
-            "task_id": task_id,
-            "answer_text": answer_text,
-        },
-        timeout=float(track_config.get("timeout_seconds") or 120.0),
-        require_manifest=True,
-        validation_cache=validation_cache,
-    )
+    payload = {"action": "evaluate_one", "track": track, "task_id": task_id, "answer_text": answer_text}
+    timeout = float(track_config.get("timeout_seconds") or 120.0)
+    if worker is None:
+        result = _invoke_api(config, payload, timeout=timeout, require_manifest=True,
+                             validation_cache=validation_cache)
+    else:
+        result = worker.invoke(config, payload, timeout=timeout)
     if not isinstance(result, dict):
         raise VerifierGroundedRuntimeError("Pinned verifier runtime returned a non-object result")
     return result

@@ -43,7 +43,12 @@ tool output 的第二份索引。archive recovery 和 frozen rescue snapshot 仍
 `InvocationValidationCache`，在评分和 property reporting reference 读取之间共享
 成功的 immutable runtime validation；wheel、manifest、runtime Python 或 release
 fingerprint 变化会失效，失败不会缓存。每题 `evaluate_one` 仍启动独立 Python 进程，
-因此 verifier worker 尚未启用；Phase 5 尚未开始。
+这是默认 isolated 路径。Phase 4 第二步已实现显式 `--verifier-mode worker`，默认仍为
+`isolated`。协议、取消、进程组清理、有界恢复及 100 次请求回收已通过真实 fixture
+子进程测试；三轮 120 请求 shadow 输出完全一致。完整测试为 972 passed、11 skipped、
+164 subtests。见 [worker 验收](../report/2026-09-16-verifier-worker-validation.md) 和
+[设计](../design/2026-09-16-verifier-worker-design.md)。真实 pinned-release 重复/乱序
+及 RDKit/xTB acceptance 尚未执行，因此不得默认启用；Phase 5 尚未开始。
 
 ## 1. 接手须知
 

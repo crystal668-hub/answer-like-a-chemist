@@ -8,7 +8,7 @@ Their status and code examples may describe an older system; check current code
 and the global specification before implementation or operation. Directory
 placement does not imply approval, implementation, or current validity.
 
-## design (9)
+## design (10)
 
 Architecture, specifications, interfaces, and invariants.
 
@@ -21,6 +21,8 @@ Architecture, specifications, interfaces, and invariants.
 - [Benchmark Audit Error Allowlist and Cancellation Specification](design/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md)
 - [Skill Runner Deadline, Process Group, and Async Skill Specification](design/2026-07-23-skill-runner-deadline-process-group-async-spec.md)
 - [Benchmark Infra 单一 LLM Attempt 容器化改动计划与接口设计](design/2026-09-08-benchmark-single-llm-containerization-plan.md)
+
+- [Invocation-owned Verifier Worker](design/2026-09-16-verifier-worker-design.md): opt-in protocol, ownership, recovery bounds and equivalence gates.
 
 ## plan (13)
 
@@ -50,7 +52,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 - [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：只读扫描结论、优先级和分阶段重构交接方案。
 
-## report (9)
+## report (12)
 
 Observed results, validation, and supporting evidence.
 
@@ -65,6 +67,8 @@ Observed results, validation, and supporting evidence.
 - [Benchmark Runtime Phase 1-2 Validation](report/2026-09-16-benchmark-runtime-phase-1-2-validation.md): canonical result persistence, progress checkpoints, transcript index equivalence, performance measurements, and process-boundary limits.
 - [Benchmark Runtime Phase 3 Validation](report/2026-09-16-benchmark-runtime-phase-3-validation.md): bounded result memory, incremental aggregation, streaming results writer, and offline RSS evidence.
 - [Benchmark Runtime Phase 4 Validation Cache](report/2026-09-16-benchmark-runtime-phase-4-validation-cache.md): invocation-scoped immutable verifier runtime validation cache and limits.
+
+- [Verifier Worker Validation](report/2026-09-16-verifier-worker-validation.md): fault tests, offline shadow equivalence, latency/RSS and pinned-release acceptance limits.
 
 ## guide (1)
 

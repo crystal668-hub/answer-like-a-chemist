@@ -117,6 +117,17 @@ dashboard progress snapshots. `benchmarking.core.reporting` exposes
 `AggregateAccumulator`, a bounded counter/totals collector used to build aggregate
 buckets without retaining an additional copy of record details; its output schema
 remains compatible with `aggregate_bucket`.
+`benchmarking.runtime.vgb_worker` owns experimental invocation-local scoring
+selected with `--verifier-mode worker`; `isolated` remains the default. It shares
+the bridge API body, pinned Python `-I` and allowlisted environment. Serialized
+JSONL requests carry release/request IDs, with a 16 MiB frame limit and explicit
+failures. Pipe I/O and lock waits poll cancellation. Processes are recycled after
+100 successful requests; at most two fault restarts are allowed for subsequent
+requests, without replaying failed requests. Runtime fingerprint changes stop the
+loaded process before revalidation. CLI ExitStack and scheduling-finally cleanup
+own process groups. Full stderr and durable lifecycle events are persisted under
+`verifier-worker/<invocation-id>/`; the runtime manifest retains transport counters,
+bounds and evidence paths. Public reference/provisioning calls remain isolated.
 `aggregate_results` consumes iterables in one pass and keeps only per-bucket
 accumulators. CLI execution retains lightweight persisted result references after
 canonical per-record writes; final `results.json` is atomically rebuilt by reading
@@ -746,6 +757,14 @@ boundary. Processes still run as the same local user.
 ## 5. Current Risks and Non-goals
 
 ### Current risks
+
+- Experimental verifier workers retain Python/native module state within each
+  generation despite reloading track objects per request. Offline fixture shadow
+  equivalence does not establish pinned-release scientific equivalence, so the
+  default remains isolated. IPC limits do not bound native allocations or stderr
+  disk usage. Process-group cleanup cannot contain descendants that deliberately
+  create a different session. `scripts/benchmark_vgb_worker.py` provides offline
+  fixture and explicit pinned-release shadow measurement in separate processes.
 
 - Docker migration fixes and acceptance evidence are tracked in
   `docs/report/2026-09-11-benchmark-infra-fix-validation.md`; the six-item
