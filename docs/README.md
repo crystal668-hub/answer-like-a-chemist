@@ -52,7 +52,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 - [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：已关闭；记录 Phase 0–5 实施、量化收益、行为变化、验收证据与延期边界。
 
-## report (14)
+## report (15)
 
 Observed results, validation, and supporting evidence.
 
@@ -71,6 +71,7 @@ Observed results, validation, and supporting evidence.
 - [Verifier Worker Validation](report/2026-09-16-verifier-worker-validation.md): fault tests, offline shadow equivalence, latency/RSS and pinned-release acceptance limits.
 - [Benchmark Runtime Phase 5 Docker Wait Validation](report/2026-09-16-benchmark-runtime-phase-5-docker-wait.md): managed Docker wait client, cancellation/finalization contracts, and real no-model Docker evidence.
 - [Benchmark Runtime Phase 5 Archive Inventory Validation](report/2026-09-16-benchmark-runtime-phase-5-archive-inventory.md): consolidated workspace inventory, archive safety contracts, traversal evidence, and cross-device simulation limits.
+- [VGB Runtime Legacy Facility Cleanup Report](report/2026-09-17-vgb-runtime-legacy-facility-cleanup-report.md): pending-approval boundary audit and phased deletion plan for obsolete datasets and ChemQA facilities.
 
 ## guide (1)
 
