@@ -236,9 +236,9 @@ def test_single_agent_skills_on_prompt_exposes_neutral_skill_tree() -> None:
 
     record = BenchmarkRecord(
         record_id="route-cif",
-        dataset="hle",
-        source_file="/tmp/hle.jsonl",
-        eval_kind="hle",
+        dataset="verifier_grounded_property_calculation",
+        source_file="/tmp/verifier_grounded_property_calculation.jsonl",
+        eval_kind="verifier_grounded",
         prompt="What coordination polyhedra does this CIF crystal structure contain?",
         reference_answer="Al, Re2Al13",
     )
@@ -304,9 +304,9 @@ def test_single_agent_skills_off_prompt_does_not_expose_chemist_sop() -> None:
 
     record = BenchmarkRecord(
         record_id="skills-off",
-        dataset="chembench",
+        dataset="verifier_grounded_rdkit",
         source_file="/tmp/chembench.jsonl",
-        eval_kind="chembench_open_ended",
+        eval_kind="verifier_grounded",
         prompt="Calculate the pH.",
         reference_answer="7",
     )

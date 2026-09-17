@@ -44,9 +44,15 @@ Without `--exact-output-dir`, runs are classified under
 
 Use `single_llm_skills_off` for the skills-disabled condition, or pass both
 single-LLM group IDs to compare them. Omit `--limit` and `--record-ids` to run
-the complete selected dataset. The three dataset names are
-`verifier_grounded_rdkit` (11 tasks), `verifier_grounded_xtb_xyz` (18 tasks),
-and `verifier_grounded_property_calculation` (2 tasks).
+the complete selected dataset. The supported dataset names are
+`verifier_grounded_rdkit`, `verifier_grounded_xtb_xyz`,
+`verifier_grounded_property_calculation` (advanced), and
+`verifier_grounded_property_calculation_easy` (basic). The pinned
+`benchmarking/resources/verifier_grounded/release.json` owns their task inventory.
+Default discovery excludes legacy datasets. Explicit `--files` inputs must use
+the `<dataset>/data/<file>.jsonl` layout and satisfy the same release contract.
+Subset sampling and judge flags are available only through the frozen ChemQA
+entrypoint; active VGB scoring does not provision a judge.
 
 The complete integration contract is documented in
 `docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`.

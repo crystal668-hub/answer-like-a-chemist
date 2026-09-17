@@ -1,6 +1,9 @@
 """Composition of the actively maintained single-LLM business."""
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.defaults import BENCHMARK_SKILLS_ALLOWLIST
+from benchmarking.scoring.registry import DEFAULT_EVALUATORS
+from benchmarking.workflow.dataset_selection import filter_records_by_ids, load_vgb_records
+from benchmarking.workflow.dataset_selection import select_vgb_dataset_files as select_dataset_files
 from . import experiments
 from .orchestration import runner_options
 
@@ -8,6 +11,18 @@ NAME = "single"
 STATUS = "active"
 USES_ATTEMPT_QUEUE = True
 SCHEDULING_MODE = "single-llm-queue"
+USES_JUDGE = False
+
+def evaluator_registry():
+    return dict(DEFAULT_EVALUATORS)
+
+
+def select_records(files, args):
+    return filter_records_by_ids(load_vgb_records(files), getattr(args, "record_ids", None))
+
+
+def sampling_metadata(args):
+    return {"enabled": False, "count_per_subset": None, "seed": None}
 
 
 def add_arguments(parser):

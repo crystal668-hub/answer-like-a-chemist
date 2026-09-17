@@ -234,6 +234,7 @@ def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, c
     from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
     from benchmarking.service.single import execution
+    config.tracks["rdkit"]["dataset"] = "verifier_grounded_rdkit"
     record = BenchmarkRecord(record_id="task-a", dataset="verifier_grounded_rdkit", source_file="fixture",
         prompt="fixture", eval_kind="verifier_grounded", payload={"verifier_grounded": {
             "release": config.identity, "track": "rdkit", "task_id": "task-a"}})
@@ -241,8 +242,8 @@ def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, c
         "--groups", "single_llm_skills_off", "--exact-output-dir", str(tmp_path / "out"),
         *(["--verifier-mode", mode] if mode == "worker" else [])])
     monkeypatch.setattr(cli, "load_release_config", lambda: config)
-    monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "fixture.jsonl"])
-    monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
+    monkeypatch.setattr(execution, "select_dataset_files", lambda args: [tmp_path / "fixture.jsonl"])
+    monkeypatch.setattr(execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(cli.runtime_paths, "benchmark_runtime_root", tmp_path / "benchmark")
 
     class Pool:
@@ -252,9 +253,8 @@ def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, c
             (tmp_path / "config.json").write_text("{}")
             return tmp_path / "config.json"
         def judge_config_path(self):
-            return tmp_path / "judge.json"
+            pytest.fail("VGB must not provision a judge")
     monkeypatch.setattr(cli.runtime_config_pool, "ConfigPool", Pool)
-    monkeypatch.setattr(cli.judge_runtime, "JudgeClient", lambda **kwargs: None)
     monkeypatch.setattr(execution, "cleanup", lambda: None)
 
     def build_runner(**kwargs):
@@ -269,6 +269,7 @@ def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, c
     monkeypatch.setattr(runner_adapters, "build_runner", build_runner)
     assert cli.main() == (130 if cancel else 0)
     manifest = json.loads((tmp_path / "out/runtime-manifest.json").read_text())
+    assert manifest["judge"] is None
     assert manifest["verifier_transport"]["mode"] == mode
     if mode == "worker":
         assert manifest["verifier_transport"]["closed"]

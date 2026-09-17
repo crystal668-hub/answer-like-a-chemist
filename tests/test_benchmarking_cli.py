@@ -618,14 +618,16 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
 
 def test_main_launches_automated_evaluation_after_results_are_written(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="record-1",
-        dataset="demo",
+        record_id="rdkit_qed_max_001",
+        dataset="verifier_grounded_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
-        eval_kind="generic_semantic",
+        eval_kind="verifier_grounded",
+        payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
+            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
         grading=GradingSpec(
-            kind="generic_semantic",
+            kind="verifier_grounded",
             reference_answer="Answer",
             subset="demo_subset",
         ),
@@ -656,11 +658,11 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
-                record_id="record-1",
+                record_id="rdkit_qed_max_001",
                 subset="demo_subset",
-                dataset="demo",
+                dataset="verifier_grounded_rdkit",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="generic_semantic",
+                eval_kind="verifier_grounded",
                 prompt="Question?",
                 reference_answer="Answer",
                 answer_text="FINAL ANSWER: Answer",
@@ -756,8 +758,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             },
         )(),
     )
-    monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
-    monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
+    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -781,7 +783,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     assert manifest["automated_evaluation"]["status"] == "launched"
     assert manifest["groups"]["single_llm_skills_off"]["single_agent_thinking"] == "medium"
     assert manifest["groups"]["single_llm_skills_off"]["group"]["websearch"] is False
-    assert manifest["judge"]["thinking"] == "minimal"
+    assert manifest["judge"] is None
     assert manifest["timeout_mode"] == "bounded"
     results = json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
     assert results["timeout_mode"] == "bounded"
@@ -790,14 +792,16 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
 
 def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="record-1",
-        dataset="demo",
+        record_id="rdkit_qed_max_001",
+        dataset="verifier_grounded_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
-        eval_kind="generic_semantic",
+        eval_kind="verifier_grounded",
+        payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
+            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
         grading=GradingSpec(
-            kind="generic_semantic",
+            kind="verifier_grounded",
             reference_answer="Answer",
             subset="demo_subset",
         ),
@@ -828,11 +832,11 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
-                record_id="record-1",
+                record_id="rdkit_qed_max_001",
                 subset="demo_subset",
-                dataset="demo",
+                dataset="verifier_grounded_rdkit",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="generic_semantic",
+                eval_kind="verifier_grounded",
                 prompt="Question?",
                 reference_answer="Answer",
                 answer_text="FINAL ANSWER: Answer",
@@ -911,8 +915,8 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             },
         )(),
     )
-    monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
-    monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
+    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -938,18 +942,20 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
     assert manifest["automated_evaluation"]["status_path"] == str(tmp_path / "out" / "analysis" / "status.json")
     results = json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
     assert results["records"] == 1
-    assert results["results"][0]["record_id"] == "record-1"
+    assert results["results"][0]["record_id"] == "rdkit_qed_max_001"
 
 
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="record-1",
-        dataset="demo",
+        record_id="rdkit_qed_max_001",
+        dataset="verifier_grounded_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
-        eval_kind="generic_semantic",
-        grading=GradingSpec(kind="generic_semantic", reference_answer="Answer", subset="demo_subset"),
+        eval_kind="verifier_grounded",
+        payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
+            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
+        grading=GradingSpec(kind="verifier_grounded", reference_answer="Answer", subset="demo_subset"),
     )
 
     class FakeConfigPool:
@@ -1015,8 +1021,8 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             },
         )(),
     )
-    monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
-    monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
+    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
     monkeypatch.setattr(

@@ -35,7 +35,6 @@ from benchmarking.core.reporting import (
 )
 from benchmarking.dashboard.progress import ProgressWriter
 from benchmarking.runtime import config_pool as runtime_config_pool
-from benchmarking.runtime import judge as judge_runtime
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.attempt_admission import AttemptAdmissionController
@@ -70,7 +69,7 @@ from benchmarking.scoring.evaluators.verifier_grounded import (
     run_verifier_grounded_evaluation,
     validate_verifier_grounded_release,
 )
-from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
+from benchmarking.scoring.registry import evaluate_record
 from benchmarking.scoring.results import build_execution_error_evaluation
 from benchmarking.skills.tree import benchmark_skill_routing_inventory
 from benchmarking.workflow import (
@@ -148,7 +147,6 @@ DEFAULT_OPENCLAW_CONFIG = runtime_paths.openclaw_config
 DEFAULT_OUTPUT_DIR = runtime_paths.project_state_root / "benchmark-runs"
 
 
-register_default_evaluators()
 
 # Kept as a test patch seam for legacy callers; the benchmark no longer invokes
 # a standalone web-search preflight.
@@ -212,29 +210,7 @@ def parse_args(service=None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--datasets",
-        help="仅运行指定数据集，逗号分隔；默认扫描 formal-benchmarks/*/data/*.jsonl",
-    )
-    parser.add_argument(
-        "--subsets",
-        help=(
-            "仅运行指定子集，逗号分隔；例如 "
-            "frontierscience_Research,superchem_multimodal"
-        ),
-    )
-    parser.add_argument(
-        "--random-count-per-subset",
-        type=int,
-        help=(
-            "按子集随机抽样时，每个子集抽取多少题；当前支持 chembench / "
-            "frontierscience_Olympiad / frontierscience_Research / "
-            "superchem_multimodal"
-        ),
-    )
-    parser.add_argument(
-        "--random-seed",
-        type=int,
-        default=0,
-        help="随机抽样的 seed，默认 0，便于复现",
+        help="仅运行当前 service 支持的数据集，逗号分隔；默认 VGB 使用 pinned release inventory",
     )
     parser.add_argument(
         "--files",
@@ -261,18 +237,6 @@ def parse_args(service=None) -> argparse.Namespace:
         choices=experiments.THINKING_LEVEL_CHOICES,
         help="单一 LLM baseline OpenClaw thinking level，默认 high",
     )
-    parser.add_argument("--judge-agent", default=experiments.DEFAULT_JUDGE_AGENT, help="rubric / 语义评测所用 judge agent id")
-    parser.add_argument(
-        "--judge-model",
-        default=experiments.DEFAULT_JUDGE_MODEL,
-        help="judge runtime model，默认锁定为 openai/gpt-5.5",
-    )
-    parser.add_argument(
-        "--judge-agent-thinking",
-        default=experiments.DEFAULT_JUDGE_AGENT_THINKING,
-        choices=experiments.THINKING_LEVEL_CHOICES,
-        help="judge OpenClaw thinking level，默认 high",
-    )
     parser.add_argument("--single-timeout", type=int, default=7200, help="单一 LLM 每题超时秒数，默认 7200 秒（2 小时）")
     parser.add_argument(
         "--single-timeout-retries",
@@ -295,7 +259,6 @@ def parse_args(service=None) -> argparse.Namespace:
         default="5,15,45",
         help="单一 LLM timeout 重试前等待秒数，逗号分隔，默认 5,15,45",
     )
-    parser.add_argument("--judge-timeout", type=int, default=300, help="Judge 每次评测超时秒数")
     parser.add_argument("--execution-backend", choices=("host", "docker"), default="docker", help="single-LLM execution backend")
     parser.add_argument("--container-image", default="openclaw-benchmark-single-llm:latest", help="Docker image for single-LLM attempts")
     parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
@@ -383,25 +346,14 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
     timeout_mode = "no_timeout" if bool(getattr(args, "no_timeout", False)) else "bounded"
     convergence_policy_meta = service.convergence_metadata(args)
     group_ids = experiments.select_group_ids(args.groups, groups=catalog.EXPERIMENT_GROUPS)
-    dataset_files = dataset_selection.select_dataset_files(args)
+    dataset_files = service.select_dataset_files(args)
     if args.list_datasets:
         dataset_selection.print_dataset_listing(dataset_files)
         return 0
     if not dataset_files:
         raise _BenchmarkError("No benchmark files discovered.")
 
-    all_records = dataset_selection.filter_records_by_ids(
-        dataset_selection.filter_records_by_subsets(dataset_selection.load_records(dataset_files), args.subsets),
-        getattr(args, "record_ids", None),
-    )
-    if args.random_count_per_subset is not None:
-        selected_pool = dataset_selection.sample_records_per_subset(
-            all_records,
-            per_subset_count=args.random_count_per_subset,
-            seed=args.random_seed,
-        )
-    else:
-        selected_pool = all_records
+    selected_pool = service.select_records(dataset_files, args)
 
     records = dataset_selection.apply_offset_limit(selected_pool, offset=args.offset, limit=args.limit)
     if not records:
@@ -439,6 +391,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
     evaluate_invocation_record = partial(
         evaluate_record,
         evaluator_overrides=evaluator_overrides,
+        evaluators=service.evaluator_registry(),
     )
 
     if args.exact_output_dir:
@@ -533,18 +486,21 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         invocation_id=invocation_id,
         workspace_manager=workspace_manager,
         single_agent_model=args.single_agent_model,
-        judge_model=args.judge_model,
+        judge_model=getattr(args, "judge_model", None),
         single_agent_id_override=args.single_agent_id_override,
     )
-    judge = judge_runtime.JudgeClient(
-        judge_agent=args.judge_agent,
-        timeout_seconds=args.judge_timeout,
-        config_path=config_pool.judge_config_path(),
-        thinking=args.judge_agent_thinking,
-        workspace_manager=workspace_manager,
-        cancellation_token=cancellation_token,
-        process_registry=process_registry,
-    )
+    judge = None
+    if service.USES_JUDGE:
+        from benchmarking.runtime import judge as judge_runtime
+        judge = judge_runtime.JudgeClient(
+            judge_agent=args.judge_agent,
+            timeout_seconds=args.judge_timeout,
+            config_path=config_pool.judge_config_path(),
+            thinking=args.judge_agent_thinking,
+            workspace_manager=workspace_manager,
+            cancellation_token=cancellation_token,
+            process_registry=process_registry,
+        )
     group_waves = service.group_waves(group_ids, args)
     progress_writer = ProgressWriter(
         output_root,
@@ -894,11 +850,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
             "access_policies": [workspace_policies[key] for key in sorted(workspace_policies)],
         },
         "merge_existing_per_record": args.merge_existing_per_record,
-        "random_sampling": {
-            "enabled": args.random_count_per_subset is not None,
-            "count_per_subset": args.random_count_per_subset,
-            "seed": args.random_seed,
-        },
+        "random_sampling": service.sampling_metadata(args),
         "records": len(records),
         "execution_plan": {
             "mode": service.SCHEDULING_MODE,
@@ -1001,12 +953,12 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
             }
             for group_id in group_ids
         },
-        "judge": {
+        "judge": ({
             "agent": args.judge_agent,
             "model": args.judge_model,
             "thinking": args.judge_agent_thinking,
             "config_path": str(config_pool.judge_config_path()),
-        },
+        } if service.USES_JUDGE else None),
     }
     run_state.save_json(output_root / "runtime-manifest.json", runtime_manifest)
     if cancellation_token.is_cancelled:

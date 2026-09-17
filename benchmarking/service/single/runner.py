@@ -29,7 +29,6 @@ from benchmarking.core.contracts import (
 from benchmarking.core.convergence import (
     ConvergencePolicy,
     has_final_answer_marker,
-    has_research_final_marker,
     is_complete_answer_for_eval,
     is_timeout_family_text,
 )
@@ -103,13 +102,7 @@ OPENCLAW_TIMEOUT_SENTINELS = (
     OPENCLAW_IDLE_TIMEOUT_TEXT,
 )
 NO_TIMEOUT_SUBPROCESS_GUARD_SECONDS = 24 * 60 * 60
-HLE_ANSWER_RE = re.compile(r"(?im)^\s*Answer\s*:\s*\S")
-FINAL_MARKER_REQUIRED_EVAL_KINDS = {
-    "superchem_multiple_choice_rpf",
-    "chembench_open_ended",
-    "frontierscience_olympiad",
-    "verifier_grounded",
-}
+
 
 
 def verifier_grounded_answer_schema_from_record(record: Any) -> dict[str, Any]:
@@ -197,7 +190,7 @@ def is_openclaw_timeout_result(
         text,
         eval_kind=str(eval_kind or ""),
         answer_schema=answer_schema,
-    ) or HLE_ANSWER_RE.search(text):
+    ):
         return False
     if is_runner_meta_timeout_family(runner_meta):
         return True
@@ -238,7 +231,6 @@ def classify_agent_error_payload(
             eval_kind=str(eval_kind or ""),
             answer_schema=answer_schema,
         )
-        or HLE_ANSWER_RE.search(full_response_text)
     )
     replay_invalid_diagnostics = _replay_invalid_diagnostics(
         runner_meta=runner_meta,
@@ -366,7 +358,6 @@ def _candidate_contract_meta(
         "answer_schema_format": schema_format,
         "answer_schema_value_type": schema_value_type,
         "answer_schema_fence_language": schema_fence_language,
-        "has_hle_answer_field": bool(HLE_ANSWER_RE.search(str(full_response_text or ""))),
     }
     if code:
         meta["code"] = code
@@ -375,8 +366,6 @@ def _candidate_contract_meta(
     if missing_fields:
         meta["missing_fields"] = list(missing_fields)
     raw_text = str(full_response_text or "")
-    if meta["eval_kind"] == "frontierscience_research":
-        meta["has_research_final_marker"] = has_research_final_marker(raw_text)
     if raw_text:
         meta["raw_text"] = raw_text[:4000]
         meta["raw_text_truncated"] = len(raw_text) > 4000
@@ -435,7 +424,7 @@ def validate_candidate_answer_contract(
                 missing_fields=["full_response_text"],
             ),
         )
-    if eval_kind in FINAL_MARKER_REQUIRED_EVAL_KINDS and not has_complete_answer:
+    if not has_complete_answer:
         message = "Single-LLM candidate answer contract invalid: required `FINAL ANSWER:` marker is missing."
         return CandidateAnswerContract(
             valid=False,
@@ -449,22 +438,6 @@ def validate_candidate_answer_contract(
                 code="candidate_answer_contract_invalid",
                 message=message,
                 missing_fields=["short_answer_text", "FINAL ANSWER:"],
-            ),
-        )
-    if eval_kind == "hle" and not HLE_ANSWER_RE.search(full_text):
-        message = "Single-LLM candidate answer contract invalid: HLE response must include an `Answer:` field."
-        return CandidateAnswerContract(
-            valid=False,
-            code="candidate_answer_contract_invalid",
-            message=message,
-            details=_candidate_contract_meta(
-                valid=False,
-                record=record,
-                short_answer_text=short_text,
-                full_response_text=full_text,
-                code="candidate_answer_contract_invalid",
-                message=message,
-                missing_fields=["Answer:"],
             ),
         )
     return CandidateAnswerContract(
@@ -930,7 +903,6 @@ class SingleLLMRunner:
         environment: dict[str, str],
     ) -> RunnerResult:
         skills_enabled = bool(getattr(group, "skills_enabled", True))
-        is_vgb = str(getattr(record, "eval_kind", "") or "").strip() == "verifier_grounded"
         identity = AttemptIdentity(
             run_id=self.workspace_manager.run_id,
             invocation_id=self.workspace_manager.invocation_id,
@@ -970,7 +942,7 @@ class SingleLLMRunner:
         attempt_environment: AttemptPythonEnvironment | None = None
         result: RunnerResult | None = None
         attempt_env = dict(environment)
-        if is_vgb and self.execution_backend == "host":
+        if self.execution_backend == "host":
             try:
                 register_environment(lease.scratch_dir, identity.sentinel_fields(), "host")
                 attempt_environment = create_attempt_environment(
@@ -1117,26 +1089,25 @@ class SingleLLMRunner:
                 manifest.update(status="manifest_failed", error=f"{type(exc).__name__}: {exc}")
                 result.runner_meta["attempt_environment"] = manifest
             result.runner_meta["attempt_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
-        if self.execution_backend == "docker" or is_vgb:
-            manifest = result.runner_meta.get("attempt_environment") or {}
-            try:
-                validation = validate_dependency_evidence(manifest, identity=identity.sentinel_fields(), scratch=lease.scratch_dir,
-                    expected_venv="/benchmark/workspace/scratch/venv" if self.execution_backend == "docker" else str(lease.scratch_dir / "venv"),
-                    pypi_cutoff=self.pypi_cutoff)
-            except (TypeError, ValueError, AttributeError) as exc:
-                validation = {"status": "invalid", "scoreable": False, "errors": [str(exc)]}
-            manifest.update(status=validation["status"], validation=validation)
-            try:
-                write_evidence(lease.notes_dir / "dependency-manifest.json", manifest)
-            except OSError as exc:
-                validation.update(status="invalid", scoreable=False, persistence_error=str(exc))
-            result.runner_meta["attempt_environment"] = manifest
-            result.runner_meta["dependency_evidence"] = validation
-            if validation["status"] == "partial":
-                result.runner_meta["degraded_execution"] = True
-            if not validation["scoreable"] and result.failure is None:
-                result = replace(result, status=RunStatus.FAILED, recovery=None, failure=FailureInfo(
-                    code="dependency_evidence_invalid", message="Attempt dependency evidence is invalid", details=validation))
+        manifest = result.runner_meta.get("attempt_environment") or {}
+        try:
+            validation = validate_dependency_evidence(manifest, identity=identity.sentinel_fields(), scratch=lease.scratch_dir,
+                expected_venv="/benchmark/workspace/scratch/venv" if self.execution_backend == "docker" else str(lease.scratch_dir / "venv"),
+                pypi_cutoff=self.pypi_cutoff)
+        except (TypeError, ValueError, AttributeError) as exc:
+            validation = {"status": "invalid", "scoreable": False, "errors": [str(exc)]}
+        manifest.update(status=validation["status"], validation=validation)
+        try:
+            write_evidence(lease.notes_dir / "dependency-manifest.json", manifest)
+        except OSError as exc:
+            validation.update(status="invalid", scoreable=False, persistence_error=str(exc))
+        result.runner_meta["attempt_environment"] = manifest
+        result.runner_meta["dependency_evidence"] = validation
+        if validation["status"] == "partial":
+            result.runner_meta["degraded_execution"] = True
+        if not validation["scoreable"] and result.failure is None:
+            result = replace(result, status=RunStatus.FAILED, recovery=None, failure=FailureInfo(
+                code="dependency_evidence_invalid", message="Attempt dependency evidence is invalid", details=validation))
         result.runner_meta["workspace_scratch"] = scratch_meta
         if skills_enabled:
             result.runner_meta["skill_scratch"] = scratch_meta
@@ -1340,14 +1311,14 @@ class SingleLLMRunner:
 
     @staged
     def run(self, record: Any, group: Any) -> RunnerResult:
+        if record.eval_kind != "verifier_grounded":
+            raise ValueError("Single-LLM runner requires eval_kind=verifier_grounded")
         self._configure_record_skills(record, group)
         input_bundle = self._ensure_runtime_bundle(record, bundle_root=self.runtime_bundle_root)
         prompt = self._build_single_llm_prompt(
             record,
             websearch_enabled=group.websearch,
             skills_enabled=bool(getattr(group, "skills_enabled", True)),
-            input_bundle=(RuntimePathProjection(self.workspace_manager.active_workspace_path(group_id=group.id, agent_id=self.agent_id), runtime_paths.skills_root, input_bundle).visible_bundle()
-                          if self.execution_backend == "docker" else input_bundle),
             configured_skills=set(self.configured_skills),
             time_budget_seconds=None if self.no_timeout else self.convergence_policy.timeout_seconds,
         )
@@ -1427,9 +1398,8 @@ class SingleLLMRunner:
         )
 
     def _configure_record_skills(self, record: Any, group: Any) -> None:
-        is_vgb = str(getattr(record, "eval_kind", "") or "").strip() == "verifier_grounded"
         skills_enabled = bool(getattr(group, "skills_enabled", True))
-        selected = self.vgb_configured_skills if is_vgb and skills_enabled else self.default_configured_skills
+        selected = self.vgb_configured_skills if skills_enabled else ()
         self.configured_skills = selected
         if not self.config_path.is_file():
             return

@@ -600,9 +600,14 @@ def format_average_cell(bundle: dict[str, Any], group_id: str) -> str:
         count_number = 0
         pass_number = 0
     verifier_values = verifier_score_values(bundle, group_id)
-    if verifier_values and len(verifier_values) == count_number:
+    group_records = [record for record in bundle.get("records", []) if isinstance(record, dict)
+                     and any(isinstance(group, dict) and group.get("group_id") == group_id
+                             for group in record.get("groups", []) or [])]
+    vgb_only = bool(group_records) and all(record.get("eval_kind") == "verifier_grounded"
+                                         for record in group_records)
+    if vgb_only or (verifier_values and len(verifier_values) == count_number):
         verifier_average = _average_values(verifier_values)
-        return f"Verifier 平均分 {verifier_average}" if verifier_average else "-"
+        return f"Verifier 平均分 {verifier_average}" if verifier_average else "未评分"
     if count_number > 0:
         parts.append(f"正确率 {pass_number}/{count_number} ({format_percent(pass_number / count_number)})")
     avg_process_score = average_process_score(bundle, group_id)

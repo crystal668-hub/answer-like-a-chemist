@@ -99,7 +99,7 @@ def test_zero_container_exit_with_timeout_payload_uses_payload_outcome() -> None
         payload={"result": result_payload},
         result_payload=result_payload,
         runner_meta=dict(result_payload["meta"]),
-        record=SimpleNamespace(eval_kind="superchem_multiple_choice_rpf", payload={}, grading=None),
+        record=SimpleNamespace(eval_kind="verifier_grounded", payload={}, grading=None),
         group=SimpleNamespace(skills_enabled=True),
         input_bundle=None,
         session_id="session-1",

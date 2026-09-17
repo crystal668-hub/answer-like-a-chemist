@@ -349,7 +349,8 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
 
             agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
             self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
-            self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
+            self.assertNotIn("benchmark-judge", agents)
+            self.assertFalse((root / "agents/benchmark-judge").exists())
             self.assertEqual(["chem-calculator", "rdkit"], agents["benchmark-single-skills-on"]["skills"])
             self.assertIn(str((root / "workspace" / "skills").resolve()), payload["skills"]["load"]["extraDirs"])
             self.assertIn(
@@ -603,7 +604,8 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
 
             agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
             self.assertEqual("openai/gpt-5.5", agents["benchmark-single-skills-on"]["model"])
-            self.assertEqual("openai/gpt-5.5", agents["benchmark-judge"]["model"])
+            self.assertNotIn("benchmark-judge", agents)
+            self.assertFalse((root / "agents/benchmark-judge").exists())
 
     def test_same_agent_override_remains_isolated_by_group_and_never_uses_legacy_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

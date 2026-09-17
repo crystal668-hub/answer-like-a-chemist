@@ -30,11 +30,18 @@ def validate_verifier_grounded_release(
     *,
     release_config: ReleaseConfig,
 ) -> None:
+    if record.eval_kind != "verifier_grounded" or record.grading.kind != "verifier_grounded":
+        raise EvaluationError("VGB requires eval_kind=verifier_grounded.")
     config = _verifier_grounded_config(record)
     if config.get("release") != release_config.identity:
         raise EvaluationError(
             "Benchmark record release identity does not match the invocation verifier release"
         )
+    track = release_config.tracks.get(str(config.get("track") or ""))
+    if track is None or record.dataset != track["dataset"]:
+        raise EvaluationError("Benchmark dataset/track is not in the pinned verifier release.")
+    if config.get("task_id") != record.record_id or record.record_id not in track["task_ids"]:
+        raise EvaluationError("Benchmark task identity is not in the pinned verifier track.")
 
 
 def run_verifier_grounded_evaluation(

@@ -124,17 +124,16 @@ def build_run_scoped_config_payload(
     workspace_manager: AttemptWorkspaceManager,
     single_agent_id_override: str | None = None,
 ) -> dict[str, Any]:
-    judge_workspace = workspace_manager.active_workspace_path(
-        group_id="benchmark-judge-runtime",
-        agent_id=context.judge_agent_id,
-    )
-    judge_agent_dir = context.agents_root / context.judge_agent_id / "agent"
-    ensure_basic_agent_dirs(judge_agent_dir)
-    judge = ProvisionedAgent(
-        agent_id=context.judge_agent_id,
-        workspace=judge_workspace,
-        agent_dir=judge_agent_dir,
-    )
+    judge = None
+    if group.runner == "chemqa" or group.id == "benchmark-judge-runtime":
+        judge_workspace = workspace_manager.active_workspace_path(
+            group_id="benchmark-judge-runtime", agent_id=context.judge_agent_id,
+        )
+        judge_agent_dir = context.agents_root / context.judge_agent_id / "agent"
+        ensure_basic_agent_dirs(judge_agent_dir)
+        judge = ProvisionedAgent(
+            agent_id=context.judge_agent_id, workspace=judge_workspace, agent_dir=judge_agent_dir,
+        )
     spec = context.experiment_specs.get(
         group.id,
         ExperimentSpec(

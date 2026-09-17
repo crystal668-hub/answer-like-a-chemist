@@ -63,7 +63,7 @@ def _answer_schema_from_args(args: argparse.Namespace) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def build_finalization_rescue_prompt(eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> str:
+def build_finalization_rescue_prompt(eval_kind: str = "verifier_grounded", answer_schema: dict[str, Any] | None = None) -> str:
     kind = str(eval_kind or "").strip()
     common = [
         "The previous turn did not organize a final answer that satisfies the benchmark output requirements.",
@@ -71,52 +71,12 @@ def build_finalization_rescue_prompt(eval_kind: str = "", answer_schema: dict[st
         "Use only the reasoning chain, calculations, tool verification results, and evidence already present in this session.",
         "Before answering, check consistency across the prior reasoning and then follow only the output requirements for this task type.",
     ]
-    if kind == "frontierscience_research":
-        specific = [
-            "This is a FrontierScience research-track chemistry task scored against itemized reasoning criteria.",
-            "Provide a complete, structured, multi-part research synthesis covering every requested condition, calculation, mechanism, protocol consequence, and conclusion.",
-            "Keep rubric-relevant derivations, assumptions, units, evidence, and justifications visible before the final research section.",
-            "Do not add the short-answer `FINAL ANSWER:` marker used by non-research tasks.",
-            "End with exactly this Markdown heading and section:",
-            "## FINAL RESEARCH ANSWER",
-            "<rubric-complete final synthesis>",
-        ]
-    elif kind == "superchem_multiple_choice_rpf":
-        specific = [
-            "This is a chemistry multiple-choice question.",
-            "Provide concise visible option checks that distinguish the candidates.",
-            "End with exactly one line formatted as: FINAL ANSWER: <option letters>.",
-            "Use only uppercase option letters; separate multiple correct letters with `|`.",
-        ]
-    elif kind == "chembench_open_ended":
-        specific = [
-            "Provide the necessary formulae, substitutions, units, rounding, or exact string evidence for the answer.",
-            "End with exactly one line formatted as: FINAL ANSWER: <answer>.",
-        ]
-    elif kind == "frontierscience_olympiad":
-        specific = [
-            "End with exactly one line formatted as: FINAL ANSWER: <answer>.",
-            "The final line should contain only the requested value, expression, formula, structure name, or entity, including required units or rounding.",
-            "Do not provide multiple answer attempts.",
-        ]
-    elif kind == "hle":
-        specific = [
-            "Use the official HLE response format exactly:",
-            "Explanation: <your visible derivation and checks>",
-            "Answer: <your chosen answer>",
-            "Confidence: <your confidence score between 0% and 100%>",
-            "Do not add `FINAL ANSWER:` to HLE responses.",
-        ]
-    elif kind == "verifier_grounded":
-        specific = [
-            "Provide a complete verifier-grounded answer based on the existing session reasoning.",
-            "End with the exact final answer format requested in the original question.",
-        ]
-    else:
-        specific = [
-            "Provide a complete answer based on the existing session reasoning.",
-            "If a final answer line is needed, use: FINAL ANSWER: <answer>.",
-        ]
+    if kind != "verifier_grounded":
+        raise ValueError("Single-LLM rescue requires eval_kind=verifier_grounded")
+    specific = [
+        "Provide a complete verifier-grounded answer based on the existing session reasoning.",
+        "End with the exact final answer format requested in the original question.",
+    ]
     return "\n".join(common + specific)
 
 
@@ -128,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--message", required=True, help="Prompt to send to OpenClaw.")
     parser.add_argument("--thinking", help="Forward OpenClaw thinking override.")
     parser.add_argument("--timeout", type=int, help="Forward OpenClaw timeout override in seconds.")
-    parser.add_argument("--eval-kind", default="", help="Benchmark eval kind for rescue-only answer recovery.")
+    parser.add_argument("--eval-kind", choices=("verifier_grounded",), default="verifier_grounded", help="Benchmark eval kind for rescue-only answer recovery.")
     parser.add_argument("--answer-schema-json", default="", help="Optional benchmark answer schema JSON for schema-aware recovery.")
     parser.add_argument("--json", action="store_true", help="Forward OpenClaw JSON output and attach isolation audit.")
     return parser.parse_args()
@@ -468,7 +428,7 @@ def _try_finalization_rescue(
         context_path = snapshot_path.parent.parent / "finalization-rescue-context.json"
         write_finalization_context_bundle(bundle, context_path)
         _merge_convergence(target, {"primary_snapshot": snapshot_meta, "rescue_context": {"path": str(context_path), "sha256": __import__('hashlib').sha256(context_path.read_bytes()).hexdigest(), "included_chars": bundle.included_chars, "omitted_event_count": bundle.omitted_event_count}})
-        rescue_prompt = build_finalization_rescue_prompt(str(getattr(args, "eval_kind", "") or ""), answer_schema=answer_schema) + "\n\nRESTRICTED CONTEXT BUNDLE:\n" + bundle.prompt_projection()
+        rescue_prompt = build_finalization_rescue_prompt(str(getattr(args, "eval_kind", "verifier_grounded") or "verifier_grounded"), answer_schema=answer_schema) + "\n\nRESTRICTED CONTEXT BUNDLE:\n" + bundle.prompt_projection()
     except Exception as exc:
         _merge_convergence(target, {"finalization_rescue_attempted": False, "finalization_rescue_error": str(exc)[:1000]})
         return False

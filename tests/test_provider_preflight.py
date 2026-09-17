@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 import sys
 from unittest.mock import Mock
@@ -63,14 +64,17 @@ def test_provider_connection_rejects_unresolved_endpoint(setup_preflight):
 def test_cli_connection_failure_stops_before_workspace_recovery_and_scheduling(setup_preflight, monkeypatch, tmp_path):
     from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.workflow import cli
+    from benchmarking.service.single import execution
+    from benchmarking.core.datasets import load_records
     from benchmarking.workflow.errors import BenchmarkError
 
     config, _, runtime = setup_preflight
     output = tmp_path / "run"
-    record = BenchmarkRecord(record_id="record", dataset="test", source_file="test.jsonl", prompt="question", eval_kind="generic_semantic", reference_answer="answer", payload={})
+    record = load_records([Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/datasets/verifier_grounded_rdkit.jsonl"])[0]
+    record.dataset = "verifier_grounded_rdkit"
     monkeypatch.setattr(sys, "argv", ["benchmark", "--openclaw-config", str(config), "--exact-output-dir", str(output), "--single-agent-model", "qwen/flash"])
-    monkeypatch.setattr(cli.dataset_selection, "select_dataset_files", lambda args: [tmp_path / "test.jsonl"])
-    monkeypatch.setattr(cli.dataset_selection, "load_records", lambda files: [record])
+    monkeypatch.setattr(execution, "select_dataset_files", lambda args: [tmp_path / "test.jsonl"])
+    monkeypatch.setattr(execution, "select_records", lambda files, args: [record])
     manager = Mock(runtime_root=tmp_path / "workspaces")
     monkeypatch.setattr(cli, "AttemptWorkspaceManager", Mock(return_value=manager))
     network = ContainerNetworkConfig((("HTTPS_PROXY", "http://host.docker.internal:7892"),))

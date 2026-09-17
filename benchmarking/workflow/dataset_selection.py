@@ -172,6 +172,35 @@ def select_dataset_files(args: Any) -> list[Path]:
     return discovered
 
 
+def select_vgb_dataset_files(args: Any) -> list[Path]:
+    from benchmarking.runtime.vgb_bridge import load_release_config
+    allowed = {track["dataset"] for track in load_release_config().tracks.values()}
+    requested = {item.strip() for item in str(args.datasets or "").split(",") if item.strip()}
+    unknown = requested - allowed
+    if unknown:
+        raise BenchmarkError(f"Unsupported VGB dataset(s): {', '.join(sorted(unknown))}")
+    files = select_dataset_files(args)
+    if args.files:
+        # Explicit files keep the shared <dataset>/data/<file>.jsonl contract.
+        load_vgb_records(files)
+        return files
+    return [path for path in files if dataset_name_from_file(path) in allowed]
+
+
+def load_vgb_records(paths: Iterable[Path]) -> list[BenchmarkRecord]:
+    from benchmarking.runtime.vgb_bridge import load_release_config
+    from benchmarking.scoring.evaluators.verifier_grounded import validate_verifier_grounded_release
+    from benchmarking.scoring.errors import EvaluationError
+    release = load_release_config()
+    records = load_records(paths)
+    for record in records:
+        try:
+            validate_verifier_grounded_release(record, release_config=release)
+        except EvaluationError as exc:
+            raise BenchmarkError(f"Invalid VGB record {record.record_id!r}: {exc}") from exc
+    return records
+
+
 def print_dataset_listing(paths: list[Path]) -> None:
     payload = [{"dataset": dataset_name_from_file(path), "path": str(path)} for path in paths]
     print(json.dumps(payload, indent=2, ensure_ascii=False))

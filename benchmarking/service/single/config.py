@@ -36,6 +36,8 @@ def build_runner_config(*, base_payload, context, group, spec, judge, single_age
         judge_model=judge_model,
         runner_model=single_agent_model,
     )
+    payload["agents"]["list"] = [entry for entry in payload["agents"]["list"]
+                                  if isinstance(entry, dict) and entry.get("id") == agent_id]
     skill_scopes = (
         context.benchmark_skills_root,
         context.benchmark_skills_root.parent / "scripts" / "run_skill.py",
@@ -54,4 +56,3 @@ def build_runner_config(*, base_payload, context, group, spec, judge, single_age
     }
     _enable_benchmark_workdir_guard(payload, agent_policies=policies)
     return payload
-

@@ -7,6 +7,8 @@ from benchmarking.service.chemdebate.orchestration import runner_options as lega
 from benchmarking.service.chemdebate.config import build_runner_config as legacy_config
 from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
+from benchmarking.service.chemdebate.prompts import build_chemqa_goal
+
 import base64
 import io
 import json
@@ -150,38 +152,15 @@ def run_group_for_test(**kwargs: object) -> list[GroupRecordResult]:
 
 
 class BenchmarkTestModuleTests(unittest.TestCase):
-    def _single_llm_record(self, *, eval_kind: str = "superchem_multiple_choice_rpf") -> object:
-        dataset = "superchem" if eval_kind == "superchem_multiple_choice_rpf" else "chembench"
-        reference_answer = "B" if eval_kind == "superchem_multiple_choice_rpf" else "5"
-        return BenchmarkRecord(
-            record_id="demo",
-            dataset=dataset,
-            source_file="/tmp/demo.jsonl",
-            eval_kind=eval_kind,
-            prompt="Question?",
-            reference_answer=reference_answer,
-            payload={},
-        )
+    """Frozen ChemQA and shared historical contracts."""
 
-    def _single_llm_completed_process(
-        self,
-        command: list[str],
-        *,
-        text: str,
-        meta: dict[str, object] | None = None,
-        is_error: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        payload = {
-            "result": {
-                "payloads": [{"text": text, **({"isError": True} if is_error else {})}],
-                "meta": {
-                    "stdout_diagnostics": {"schema_valid": True},
-                    "session_isolation": {"session_isolation_ok": True},
-                    **dict(meta or {}),
-                },
-            }
-        }
-        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
+    def setUp(self):
+        original = dict(scoring_evaluation.EVALUATORS)
+        scoring_evaluation.register_default_evaluators()
+        def restore():
+            scoring_evaluation.EVALUATORS.clear()
+            scoring_evaluation.EVALUATORS.update(original)
+        self.addCleanup(restore)
 
     def test_default_experiment_groups_are_active_single_groups(self) -> None:
         self.assertEqual(
@@ -224,13 +203,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertNotIn("benchmark-cleanroom", experiments.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("chemqa-review", experiments.BENCHMARK_SKILLS_ALLOWLIST)
         self.assertNotIn("debateclaw-v1", experiments.BENCHMARK_SKILLS_ALLOWLIST)
-
-    def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
-        source = Path("benchmarking/service/single/runner.py").read_text(encoding="utf-8")
-
-        self.assertNotIn("selected_skills", source)
-        self.assertNotIn("config_for_record", source)
-        self.assertNotIn("SkillPlan", source)
 
     def test_parse_args_accepts_single_agent_id_override_and_rejects_removed_flags(self) -> None:
         with mock.patch.object(
@@ -298,7 +270,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_parse_args_accepts_thinking_overrides_and_rejects_invalid_values(self) -> None:
         with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli"]):
-            args = benchmark_test.parse_args()
+            args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("high", args.single_agent_thinking)
         self.assertEqual("high", args.judge_agent_thinking)
 
@@ -313,7 +285,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "minimal",
             ],
         ):
-            args = benchmark_test.parse_args()
+            args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("medium", args.single_agent_thinking)
         self.assertEqual("minimal", args.judge_agent_thinking)
 
@@ -328,13 +300,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "adaptive",
             ],
         ):
-            args = benchmark_test.parse_args()
+            args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("adaptive", args.single_agent_thinking)
         self.assertEqual("adaptive", args.judge_agent_thinking)
 
         with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--single-agent-thinking", "extreme"]):
             with self.assertRaises(SystemExit):
-                benchmark_test.parse_args()
+                benchmark_test.parse_args(legacy_execution)
 
     def test_parse_args_accepts_subsets_filter(self) -> None:
         with mock.patch.object(
@@ -346,93 +318,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "frontierscience_Research,superchem_multimodal",
             ],
         ):
-            args = benchmark_test.parse_args()
+            args = benchmark_test.parse_args(legacy_execution)
 
         self.assertEqual("frontierscience_Research,superchem_multimodal", args.subsets)
-
-    def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            dataset_path = root / "chembench" / "data" / "bench.jsonl"
-            dataset_path.parent.mkdir(parents=True, exist_ok=True)
-            dataset_path.write_text(
-                json.dumps(
-                    {
-                        "id": "demo-record",
-                        "prompt": "Question?",
-                        "answer": "42",
-                        "eval_kind": "chembench_open_ended",
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-            base_config = root / "openclaw.json"
-            base_config.write_text(json.dumps({"agents": {"list": []}}, ensure_ascii=False), encoding="utf-8")
-            output_root = root / "out"
-            captured: dict[str, str] = {}
-
-            class DummyConfigPool:
-                def __init__(self, **_: object) -> None:
-                    pass
-
-                def config_for_group(self, group: object) -> Path:
-                    path = output_root / "runtime-config" / f"{getattr(group, 'id', 'group')}-openclaw.json"
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("{}", encoding="utf-8")
-                    return path
-
-                def judge_config_path(self) -> Path:
-                    path = output_root / "runtime-config" / "benchmark-judge-openclaw.json"
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text("{}", encoding="utf-8")
-                    return path
-
-            def fake_run_group(**kwargs):
-                captured["single_agent"] = kwargs["runner_options_factory"].keywords["single_agent"]
-                captured["single_policy_timeout"] = str(kwargs["runner_options_factory"].keywords["args"].single_timeout)
-                return []
-
-            argv = [
-                "benchmarking.workflow.cli",
-                "--benchmark-root",
-                str(root),
-                "--openclaw-config",
-                str(base_config),
-                "--exact-output-dir",
-                str(output_root),
-                "--groups",
-                "single_llm_skills_off",
-                "--single-agent-id-override",
-                "custom-single-agent",
-            ]
-
-            with mock.patch.object(runtime_config_pool, "ConfigPool", DummyConfigPool), \
-                mock.patch.object(judge_runtime, "JudgeClient", return_value=object()), \
-                mock.patch.object(
-                    benchmark_test,
-                    "run_benchmark_web_search_preflight",
-                    return_value={
-                        "enabled": True,
-                        "provider": "duckduckgo",
-                        "available": True,
-                        "reports": {"single_llm_skills_off": {"available": True}},
-                    },
-                ), \
-                mock.patch.object(orchestration, "run_group", side_effect=fake_run_group), \
-                mock.patch.object(
-                    benchmark_test,
-                    "launch_automated_evaluation",
-                    return_value={"status": "launched", "output_root": str(output_root)},
-                ), \
-                mock.patch.object(sys, "argv", argv):
-                exit_code = benchmark_test.main()
-
-            self.assertEqual(0, exit_code)
-            self.assertEqual("custom-single-agent", captured.get("single_agent"))
-            self.assertEqual("7200", captured.get("single_policy_timeout"))
 
     def test_main_print_selected_records_filters_by_subsets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -488,7 +376,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             ]
             stream = io.StringIO()
             with mock.patch.object(sys, "argv", argv), redirect_stdout(stream):
-                exit_code = benchmark_test.main()
+                exit_code = benchmark_test.main(service=legacy_execution)
 
             self.assertEqual(0, exit_code)
             selected = json.loads(stream.getvalue())
@@ -876,11 +764,9 @@ Points: 0.5, Item: Second criterion
             )
         agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
         self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
-        self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
+        self.assertNotIn("benchmark-judge", agents)
         self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents["benchmark-single-skills-on"]["skills"])
-        self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertNotIn("thinking", agents["benchmark-single-skills-on"])
-        self.assertNotIn("thinking", agents["benchmark-judge"])
         self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
         self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
         self.assertIn(str(runtime_paths.skills_root), payload["skills"]["load"]["extraDirs"])
@@ -1355,71 +1241,6 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", classify_subset(multimodal_record))
 
-    def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Calculate the pH of a buffer from the supplied concentrations.",
-            reference_answer="4.7",
-            payload={"track": "olympiad"},
-        )
-
-        skills_on = build_single_llm_prompt(
-            record,
-            websearch_enabled=True,
-            skills_enabled=True,
-            input_bundle=None,
-        )
-        skills_off = build_single_llm_prompt(
-            record,
-            websearch_enabled=True,
-            skills_enabled=False,
-            input_bundle=None,
-        )
-
-        self.assertIn("Chemistry skill catalog:", skills_on)
-        self.assertIn(
-            "The catalog describes available capabilities; whether and how to use a skill is your choice.",
-            skills_on,
-        )
-        self.assertIn("act-like-a-chemist", skills_on)
-        self.assertIn("paper-pipeline", skills_on)
-        self.assertTrue(skills_on.endswith(record.prompt))
-        self.assertEqual(record.prompt, skills_off)
-        for prompt in (skills_on, skills_off):
-            self.assertNotIn("Read act-like-a-chemist first", prompt)
-            self.assertNotIn("Atomic Coverage Checklist", prompt)
-            self.assertNotIn("Do not use OpenClaw skills", prompt)
-
-    def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Calculate the pH of a buffer from the supplied concentrations.",
-            reference_answer="4.7",
-            payload={"track": "olympiad"},
-        )
-
-        prompt = build_single_llm_prompt(
-            record,
-            websearch_enabled=True,
-            skills_enabled=True,
-            input_bundle=None,
-            time_budget_seconds=900,
-        )
-
-        self.assertIn("Time budget: 900 seconds", prompt)
-        self.assertIn("Chemistry skill catalog:", prompt)
-        self.assertIn("act-like-a-chemist", prompt)
-        self.assertNotIn("Atomic Coverage Checklist", prompt)
-        self.assertNotIn("Read act-like-a-chemist first", prompt)
-        self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
-        self.assertNotIn("FINAL ANSWER", prompt)
-
     def test_sample_records_per_subset_draws_requested_count(self) -> None:
         records = []
         for idx in range(3):
@@ -1765,14 +1586,13 @@ Points: 0.5, Item: Second criterion
             question_text = bundle.question_markdown.read_text(encoding="utf-8")
             self.assertIn("# HLE Benchmark Record", question_text)
             self.assertIn("images/hle-image-01.png", question_text)
-            prompt = build_single_llm_prompt(
+            prompt = build_chemqa_goal(
                 record,
                 websearch_enabled=True,
-                skills_enabled=False,
                 input_bundle=bundle,
             )
-            self.assertIn("Read the question bundle file first", prompt)
-            self.assertIn("Inspect the local image files referenced in the bundle", prompt)
+            self.assertIn(str(bundle.question_markdown), prompt)
+            self.assertIn("inspect any referenced images", prompt)
 
     def test_build_chemqa_full_response_uses_final_submission_rationale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
@@ -2868,1476 +2688,6 @@ Points: 0.5, Item: Second criterion
                 self.assertNotIn("JSON decode failed", message)
             finally:
                 subprocess_utils.run_subprocess = original_run_subprocess
-
-    def test_single_llm_runner_invokes_wrapper_with_configured_thinking(self) -> None:
-        captured: dict[str, object] = {}
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                captured["command"] = list(command)
-                captured["env"] = dict(env or {})
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Reasoning\nFINAL ANSWER: 5"}],
-                                "meta": {
-                                    "toolSummary": {"calls": 1, "tools": ["exec"], "failures": 0},
-                                    "convergence": {"tool_call_count": 1, "tool_names": ["exec"]},
-                                    "session_isolation": {
-                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
-                                        "agent_id": "benchmark-single-skills-on",
-                                        "session_store_path": "/tmp/sessions.json",
-                                        "preflight_removed_stale_main_entry": True,
-                                        "preflight_previous_session_id": "old-session",
-                                        "postflight_entry_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
-                                        "postflight_entry_session_file": "/tmp/benchmark-single_llm_skills_on-demo-abc12345.jsonl",
-                                        "session_isolation_ok": True,
-                                    },
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=30,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                configured_skills=("chem-calculator", "paper-retrieval"),
-                benchmark_agent_thinking="medium",
-            )
-            record = BenchmarkRecord(
-                record_id="demo",
-                dataset="chembench",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="What is 2+3?",
-                reference_answer="5",
-                payload={},
-            )
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-            self.assertEqual("5", out.short_answer_text)
-            command = captured["command"]
-            assert isinstance(command, list)
-            self.assertNotEqual("openclaw", command[0])
-            self.assertTrue(any(str(part).endswith("openclaw_wrapper.py") for part in command))
-            self.assertIn("--thinking", command)
-            self.assertEqual("medium", command[command.index("--thinking") + 1])
-            self.assertIn("--agent", command)
-            self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
-            self.assertIn("--eval-kind", command)
-            self.assertEqual("chembench_open_ended", command[command.index("--eval-kind") + 1])
-            self.assertNotIn("--finalization-grace-seconds", command)
-            audit = out.runner_meta["skill_use_audit"]
-            self.assertEqual(2, audit["configured_skill_count"])
-            self.assertTrue(audit["skill_tool_executed"])
-            self.assertEqual(1, audit["tool_call_count"])
-            self.assertTrue(out.runner_meta["session_isolation"]["session_isolation_ok"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_marks_session_isolation_failure_unscored(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Contaminated response\nFINAL ANSWER: 5"}],
-                                "meta": {
-                                    "session_isolation": {
-                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-new",
-                                        "agent_id": "benchmark-single-skills-on",
-                                        "session_store_path": "/tmp/sessions.json",
-                                        "preflight_removed_stale_main_entry": False,
-                                        "preflight_previous_session_id": "",
-                                        "postflight_entry_session_id": "old-session",
-                                        "postflight_entry_session_file": "/tmp/old-session.jsonl",
-                                        "session_isolation_ok": False,
-                                    }
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=30,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                configured_skills=("chem-calculator",),
-            )
-            record = BenchmarkRecord(
-                record_id="demo",
-                dataset="chembench",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="What is 2+3?",
-                reference_answer="5",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            self.assertFalse(out.should_score())
-            self.assertIsNotNone(out.failure)
-            assert out.failure is not None
-            self.assertEqual("session_isolation_failed", out.failure.code)
-            self.assertIn("old-session", out.failure.message)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_rejects_invalid_stdout_payloads_without_scoring_empty_answer(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [],
-                                "meta": {
-                                    "stdout_diagnostics": {
-                                        "schema_valid": False,
-                                        "reason": "missing_payloads",
-                                        "invalid_stdout_payload": {"query": "tool args"},
-                                    },
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=30,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="demo",
-                dataset="chembench",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="What is 2+3?",
-                reference_answer="5",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_result_contract_invalid", out.failure.code)
-            self.assertEqual("", out.answer.full_response_text)
-            self.assertFalse(out.should_score())
-            self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_marks_openclaw_timeout_payload_unscored(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            timeout_text = (
-                "Request timed out before a response was generated. "
-                "Please try again, or increase `agents.defaults.timeoutSeconds` in your config."
-            )
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": timeout_text}],
-                                "meta": {
-                                    "aborted": True,
-                                    "durationMs": 910104,
-                                    "livenessState": "blocked",
-                                    "stdout_diagnostics": {
-                                        "schema_valid": True,
-                                        "payload_count": 1,
-                                        "parse_mode": "embedded_agent_result",
-                                    },
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                timeout_retries=0,
-            )
-            record = BenchmarkRecord(
-                record_id="demo",
-                dataset="chembench",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="What is 2+3?",
-                reference_answer="5",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_response_timeout", out.failure.code)
-            self.assertEqual("", out.answer.full_response_text)
-            self.assertFalse(out.should_score())
-            self.assertTrue(out.runner_meta["agent_timeout_detected"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_rejects_short_llm_request_timeout_sentinel(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "LLM request timed out."}],
-                                "meta": {
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                timeout_retries=0,
-            )
-            record = BenchmarkRecord(
-                record_id="demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="A",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_response_timeout", out.failure.code)
-            self.assertEqual("", out.answer.full_response_text)
-            self.assertFalse(out.should_score())
-            self.assertEqual("LLM request timed out.", out.runner_meta["candidate_answer_contract"]["raw_text"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_timeout_sentinel_then_succeeds_with_backoff(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-            sleeps: list[float] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                if len(calls) == 1:
-                    return self._single_llm_completed_process(
-                        command,
-                        text="LLM request timed out.",
-                        meta={"aborted": True, "livenessState": "blocked"},
-                    )
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                timeout_retry_backoff_seconds=(5, 15, 45),
-                sleep_fn=sleeps.append,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual("B", out.short_answer_text)
-            self.assertEqual(2, len(calls))
-            self.assertEqual([5], sleeps)
-            initial_session_id = calls[0][calls[0].index("--session-id") + 1]
-            retry_session_id = calls[1][calls[1].index("--session-id") + 1]
-            self.assertEqual(f"{initial_session_id}-retry1", retry_session_id)
-            retry_meta = out.runner_meta["timeout_retry"]
-            self.assertTrue(retry_meta["triggered"])
-            self.assertEqual(1, retry_meta["retries_used"])
-            self.assertFalse(retry_meta["exhausted"])
-            self.assertEqual(2, retry_meta["attempts"])
-            self.assertEqual("agent_response_timeout", retry_meta["attempt_history"][0]["failure_code"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_replay_invalid_only_with_timeout_prompt_error(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                if len(calls) == 1:
-                    return self._single_llm_completed_process(
-                        command,
-                        text="Agent couldn't generate a response.",
-                        meta={
-                            "replayInvalid": True,
-                            "livenessState": "abandoned",
-                            "convergence": {
-                                "prompt_error_count": 1,
-                                "latest_prompt_error": "HTTP 504 gateway timeout",
-                                "latest_prompt_error_is_timeout": True,
-                            },
-                        },
-                        is_error=True,
-                    )
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual(2, len(calls))
-            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_does_not_retry_plain_replay_invalid_without_timeout_evidence(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                return self._single_llm_completed_process(
-                    command,
-                    text="Agent couldn't generate a response.",
-                    meta={"replayInvalid": True, "livenessState": "abandoned"},
-                    is_error=True,
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_response_unavailable", out.failure.code)
-            self.assertEqual(1, len(calls))
-            self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
-            diagnostics = out.failure.details["replay_invalid_diagnostics"]
-            self.assertEqual("replay_invalid", diagnostics["reason"])
-            self.assertEqual("abandoned", diagnostics["livenessState"])
-            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
-            self.assertEqual(diagnostics, out.runner_meta["agent_error"]["replay_invalid_diagnostics"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_keeps_complete_replay_invalid_answer_native(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return self._single_llm_completed_process(
-                    command,
-                    text="Visible verification.\nFINAL ANSWER: CCO",
-                    meta={
-                        "replayInvalid": True,
-                        "stopReason": "stop",
-                        "completion": {"finishReason": "stop"},
-                        "livenessState": "working",
-                        "convergence": {
-                            "transcript_answer_recovered": False,
-                            "replay_invalid_diagnostics": {"reason": "replay_invalid"},
-                        },
-                    },
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-
-            out = runner.run(
-                self._single_llm_record(eval_kind="verifier_grounded"),
-                experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
-            )
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertIsNone(out.recovery)
-            self.assertTrue(out.should_score())
-            self.assertEqual("CCO", out.short_answer_text)
-            self.assertFalse(out.runner_meta.get("degraded_execution", False))
-            self.assertNotIn("agent_error", out.runner_meta)
-            self.assertEqual("replay_invalid", out.runner_meta["convergence"]["replay_invalid_diagnostics"]["reason"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_structured_meta_timeout(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                if len(calls) == 1:
-                    return self._single_llm_completed_process(
-                        command,
-                        text="",
-                        meta={"error": {"kind": "timeout", "message": "provider deadline exceeded"}},
-                    )
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual(2, len(calls))
-            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_subprocess_timeout_expired(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                if len(calls) == 1:
-                    raise subprocess.TimeoutExpired(command, timeout=930)
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual(2, len(calls))
-            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
-            self.assertEqual("TimeoutExpired", out.runner_meta["timeout_retry"]["attempt_history"][0]["exception_type"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_classifies_openclaw_config_error_without_timeout_retry(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-            stderr = (
-                "Error: agent: failed to apply resolved secret assignment at "
-                "models.providers.qwen.apiKey (Path segment does not exist at models.providers.qwen.)."
-            )
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                self.assertIn("--timeout", command)
-                return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("openclaw_config_secret_assignment_error", out.failure.code)
-            self.assertEqual("openclaw_config", out.failure.details["layer"])
-            self.assertFalse(out.failure.details["retryable"])
-            self.assertEqual(1, len(calls))
-            self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
-            self.assertEqual("openclaw_config_secret_assignment_error", out.runner_meta["execution_error"]["code"])
-            self.assertEqual("openclaw_config", out.runner_meta["execution_error"]["layer"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_openclaw_subprocess_provider_timeout(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                if len(calls) == 1:
-                    return subprocess.CompletedProcess(
-                        command,
-                        1,
-                        stdout="",
-                        stderr="Provider request failed: HTTP 504 gateway timeout",
-                    )
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                sleep_fn=lambda seconds: None,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual(2, len(calls))
-            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
-            self.assertEqual(
-                "provider_timeout",
-                out.runner_meta["timeout_retry"]["attempt_history"][0]["failure_code"],
-            )
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_retries_http_and_transport_timeout_family(self) -> None:
-        retryable_errors = [
-            "HTTP 408 request timeout",
-            "HTTP 504 gateway timeout",
-            "ETIMEDOUT while waiting for model",
-            "ECONNABORTED socket hang up",
-            "context deadline exceeded",
-        ]
-        for error_text in retryable_errors:
-            with self.subTest(error_text=error_text):
-                original_run_subprocess = subprocess_utils.run_subprocess
-                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-                try:
-                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-                    calls: list[list[str]] = []
-
-                    def fake_run_subprocess(
-                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
-                    ):
-                        calls.append(command)
-                        if len(calls) == 1:
-                            return self._single_llm_completed_process(command, text=error_text)
-                        return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-                    subprocess_utils.run_subprocess = fake_run_subprocess
-                    runner = single_adapter.SingleLLMRunner(
-                        execution_backend="host",
-                        agent_id="benchmark-single-skills-on",
-                        timeout_seconds=900,
-                        config_path=Path("/tmp/single.json"),
-                        runtime_bundle_root=Path("/tmp"),
-                        sleep_fn=lambda seconds: None,
-                    )
-
-                    out = runner.run(
-                        self._single_llm_record(),
-                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
-                    )
-
-                    self.assertEqual(RunStatus.COMPLETED, out.status)
-                    self.assertEqual(2, len(calls))
-                    self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
-                finally:
-                    subprocess_utils.run_subprocess = original_run_subprocess
-                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_does_not_retry_non_model_timeout_family(self) -> None:
-        non_retryable_errors = [
-            "approval timeout while waiting for user",
-            "tool timeout running shell command",
-            "maximum context length exceeded",
-            "401 auth failed",
-            "billing hard limit reached",
-            "rate limit exceeded",
-            "image size too large",
-            "role ordering is invalid",
-            "The computed value is 500 but the final marker is missing.",
-        ]
-        for error_text in non_retryable_errors:
-            with self.subTest(error_text=error_text):
-                original_run_subprocess = subprocess_utils.run_subprocess
-                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-                try:
-                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-                    calls: list[list[str]] = []
-
-                    def fake_run_subprocess(
-                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
-                    ):
-                        calls.append(command)
-                        return self._single_llm_completed_process(command, text=error_text)
-
-                    subprocess_utils.run_subprocess = fake_run_subprocess
-                    runner = single_adapter.SingleLLMRunner(
-                        execution_backend="host",
-                        agent_id="benchmark-single-skills-on",
-                        timeout_seconds=900,
-                        config_path=Path("/tmp/single.json"),
-                        runtime_bundle_root=Path("/tmp"),
-                        sleep_fn=lambda seconds: None,
-                    )
-
-                    out = runner.run(
-                        self._single_llm_record(),
-                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
-                    )
-
-                    self.assertEqual(RunStatus.FAILED, out.status)
-                    self.assertEqual(1, len(calls))
-                    self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
-                finally:
-                    subprocess_utils.run_subprocess = original_run_subprocess
-                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_exhausts_timeout_retries_with_metadata(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            calls: list[list[str]] = []
-            sleeps: list[float] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                calls.append(command)
-                return self._single_llm_completed_process(
-                    command,
-                    text="LLM request timed out.",
-                    meta={"aborted": True, "livenessState": "blocked"},
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                timeout_retries=3,
-                timeout_retry_backoff_seconds=(5, 15, 45),
-                sleep_fn=sleeps.append,
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_response_timeout", out.failure.code)
-            self.assertEqual(4, len(calls))
-            self.assertEqual([5, 15, 45], sleeps)
-            retry_meta = out.runner_meta["timeout_retry"]
-            self.assertTrue(retry_meta["triggered"])
-            self.assertTrue(retry_meta["exhausted"])
-            self.assertEqual(4, retry_meta["attempts"])
-            self.assertEqual(3, retry_meta["retries_used"])
-            self.assertEqual([5, 15, 45], retry_meta["backoff_seconds"])
-            self.assertEqual(4, len(retry_meta["attempt_history"]))
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_subprocess_timeout_covers_finalization_rescue(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            timeouts: list[float | None] = []
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                timeouts.append(timeout)
-                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-                convergence_policy=ConvergencePolicy(
-                    timeout_seconds=900,
-                ),
-            )
-
-            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertEqual([1020], timeouts)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_classifies_stream_read_error_before_answer_contract(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "stream_read_error", "isError": True}],
-                                "meta": {
-                                    "stopReason": "error",
-                                    "completion": {"finishReason": "error"},
-                                    "livenessState": "blocked",
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="superchem-demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="B",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_stream_read_error", out.failure.code)
-            self.assertEqual("", out.answer.full_response_text)
-            self.assertFalse(out.should_score())
-            self.assertEqual("agent_stream_read_error", out.runner_meta["agent_error"]["kind"])
-            self.assertNotIn("candidate_answer_contract", out.runner_meta)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_classifies_openclaw_no_response_fallback(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            fallback_text = (
-                "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — "
-                "please verify before retrying."
-            )
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": fallback_text, "isError": True}],
-                                "meta": {
-                                    "replayInvalid": True,
-                                    "livenessState": "abandoned",
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="superchem-demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="B",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("agent_response_unavailable", out.failure.code)
-            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
-            self.assertIn("replay_invalid_diagnostics", out.runner_meta["agent_error"])
-            self.assertFalse(out.should_score())
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_marks_finalization_rescue_as_recovered(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Visible reason.\nFINAL ANSWER: B"}],
-                                "meta": {
-                                    "stopReason": "error",
-                                    "completion": {"finishReason": "error"},
-                                    "convergence": {
-                                        "agent_error_payload_detected": True,
-                                        "agent_error_kind": "agent_stream_read_error",
-                                        "finalization_rescue_attempted": True,
-                                        "finalization_rescue_succeeded": True,
-                                        "recovery_source": "single-llm-finalization-rescue",
-                                    },
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="superchem-demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="B",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.RECOVERED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertEqual("Visible reason.\nFINAL ANSWER: B", out.answer.full_response_text)
-            assert out.recovery is not None
-            self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
-            self.assertEqual("single-llm-finalization-rescue", out.runner_meta["recovery_mode"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_marks_research_wide_rescue_as_recovered(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [
-                                    {
-                                        "text": (
-                                            "## FINAL ANSWER\n"
-                                            "The rescue answer covers the research protocol, evidence, and conclusion."
-                                        )
-                                    }
-                                ],
-                                "meta": {
-                                    "stopReason": "error",
-                                    "completion": {"finishReason": "error"},
-                                    "convergence": {
-                                        "agent_error_payload_detected": True,
-                                        "agent_error_kind": "agent_stream_read_error",
-                                        "finalization_rescue_attempted": True,
-                                        "finalization_rescue_succeeded": True,
-                                        "recovery_source": "single-llm-finalization-rescue",
-                                    },
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="research-demo",
-                dataset="frontierscience",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="frontierscience_research",
-                prompt="Explain the research result.",
-                reference_answer="rubric",
-                payload={"track": "research"},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.RECOVERED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertIn("## FINAL ANSWER", out.answer.full_response_text)
-            assert out.recovery is not None
-            self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_accepts_native_research_conclusion_with_blocked_meta(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            research_answer = (
-                "## Evidence ledger\n"
-                "The requested source-specific claims are checked above.\n\n"
-                "## Supported conclusion\n"
-                "The answer covers the synthesis protocol, mechanism, spectra, and reactivity evidence."
-            )
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": research_answer}],
-                                "meta": {
-                                    "livenessState": "blocked",
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="research-demo",
-                dataset="frontierscience",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="frontierscience_research",
-                prompt="Explain the research result.",
-                reference_answer="rubric",
-                payload={"track": "research"},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertEqual(research_answer, out.answer.full_response_text)
-            self.assertNotIn("agent_error", out.runner_meta)
-            self.assertFalse(out.runner_meta["candidate_answer_contract"]["has_research_final_marker"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_reports_research_final_marker_metadata(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-            research_answer = (
-                "## Evidence ledger\n"
-                "The requested source-specific claims are checked above.\n\n"
-                "## FINAL RESEARCH ANSWER\n"
-                "The answer covers the synthesis protocol, mechanism, spectra, and reactivity evidence."
-            )
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": research_answer}],
-                                "meta": {
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="research-demo",
-                dataset="frontierscience",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="frontierscience_research",
-                prompt="Explain the research result.",
-                reference_answer="rubric",
-                payload={"track": "research"},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertTrue(out.runner_meta["candidate_answer_contract"]["has_research_final_marker"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_rejects_superchem_response_without_final_answer_marker(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "The spectrum appears most consistent with option B."}],
-                                "meta": {
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="superchem-demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="B",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
-            self.assertEqual("", out.answer.full_response_text)
-            self.assertFalse(out.should_score())
-            self.assertIn("short_answer_text", out.failure.details["missing_fields"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_accepts_markdown_final_answer_marker(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Visible reasoning.\n**FINAL ANSWER:** B"}],
-                                "meta": {
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="superchem-demo",
-                dataset="superchem",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Choose.",
-                reference_answer="B",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.COMPLETED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertEqual("B", out.short_answer_text)
-            self.assertEqual("Visible reasoning.\n**FINAL ANSWER:** B", out.full_response_text)
-            self.assertTrue(out.runner_meta["candidate_answer_contract"]["has_final_answer_marker"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_rejects_hle_response_without_answer_field(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Explanation: estimated from the figure\nConfidence: 60%"}],
-                                "meta": {
-                                    "stdout_diagnostics": {"schema_valid": True},
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="hle-demo",
-                dataset="hle",
-                source_file="/tmp/hle.jsonl",
-                eval_kind="hle",
-                prompt="Question?",
-                reference_answer="273",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            assert out.failure is not None
-            self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
-            self.assertFalse(out.should_score())
-            self.assertIn("Answer:", out.failure.message)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_returns_recovered_for_transcript_answer(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Explanation: ok\nAnswer: 273\nConfidence: 60%"}],
-                                "meta": {
-                                    "aborted": True,
-                                    "durationMs": 910104,
-                                    "livenessState": "blocked",
-                                    "convergence": {
-                                        "transcript_answer_recovered": True,
-                                        "tool_call_count": 8,
-                                        "assistant_turn_count": 12,
-                                    },
-                                    "session_isolation": {"session_isolation_ok": True},
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="hle-demo",
-                dataset="hle",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="hle",
-                prompt="Question?",
-                reference_answer="273",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.RECOVERED, out.status)
-            self.assertTrue(out.should_score())
-            self.assertIsNotNone(out.recovery)
-            assert out.recovery is not None
-            self.assertEqual("single-llm-session-transcript", out.recovery.source)
-            self.assertEqual("Explanation: ok\nAnswer: 273\nConfidence: 60%", out.full_response_text)
-            self.assertIn("convergence_policy", out.runner_meta)
-            self.assertEqual(8, out.runner_meta["convergence"]["tool_call_count"])
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
-
-    def test_single_llm_runner_does_not_score_recovered_answer_when_session_isolation_fails(self) -> None:
-        original_run_subprocess = subprocess_utils.run_subprocess
-        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
-        try:
-            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
-
-            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
-                return subprocess.CompletedProcess(
-                    command,
-                    0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "payloads": [{"text": "Explanation: ok\nAnswer: 273\nConfidence: 60%"}],
-                                "meta": {
-                                    "aborted": True,
-                                    "livenessState": "blocked",
-                                    "convergence": {"transcript_answer_recovered": True},
-                                    "session_isolation": {
-                                        "requested_session_id": "session-new",
-                                        "postflight_entry_session_id": "session-old",
-                                        "session_isolation_ok": False,
-                                    },
-                                },
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-
-            subprocess_utils.run_subprocess = fake_run_subprocess
-            runner = single_adapter.SingleLLMRunner(
-                execution_backend="host",
-                agent_id="benchmark-single-skills-on",
-                timeout_seconds=900,
-                config_path=Path("/tmp/single.json"),
-                runtime_bundle_root=Path("/tmp"),
-            )
-            record = BenchmarkRecord(
-                record_id="hle-demo",
-                dataset="hle",
-                source_file="/tmp/demo.jsonl",
-                eval_kind="hle",
-                prompt="Question?",
-                reference_answer="273",
-                payload={},
-            )
-
-            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
-
-            self.assertEqual(RunStatus.FAILED, out.status)
-            self.assertFalse(out.should_score())
-            assert out.failure is not None
-            self.assertEqual("session_isolation_failed", out.failure.code)
-        finally:
-            subprocess_utils.run_subprocess = original_run_subprocess
-            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
     def test_chemqa_runner_uses_run_scoped_writable_template_and_command_map_dirs(self) -> None:
         captured: dict[str, object] = {}
@@ -5916,6 +4266,1434 @@ Points: 0.5, Item: Second criterion
                 record=record,
                 error_message="group crashed",
             )
+
+
+
+class ActiveSingleLLMTests(unittest.TestCase):
+    """Single-LLM lifecycle tests use VGB; dependency execution has its own suite."""
+
+    def setUp(self):
+        from types import SimpleNamespace
+        def environment(scratch, **kwargs):
+            return SimpleNamespace(python=scratch / "venv/bin/python", to_env=lambda: {})
+        for target, replacement in (
+            ("build_openclaw_subprocess_env", lambda **kwargs: dict(kwargs["base_env"])),
+            ("create_attempt_environment", environment),
+            ("collect_dependency_manifest", lambda *a, **k: {"distributions": []}),
+            ("remediate_forbidden_distributions", lambda *a, **k: {"status": "clear"}),
+            ("validate_dependency_evidence", lambda *a, **k: {"status": "valid", "scoreable": True}),
+        ):
+            patcher = mock.patch("benchmarking.service.single.runner." + target, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _single_llm_record(self, *, eval_kind: str = "verifier_grounded") -> object:
+        dataset = "verifier_grounded_rdkit"
+        reference_answer = "B" if eval_kind == "verifier_grounded" else "5"
+        return BenchmarkRecord(
+            record_id="demo",
+            dataset=dataset,
+            source_file="/tmp/demo.jsonl",
+            eval_kind=eval_kind,
+            prompt="Question?",
+            reference_answer=reference_answer,
+            payload={},
+        )
+
+    def _single_llm_completed_process(
+        self,
+        command: list[str],
+        *,
+        text: str,
+        meta: dict[str, object] | None = None,
+        is_error: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        payload = {
+            "result": {
+                "payloads": [{"text": text, **({"isError": True} if is_error else {})}],
+                "meta": {
+                    "stdout_diagnostics": {"schema_valid": True},
+                    "session_isolation": {"session_isolation_ok": True},
+                    **dict(meta or {}),
+                },
+            }
+        }
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
+
+    def test_single_llm_runner_does_not_use_record_scoped_skill_config(self) -> None:
+        source = Path("benchmarking/service/single/runner.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("selected_skills", source)
+        self.assertNotIn("config_for_record", source)
+        self.assertNotIn("SkillPlan", source)
+
+    def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/datasets/verifier_grounded_rdkit.jsonl"
+            dataset_path = root / "verifier_grounded_rdkit/data/verifier_grounded_rdkit.jsonl"
+            dataset_path.parent.mkdir(parents=True)
+            dataset_path.write_text(source.read_text().splitlines()[0] + "\n")
+
+            base_config = root / "openclaw.json"
+            base_config.write_text(json.dumps({"agents": {"list": []}}, ensure_ascii=False), encoding="utf-8")
+            output_root = root / "out"
+            captured: dict[str, str] = {}
+
+            class DummyConfigPool:
+                def __init__(self, **_: object) -> None:
+                    pass
+
+                def config_for_group(self, group: object) -> Path:
+                    path = output_root / "runtime-config" / f"{getattr(group, 'id', 'group')}-openclaw.json"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("{}", encoding="utf-8")
+                    return path
+
+                def judge_config_path(self) -> Path:
+                    path = output_root / "runtime-config" / "benchmark-judge-openclaw.json"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("{}", encoding="utf-8")
+                    return path
+
+            def fake_run_group(**kwargs):
+                captured["single_agent"] = kwargs["runner_options_factory"].keywords["single_agent"]
+                captured["single_policy_timeout"] = str(kwargs["runner_options_factory"].keywords["args"].single_timeout)
+                return []
+
+            argv = [
+                "benchmarking.workflow.cli",
+                "--execution-backend", "host",
+                "--benchmark-root",
+                str(root),
+                "--openclaw-config",
+                str(base_config),
+                "--exact-output-dir",
+                str(output_root),
+                "--groups",
+                "single_llm_skills_off",
+                "--single-agent-id-override",
+                "custom-single-agent",
+            ]
+
+            with mock.patch.object(runtime_config_pool, "ConfigPool", DummyConfigPool), \
+                mock.patch.object(judge_runtime, "JudgeClient", return_value=object()), \
+                mock.patch.object(
+                    benchmark_test,
+                    "run_benchmark_web_search_preflight",
+                    return_value={
+                        "enabled": True,
+                        "provider": "duckduckgo",
+                        "available": True,
+                        "reports": {"single_llm_skills_off": {"available": True}},
+                    },
+                ), \
+                mock.patch.object(orchestration, "run_group", side_effect=fake_run_group), \
+                mock.patch.object(
+                    benchmark_test,
+                    "launch_automated_evaluation",
+                    return_value={"status": "launched", "output_root": str(output_root)},
+                ), \
+                mock.patch.object(sys, "argv", argv):
+                exit_code = benchmark_test.main()
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual("custom-single-agent", captured.get("single_agent"))
+            self.assertEqual("7200", captured.get("single_policy_timeout"))
+
+    def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Calculate the pH of a buffer from the supplied concentrations.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        skills_on = build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=True,
+        )
+        skills_off = build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=False,
+        )
+
+        self.assertIn("Chemistry skill catalog:", skills_on)
+        self.assertIn(
+            "The catalog describes available capabilities; whether and how to use a skill is your choice.",
+            skills_on,
+        )
+        self.assertIn("act-like-a-chemist", skills_on)
+        self.assertIn("paper-pipeline", skills_on)
+        self.assertTrue(skills_on.endswith(record.prompt))
+        self.assertEqual(record.prompt, skills_off)
+        for prompt in (skills_on, skills_off):
+            self.assertNotIn("Read act-like-a-chemist first", prompt)
+            self.assertNotIn("Atomic Coverage Checklist", prompt)
+            self.assertNotIn("Do not use OpenClaw skills", prompt)
+
+    def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
+        record = BenchmarkRecord(
+            record_id="fs-1",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/frontierscience.jsonl",
+            eval_kind="verifier_grounded",
+            prompt="Calculate the pH of a buffer from the supplied concentrations.",
+            reference_answer="4.7",
+            payload={"track": "olympiad"},
+        )
+
+        prompt = build_single_llm_prompt(
+            record,
+            websearch_enabled=True,
+            skills_enabled=True,
+            time_budget_seconds=900,
+        )
+
+        self.assertIn("Time budget: 900 seconds", prompt)
+        self.assertIn("Chemistry skill catalog:", prompt)
+        self.assertIn("act-like-a-chemist", prompt)
+        self.assertNotIn("Atomic Coverage Checklist", prompt)
+        self.assertNotIn("Read act-like-a-chemist first", prompt)
+        self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
+        self.assertNotIn("FINAL ANSWER", prompt)
+
+    def test_single_llm_runner_invokes_wrapper_with_configured_thinking(self) -> None:
+        captured: dict[str, object] = {}
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                captured["command"] = list(command)
+                captured["env"] = dict(env or {})
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Reasoning\nFINAL ANSWER: 5"}],
+                                "meta": {
+                                    "toolSummary": {"calls": 1, "tools": ["exec"], "failures": 0},
+                                    "convergence": {"tool_call_count": 1, "tool_names": ["exec"]},
+                                    "session_isolation": {
+                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
+                                        "agent_id": "benchmark-single-skills-on",
+                                        "session_store_path": "/tmp/sessions.json",
+                                        "preflight_removed_stale_main_entry": True,
+                                        "preflight_previous_session_id": "old-session",
+                                        "postflight_entry_session_id": "benchmark-single_llm_skills_on-demo-abc12345",
+                                        "postflight_entry_session_file": "/tmp/benchmark-single_llm_skills_on-demo-abc12345.jsonl",
+                                        "session_isolation_ok": True,
+                                    },
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                configured_skills=("chem-calculator", "paper-retrieval"),
+                vgb_configured_skills=("chem-calculator", "paper-retrieval"),
+                benchmark_agent_thinking="medium",
+            )
+            record = BenchmarkRecord(
+                record_id="demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+            self.assertEqual("5", out.short_answer_text)
+            command = captured["command"]
+            assert isinstance(command, list)
+            self.assertNotEqual("openclaw", command[0])
+            self.assertTrue(any(str(part).endswith("openclaw_wrapper.py") for part in command))
+            self.assertIn("--thinking", command)
+            self.assertEqual("medium", command[command.index("--thinking") + 1])
+            self.assertIn("--agent", command)
+            self.assertEqual("benchmark-single-skills-on", command[command.index("--agent") + 1])
+            self.assertIn("--eval-kind", command)
+            self.assertEqual("verifier_grounded", command[command.index("--eval-kind") + 1])
+            self.assertNotIn("--finalization-grace-seconds", command)
+            audit = out.runner_meta["skill_use_audit"]
+            self.assertEqual(2, audit["configured_skill_count"])
+            self.assertTrue(audit["skill_tool_executed"])
+            self.assertEqual(1, audit["tool_call_count"])
+            self.assertTrue(out.runner_meta["session_isolation"]["session_isolation_ok"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_session_isolation_failure_unscored(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Contaminated response\nFINAL ANSWER: 5"}],
+                                "meta": {
+                                    "session_isolation": {
+                                        "requested_session_id": "benchmark-single_llm_skills_on-demo-new",
+                                        "agent_id": "benchmark-single-skills-on",
+                                        "session_store_path": "/tmp/sessions.json",
+                                        "preflight_removed_stale_main_entry": False,
+                                        "preflight_previous_session_id": "",
+                                        "postflight_entry_session_id": "old-session",
+                                        "postflight_entry_session_file": "/tmp/old-session.jsonl",
+                                        "session_isolation_ok": False,
+                                    }
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                configured_skills=("chem-calculator",),
+            )
+            record = BenchmarkRecord(
+                record_id="demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            self.assertFalse(out.should_score())
+            self.assertIsNotNone(out.failure)
+            assert out.failure is not None
+            self.assertEqual("session_isolation_failed", out.failure.code)
+            self.assertIn("old-session", out.failure.message)
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_invalid_stdout_payloads_without_scoring_empty_answer(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [],
+                                "meta": {
+                                    "stdout_diagnostics": {
+                                        "schema_valid": False,
+                                        "reason": "missing_payloads",
+                                        "invalid_stdout_payload": {"query": "tool args"},
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=30,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_result_contract_invalid", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("missing_payloads", out.runner_meta["stdout_diagnostics"]["reason"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_openclaw_timeout_payload_unscored(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            timeout_text = (
+                "Request timed out before a response was generated. "
+                "Please try again, or increase `agents.defaults.timeoutSeconds` in your config."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": timeout_text}],
+                                "meta": {
+                                    "aborted": True,
+                                    "durationMs": 910104,
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {
+                                        "schema_valid": True,
+                                        "payload_count": 1,
+                                        "parse_mode": "embedded_agent_result",
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                timeout_retries=0,
+            )
+            record = BenchmarkRecord(
+                record_id="demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="What is 2+3?",
+                reference_answer="5",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertTrue(out.runner_meta["agent_timeout_detected"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_short_llm_request_timeout_sentinel(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "LLM request timed out."}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                timeout_retries=0,
+            )
+            record = BenchmarkRecord(
+                record_id="demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="A",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("LLM request timed out.", out.runner_meta["candidate_answer_contract"]["raw_text"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_timeout_sentinel_then_succeeds_with_backoff(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+            sleeps: list[float] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    return self._single_llm_completed_process(
+                        command,
+                        text="LLM request timed out.",
+                        meta={"aborted": True, "livenessState": "blocked"},
+                    )
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                timeout_retry_backoff_seconds=(5, 15, 45),
+                sleep_fn=sleeps.append,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual("B", out.short_answer_text)
+            self.assertEqual(2, len(calls))
+            self.assertEqual([5], sleeps)
+            initial_session_id = calls[0][calls[0].index("--session-id") + 1]
+            retry_session_id = calls[1][calls[1].index("--session-id") + 1]
+            self.assertEqual(f"{initial_session_id}-retry1", retry_session_id)
+            retry_meta = out.runner_meta["timeout_retry"]
+            self.assertTrue(retry_meta["triggered"])
+            self.assertEqual(1, retry_meta["retries_used"])
+            self.assertFalse(retry_meta["exhausted"])
+            self.assertEqual(2, retry_meta["attempts"])
+            self.assertEqual("agent_response_timeout", retry_meta["attempt_history"][0]["failure_code"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_replay_invalid_only_with_timeout_prompt_error(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    return self._single_llm_completed_process(
+                        command,
+                        text="Agent couldn't generate a response.",
+                        meta={
+                            "replayInvalid": True,
+                            "livenessState": "abandoned",
+                            "convergence": {
+                                "prompt_error_count": 1,
+                                "latest_prompt_error": "HTTP 504 gateway timeout",
+                                "latest_prompt_error_is_timeout": True,
+                            },
+                        },
+                        is_error=True,
+                    )
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual(2, len(calls))
+            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_does_not_retry_plain_replay_invalid_without_timeout_evidence(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                return self._single_llm_completed_process(
+                    command,
+                    text="Agent couldn't generate a response.",
+                    meta={"replayInvalid": True, "livenessState": "abandoned"},
+                    is_error=True,
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_unavailable", out.failure.code)
+            self.assertEqual(1, len(calls))
+            self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
+            diagnostics = out.failure.details["replay_invalid_diagnostics"]
+            self.assertEqual("replay_invalid", diagnostics["reason"])
+            self.assertEqual("abandoned", diagnostics["livenessState"])
+            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
+            self.assertEqual(diagnostics, out.runner_meta["agent_error"]["replay_invalid_diagnostics"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_keeps_complete_replay_invalid_answer_native(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return self._single_llm_completed_process(
+                    command,
+                    text="Visible verification.\nFINAL ANSWER: CCO",
+                    meta={
+                        "replayInvalid": True,
+                        "stopReason": "stop",
+                        "completion": {"finishReason": "stop"},
+                        "livenessState": "working",
+                        "convergence": {
+                            "transcript_answer_recovered": False,
+                            "replay_invalid_diagnostics": {"reason": "replay_invalid"},
+                        },
+                    },
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+
+            out = runner.run(
+                self._single_llm_record(eval_kind="verifier_grounded"),
+                experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
+            )
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertIsNone(out.recovery)
+            self.assertTrue(out.should_score())
+            self.assertEqual("CCO", out.short_answer_text)
+            self.assertFalse(out.runner_meta.get("degraded_execution", False))
+            self.assertNotIn("agent_error", out.runner_meta)
+            self.assertEqual("replay_invalid", out.runner_meta["convergence"]["replay_invalid_diagnostics"]["reason"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_structured_meta_timeout(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    return self._single_llm_completed_process(
+                        command,
+                        text="",
+                        meta={"error": {"kind": "timeout", "message": "provider deadline exceeded"}},
+                    )
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual(2, len(calls))
+            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_subprocess_timeout_expired(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    raise subprocess.TimeoutExpired(command, timeout=930)
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual(2, len(calls))
+            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+            self.assertEqual("TimeoutExpired", out.runner_meta["timeout_retry"]["attempt_history"][0]["exception_type"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_classifies_openclaw_config_error_without_timeout_retry(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+            stderr = (
+                "Error: agent: failed to apply resolved secret assignment at "
+                "models.providers.qwen.apiKey (Path segment does not exist at models.providers.qwen.)."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                self.assertIn("--timeout", command)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr=stderr)
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("openclaw_config_secret_assignment_error", out.failure.code)
+            self.assertEqual("openclaw_config", out.failure.details["layer"])
+            self.assertFalse(out.failure.details["retryable"])
+            self.assertEqual(1, len(calls))
+            self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
+            self.assertEqual("openclaw_config_secret_assignment_error", out.runner_meta["execution_error"]["code"])
+            self.assertEqual("openclaw_config", out.runner_meta["execution_error"]["layer"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_openclaw_subprocess_provider_timeout(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                if len(calls) == 1:
+                    return subprocess.CompletedProcess(
+                        command,
+                        1,
+                        stdout="",
+                        stderr="Provider request failed: HTTP 504 gateway timeout",
+                    )
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                sleep_fn=lambda seconds: None,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual(2, len(calls))
+            self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+            self.assertEqual(
+                "provider_timeout",
+                out.runner_meta["timeout_retry"]["attempt_history"][0]["failure_code"],
+            )
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_retries_http_and_transport_timeout_family(self) -> None:
+        retryable_errors = [
+            "HTTP 408 request timeout",
+            "HTTP 504 gateway timeout",
+            "ETIMEDOUT while waiting for model",
+            "ECONNABORTED socket hang up",
+            "context deadline exceeded",
+        ]
+        for error_text in retryable_errors:
+            with self.subTest(error_text=error_text):
+                original_run_subprocess = subprocess_utils.run_subprocess
+                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+                try:
+                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+                    calls: list[list[str]] = []
+
+                    def fake_run_subprocess(
+                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
+                    ):
+                        calls.append(command)
+                        if len(calls) == 1:
+                            return self._single_llm_completed_process(command, text=error_text)
+                        return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+                    subprocess_utils.run_subprocess = fake_run_subprocess
+                    runner = single_adapter.SingleLLMRunner(
+                        execution_backend="host",
+                        agent_id="benchmark-single-skills-on",
+                        timeout_seconds=900,
+                        config_path=Path("/tmp/single.json"),
+                        runtime_bundle_root=Path("/tmp"),
+                        sleep_fn=lambda seconds: None,
+                    )
+
+                    out = runner.run(
+                        self._single_llm_record(),
+                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
+                    )
+
+                    self.assertEqual(RunStatus.COMPLETED, out.status)
+                    self.assertEqual(2, len(calls))
+                    self.assertTrue(out.runner_meta["timeout_retry"]["triggered"])
+                finally:
+                    subprocess_utils.run_subprocess = original_run_subprocess
+                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_does_not_retry_non_model_timeout_family(self) -> None:
+        non_retryable_errors = [
+            "approval timeout while waiting for user",
+            "tool timeout running shell command",
+            "maximum context length exceeded",
+            "401 auth failed",
+            "billing hard limit reached",
+            "rate limit exceeded",
+            "image size too large",
+            "role ordering is invalid",
+            "The computed value is 500 but the final marker is missing.",
+        ]
+        for error_text in non_retryable_errors:
+            with self.subTest(error_text=error_text):
+                original_run_subprocess = subprocess_utils.run_subprocess
+                original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+                try:
+                    runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+                    calls: list[list[str]] = []
+
+                    def fake_run_subprocess(
+                        command: list[str], *, env=None, cwd=None, timeout=None, calls=calls, error_text=error_text
+                    ):
+                        calls.append(command)
+                        return self._single_llm_completed_process(command, text=error_text)
+
+                    subprocess_utils.run_subprocess = fake_run_subprocess
+                    runner = single_adapter.SingleLLMRunner(
+                        execution_backend="host",
+                        agent_id="benchmark-single-skills-on",
+                        timeout_seconds=900,
+                        config_path=Path("/tmp/single.json"),
+                        runtime_bundle_root=Path("/tmp"),
+                        sleep_fn=lambda seconds: None,
+                    )
+
+                    out = runner.run(
+                        self._single_llm_record(),
+                        experiments.EXPERIMENT_GROUPS["single_llm_skills_on"],
+                    )
+
+                    self.assertEqual(RunStatus.FAILED, out.status)
+                    self.assertEqual(1, len(calls))
+                    self.assertFalse(out.runner_meta["timeout_retry"]["triggered"])
+                finally:
+                    subprocess_utils.run_subprocess = original_run_subprocess
+                    runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_exhausts_timeout_retries_with_metadata(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            calls: list[list[str]] = []
+            sleeps: list[float] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                calls.append(command)
+                return self._single_llm_completed_process(
+                    command,
+                    text="LLM request timed out.",
+                    meta={"aborted": True, "livenessState": "blocked"},
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                timeout_retries=3,
+                timeout_retry_backoff_seconds=(5, 15, 45),
+                sleep_fn=sleeps.append,
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_timeout", out.failure.code)
+            self.assertEqual(4, len(calls))
+            self.assertEqual([5, 15, 45], sleeps)
+            retry_meta = out.runner_meta["timeout_retry"]
+            self.assertTrue(retry_meta["triggered"])
+            self.assertTrue(retry_meta["exhausted"])
+            self.assertEqual(4, retry_meta["attempts"])
+            self.assertEqual(3, retry_meta["retries_used"])
+            self.assertEqual([5, 15, 45], retry_meta["backoff_seconds"])
+            self.assertEqual(4, len(retry_meta["attempt_history"]))
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_subprocess_timeout_covers_finalization_rescue(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            timeouts: list[float | None] = []
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                timeouts.append(timeout)
+                return self._single_llm_completed_process(command, text="Visible reason.\nFINAL ANSWER: B")
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+                convergence_policy=ConvergencePolicy(
+                    timeout_seconds=900,
+                ),
+            )
+
+            out = runner.run(self._single_llm_record(), experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertEqual([1020], timeouts)
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_classifies_stream_read_error_before_answer_contract(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "stream_read_error", "isError": True}],
+                                "meta": {
+                                    "stopReason": "error",
+                                    "completion": {"finishReason": "error"},
+                                    "livenessState": "blocked",
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_stream_read_error", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertEqual("agent_stream_read_error", out.runner_meta["agent_error"]["kind"])
+            self.assertNotIn("candidate_answer_contract", out.runner_meta)
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_classifies_openclaw_no_response_fallback(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+            fallback_text = (
+                "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — "
+                "please verify before retrying."
+            )
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": fallback_text, "isError": True}],
+                                "meta": {
+                                    "replayInvalid": True,
+                                    "livenessState": "abandoned",
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("agent_response_unavailable", out.failure.code)
+            self.assertEqual("agent_response_unavailable", out.runner_meta["agent_error"]["kind"])
+            self.assertIn("replay_invalid_diagnostics", out.runner_meta["agent_error"])
+            self.assertFalse(out.should_score())
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_marks_finalization_rescue_as_recovered(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Visible reason.\nFINAL ANSWER: B"}],
+                                "meta": {
+                                    "stopReason": "error",
+                                    "completion": {"finishReason": "error"},
+                                    "convergence": {
+                                        "agent_error_payload_detected": True,
+                                        "agent_error_kind": "agent_stream_read_error",
+                                        "finalization_rescue_attempted": True,
+                                        "finalization_rescue_succeeded": True,
+                                        "recovery_source": "single-llm-finalization-rescue",
+                                    },
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.RECOVERED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertEqual("Visible reason.\nFINAL ANSWER: B", out.answer.full_response_text)
+            assert out.recovery is not None
+            self.assertEqual("single-llm-finalization-rescue", out.recovery.source)
+            self.assertEqual("single-llm-finalization-rescue", out.runner_meta["recovery_mode"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_rejects_vgb_response_without_final_answer_marker(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "The spectrum appears most consistent with option B."}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            assert out.failure is not None
+            self.assertEqual("candidate_answer_contract_invalid", out.failure.code)
+            self.assertEqual("", out.answer.full_response_text)
+            self.assertFalse(out.should_score())
+            self.assertIn("short_answer_text", out.failure.details["missing_fields"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_accepts_markdown_final_answer_marker(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Visible reasoning.\n**FINAL ANSWER:** B"}],
+                                "meta": {
+                                    "stdout_diagnostics": {"schema_valid": True},
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="superchem-demo",
+                dataset="superchem",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Choose.",
+                reference_answer="B",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.COMPLETED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertEqual("B", out.short_answer_text)
+            self.assertEqual("Visible reasoning.\n**FINAL ANSWER:** B", out.full_response_text)
+            self.assertTrue(out.runner_meta["candidate_answer_contract"]["has_final_answer_marker"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_returns_recovered_for_transcript_answer(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Reasoning: ok\nFINAL ANSWER: 273\nConfidence: 60%"}],
+                                "meta": {
+                                    "aborted": True,
+                                    "durationMs": 910104,
+                                    "livenessState": "blocked",
+                                    "convergence": {
+                                        "transcript_answer_recovered": True,
+                                        "tool_call_count": 8,
+                                        "assistant_turn_count": 12,
+                                    },
+                                    "session_isolation": {"session_isolation_ok": True},
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Question?",
+                reference_answer="273",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.RECOVERED, out.status)
+            self.assertTrue(out.should_score())
+            self.assertIsNotNone(out.recovery)
+            assert out.recovery is not None
+            self.assertEqual("single-llm-session-transcript", out.recovery.source)
+            self.assertEqual("Reasoning: ok\nFINAL ANSWER: 273\nConfidence: 60%", out.full_response_text)
+            self.assertIn("convergence_policy", out.runner_meta)
+            self.assertEqual(8, out.runner_meta["convergence"]["tool_call_count"])
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
+
+    def test_single_llm_runner_does_not_score_recovered_answer_when_session_isolation_fails(self) -> None:
+        original_run_subprocess = subprocess_utils.run_subprocess
+        original_ensure_runtime_bundle = runtime_bundles.ensure_runtime_bundle
+        try:
+            runtime_bundles.ensure_runtime_bundle = lambda record, bundle_root: None
+
+            def fake_run_subprocess(command: list[str], *, env=None, cwd=None, timeout=None):
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps(
+                        {
+                            "result": {
+                                "payloads": [{"text": "Reasoning: ok\nFINAL ANSWER: 273\nConfidence: 60%"}],
+                                "meta": {
+                                    "aborted": True,
+                                    "livenessState": "blocked",
+                                    "convergence": {"transcript_answer_recovered": True},
+                                    "session_isolation": {
+                                        "requested_session_id": "session-new",
+                                        "postflight_entry_session_id": "session-old",
+                                        "session_isolation_ok": False,
+                                    },
+                                },
+                            }
+                        }
+                    ),
+                    stderr="",
+                )
+
+            subprocess_utils.run_subprocess = fake_run_subprocess
+            runner = single_adapter.SingleLLMRunner(
+                execution_backend="host",
+                agent_id="benchmark-single-skills-on",
+                timeout_seconds=900,
+                config_path=Path("/tmp/single.json"),
+                runtime_bundle_root=Path("/tmp"),
+            )
+            record = BenchmarkRecord(
+                record_id="hle-demo",
+                dataset="verifier_grounded_rdkit",
+                source_file="/tmp/demo.jsonl",
+                eval_kind="verifier_grounded",
+                prompt="Question?",
+                reference_answer="273",
+                payload={},
+            )
+
+            out = runner.run(record, experiments.EXPERIMENT_GROUPS["single_llm_skills_on"])
+
+            self.assertEqual(RunStatus.FAILED, out.status)
+            self.assertFalse(out.should_score())
+            assert out.failure is not None
+            self.assertEqual("session_isolation_failed", out.failure.code)
+        finally:
+            subprocess_utils.run_subprocess = original_run_subprocess
+            runtime_bundles.ensure_runtime_bundle = original_ensure_runtime_bundle
 
 
 if __name__ == "__main__":

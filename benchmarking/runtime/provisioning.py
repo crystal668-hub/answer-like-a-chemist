@@ -12,7 +12,7 @@ class ProvisionedAgent:
 
 @dataclass(frozen=True)
 class ProvisionedExperiment:
-    judge: ProvisionedAgent
+    judge: ProvisionedAgent | None
     runner_agents: tuple[ProvisionedAgent, ...]
 
 

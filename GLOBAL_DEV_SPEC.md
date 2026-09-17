@@ -92,8 +92,10 @@ templates, leases, recovery, sealing, quarantine, and audit orchestration.
 
 Benchmark workflow responsibilities follow the same ownership rule:
 `benchmarking.workflow.experiments` owns group definitions and effective specs,
-`benchmarking.workflow.dataset_selection` owns discovery, filtering, sampling,
-and output-root classification, `benchmarking.workflow.run_state` owns persisted
+`benchmarking.workflow.dataset_selection` owns release-validated VGB discovery,
+shared legacy loaders and subset sampling, and output-root classification;
+each service selects its own loading and filtering entrypoints.
+`benchmarking.workflow.run_state` owns persisted
 results and run metadata, and `benchmarking.workflow.runner_adapters` lazily selects business runners.
 `benchmarking.service.single` owns active experiments, prompts, runner assembly,
 per-record configuration, and the OpenClaw wrapper.
@@ -268,8 +270,8 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
   `scratch/venv` with `uv venv --seed --no-project`. Docker environment creation,
   execution, dependency inventory, and cleanup are owned by
   `benchmarking.runtime.container_attempt` inside the container; host VGB
-  lifecycle remains in `benchmarking.runtime.attempt_environment`. Host non-VGB
-  records use the workspace environment.
+  lifecycle remains in `benchmarking.runtime.attempt_environment`. The active
+  single-LLM runner rejects non-VGB records on both backends.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
@@ -304,15 +306,22 @@ OpenClaw compatibility updates are planned for this business.
 Both active group definitions disable generic web search and web fetch.
 For each invocation, the CLI:
 
-1. Uses `benchmarking.workflow.dataset_selection` to discover or accept JSONL
-   datasets, normalize them to `BenchmarkRecord`, apply record selection, and
-   classify the run output root using the canonical single-dataset benchmark
-   directory mapping. Runner adapters materialize run-local visual bundles when
-   required.
+1. Uses service-owned selection backed by `benchmarking.workflow.dataset_selection`.
+   The default service discovers only the four datasets declared in the pinned
+   release. It rejects unsupported dataset arguments and validates every loaded
+   record's eval kind, dataset/track, task ID, and release identity before ID,
+   offset, or limit filtering, including explicit `--files` inputs. Explicit
+   files retain the shared `<dataset>/data/<file>.jsonl` layout contract. The
+   frozen service keeps shared loading, subset filtering, and sampling; its
+   entrypoint alone exposes subset, random-sampling, and judge options. Output
+   classification uses the canonical single-dataset benchmark directory mapping.
 2. Projects the complete benchmark skill routing inventory without startup
    dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
    lifetime of the invocation, recovers sentinel-proven stale active workspaces,
-   and writes run-scoped OpenClaw configs.
+   and writes run-scoped OpenClaw configs. Default VGB invocation scoring uses
+   only the verifier-grounded evaluator, independent of the public shared
+   registry. It creates no JudgeClient, judge config, or judge workspace. Active
+   configs contain only the selected runner agent and manifests record `judge: null`.
 3. Checks Docker daemon readiness and resolves the configured image to an
    immutable image ID before scheduling Docker single-LLM work. Startup orphan
    recovery requires a local dead owner PID, complete attempt ownership labels,
@@ -347,7 +356,7 @@ For each invocation, the CLI:
    Groups rotate round-robin; ready records within a group are FIFO. Retry
    deadlines use a monotonic clock and rejoin the group tail without holding a
    worker. A separate single scoring worker uses persisted runner-result
-   references, so judge latency does not occupy attempt workers. Attempt
+   references, so verifier latency does not occupy attempt workers. Attempt
    results are retained under `attempt-results/`, pending scoring inputs under
    `scoring-pending/`, and final per-record results are written immediately.
    `--max-concurrent-groups` controls ChemQA waves only. Each record runs through either the
@@ -438,7 +447,7 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   retained empty after its lock is released so unlock/removal cannot race a new
   owner. Container attempts guarantee a lifecycle artifact even if the wrapper
   cannot initialize.
-- Docker records and host records with `eval_kind=verifier_grounded` receive a
+- Both Docker and host VGB records receive a
   fresh attempt-local Python environment and uv cache. All attempts in an invocation
   share its run-start PyPI cutoff, while each retry starts from a new empty
   environment. The agent may install registry packages with `uv pip`; pip
@@ -452,7 +461,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   HTTP command arguments are not classified as dependency operations.
 - The runner materializes the role contract, attaches current scratch paths,
   invokes `benchmarking.service.single.openclaw_wrapper`, validates OpenClaw
-  JSON stdout, and enforces the eval-aware candidate-answer contract.
+  JSON stdout, and enforces the schema-aware VGB candidate-answer contract.
+  Its prompt and rescue paths accept only `verifier_grounded`; the official
+  task prompt supplies the answer format. Shared historical answer parsers
+  remain available to frozen execution and evidence readers.
 - The canonical workspace contract requires agent-created Python virtual
   environments under `scratch/` to use `python3 -m venv --copies venv`.
   Runner-created VGB environments use `uv venv --seed --no-project`, are
@@ -511,11 +523,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   archival; general workspace symlink validation remains unchanged.
 - Container transcript path projections are applied in memory during host
   audit, including recovery, while raw transcripts remain unchanged.
-- `RuntimePathProjection` supplies container-visible bundle paths, config policy
-  projection, and persisted audit mappings. Bundled questions use localized
-  Markdown and relative image references. Only the current record bundle mounts
-  read-only at `/benchmark/input`; records without a bundle have no input mount.
-  Guard read scopes include the exact bundle in both backends. Historical replay
+- The VGB adapter never materializes dataset input bundles and has no input mount.
+  `RuntimePathProjection` still supplies config policy projection and persisted
+  audit mappings. Shared visual bundle materialization and localized question
+  Markdown remain available to frozen ChemQA. Historical replay
   consumes persisted path mappings when present and preserves legacy reads.
   The image tool's `image` and `images` arguments, including every array member,
   are checked by the guard and parsed by transcript audit.
@@ -557,10 +568,15 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 
 ### Evaluation, reporting, and review
 
-- `benchmarking.scoring.registry` dispatches by `record.grading.kind` with
-  `generic_semantic` fallback. LLM-judge calls use a fresh isolated judge
-  session and attempt workspace; pure answer and agent-response parsing lives in
-  `benchmarking.core.answer_processing`.
+- `benchmarking.scoring.registry` dispatches by `record.grading.kind` using an
+  invocation-owned evaluator table. The active service registers only
+  `verifier_grounded`, with no semantic fallback; importing its CLI does not load
+  old evaluators or the judge runtime. Frozen ChemQA explicitly loads the shared
+  old evaluators and `generic_semantic` fallback. The public
+  `register_default_evaluators` API retains explicit historical registration for
+  shared callers without influencing active invocation scoring. Frozen LLM-judge
+  calls use a fresh isolated judge session and attempt workspace; pure answer
+  and agent-response parsing lives in `benchmarking.core.answer_processing`.
 - Verifier-grounded tasks use `benchmarking.runtime.vgb_bridge` to call the
   pinned package through a hash-addressed, non-agent virtual environment and
   `python -I`; agent-visible datasets contain public prompts and answer schemas,
@@ -570,7 +586,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   removed before the references enter reporting artifacts.
 - Completed aggregation writes run-local evidence and may launch
   `benchmarking.analysis.automated`. Analysis failure is diagnostic and does not
-  change benchmark scoring or the CLI exit outcome.
+  change benchmark scoring or the CLI exit outcome. VGB-only analysis reports
+  verifier averages over scored records, including partial failures, or an
+  unscored state; it does not produce legacy correctness/RPF metrics. Historical
+  ChemQA and other dataset analysis and dashboard readers remain supported.
 - The dashboard recursively discovers classified run directories and stops
   scanning below each detected run. It skips the reserved
   `legacy-workspace-archives` maintenance tree rather than traversing retained
@@ -653,7 +672,8 @@ The final run artifact set includes:
 - `results.json`, `runtime-manifest.json`, and `runtime-metrics.json`;
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
-- `runtime-config/*.json`, `input-bundles/`, and archived attempt workspaces;
+- `runtime-config/*.json` and archived attempt workspaces; frozen visual tasks
+  can additionally produce `input-bundles/`;
 - `skill-routing-inventory.json` and (when the
   Docker backend is selected) per-attempt container manifests, logs, stats, and
   cleanup spools;

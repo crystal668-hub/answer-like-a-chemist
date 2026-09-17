@@ -6,7 +6,6 @@ from pathlib import Path
 
 from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.convergence import ConvergencePolicy
-from benchmarking.runtime import bundles as runtime_bundles
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.agent_workspace import (
@@ -111,10 +110,7 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             unwrap_agent_payload=subprocess_utils.unwrap_agent_payload,
             summarize_payloads=subprocess_utils.summarize_payloads,
             normalize_answer_tracks=normalize_answer_tracks,
-            ensure_runtime_bundle=lambda record, *, bundle_root: runtime_bundles.ensure_runtime_bundle(
-                record,
-                bundle_root=bundle_root,
-            ),
+            ensure_runtime_bundle=lambda record, *, bundle_root: None,
             build_single_llm_prompt=build_single_llm_prompt,
             slugify=slugify,
             benchmark_agent_thinking=benchmark_agent_thinking,

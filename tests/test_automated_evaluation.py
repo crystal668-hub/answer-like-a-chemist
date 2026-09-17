@@ -346,6 +346,11 @@ def test_per_record_result_table_renders_verifier_scores_without_pass_rate() -> 
     assert "| 平均 | - | Verifier 平均分 0.5 |" in markdown
     assert "正确率" not in markdown
 
+    bundle["records"][1]["groups"][0]["status_axes"] = {"evaluable": False, "scored": False}
+    assert automated_evaluation.format_average_cell(bundle, "single_llm_skills_on") == "Verifier 平均分 0.7"
+    bundle["records"][0]["groups"][0]["status_axes"] = {"evaluable": False, "scored": False}
+    assert automated_evaluation.format_average_cell(bundle, "single_llm_skills_on") == "未评分"
+
 
 def test_single_llm_transcript_summary_skips_thinking_and_keeps_visible_evidence(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"

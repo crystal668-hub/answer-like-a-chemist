@@ -128,12 +128,12 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="record-1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
+            dataset="verifier_grounded_rdkit",
+            source_file="/tmp/verifier_grounded_rdkit.jsonl",
+            eval_kind="verifier_grounded",
             prompt="Identify X.",
             reference_answer="X",
-            payload={"track": "olympiad"},
+            payload={"verifier_grounded": {"answer_schema": {"final_answer_prefix": "FINAL ANSWER:"}}},
         )
 
     def _vgb_record(self) -> BenchmarkRecord:

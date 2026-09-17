@@ -71,49 +71,13 @@ class BenchmarkPromptsTests(unittest.TestCase):
             payload={"answer_type": "multiple-choice"},
         )
 
-        single_prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
         chemqa_goal = build_chemqa_goal(record, websearch_enabled=True)
 
         self.assertEqual("multiple_choice", resolve_chemqa_answer_kind(record))
-        self.assertIn("Explanation:", single_prompt)
-        self.assertIn("Answer:", single_prompt)
-        self.assertIn("Confidence:", single_prompt)
         self.assertIn("Explanation:", chemqa_goal)
         self.assertIn("Answer:", chemqa_goal)
         self.assertIn("Confidence:", chemqa_goal)
         self.assertIn("ChemQA Artifact Flow answer kind: multiple_choice.", chemqa_goal)
-
-    def test_hle_prompt_specializes_multiple_choice_answer_field(self) -> None:
-        record = BenchmarkRecord(
-            record_id="hle-mc",
-            dataset="hle",
-            source_file="/tmp/hle.jsonl",
-            eval_kind="hle",
-            prompt="Which option is correct?\nA. X\nB. Y",
-            reference_answer="B",
-            payload={"answer_type": "multipleChoice"},
-        )
-
-        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
-
-        self.assertIn("For HLE multiple-choice tasks, put only the option letter", prompt)
-        self.assertIn("Do not add `FINAL ANSWER:`", prompt)
-
-    def test_hle_prompt_specializes_exact_match_answer_field(self) -> None:
-        record = BenchmarkRecord(
-            record_id="hle-exact",
-            dataset="hle",
-            source_file="/tmp/hle.jsonl",
-            eval_kind="hle",
-            prompt="Give the rate constant.",
-            reference_answer="1.4E-14 hr^-1",
-            payload={"answer_type": "exactMatch"},
-        )
-
-        prompt = build_single_llm_prompt(record, websearch_enabled=False, skills_enabled=True)
-
-        self.assertIn("For HLE exact-match tasks, put only the final value, expression, or entity", prompt)
-        self.assertIn("Do not add `FINAL ANSWER:`", prompt)
 
     def test_verifier_grounded_prompt_uses_official_prompt_without_schema_repetition(self) -> None:
         record = BenchmarkRecord(
@@ -291,9 +255,9 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="frontierscience",
+            dataset="verifier_grounded_rdkit",
             source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
+            eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
             reference_answer="4.7",
             payload={"track": "olympiad"},
@@ -318,9 +282,9 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_omits_websearch_guidance(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="frontierscience",
+            dataset="verifier_grounded_rdkit",
             source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
+            eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
             reference_answer="4.7",
             payload={"track": "olympiad"},
@@ -339,9 +303,9 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_adds_only_time_budget_not_coverage_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="frontierscience",
+            dataset="verifier_grounded_rdkit",
             source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
+            eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
             reference_answer="4.7",
             payload={"track": "olympiad"},
@@ -356,94 +320,12 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("Do not skip task-relevant derivation steps", prompt)
         self.assertNotIn("include enough visible checks for grading", prompt)
 
-    def test_superchem_prompt_keeps_only_minimal_output_format(self) -> None:
-        record = BenchmarkRecord(
-            record_id="superchem-1",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            eval_kind="superchem_multiple_choice_rpf",
-            prompt="Choose the product.\nA. X\nB. Y",
-            reference_answer="B",
-        )
-
-        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
-
-        self.assertIn("FINAL ANSWER: <option letters>", prompt)
-        self.assertNotIn("option checks", prompt)
-        self.assertNotIn("checkpoint-like", prompt)
-        self.assertNotIn("Provider skills may be used", prompt)
-        self.assertNotIn("This is a chemistry multiple-choice question", prompt)
-
-    def test_superchem_prompt_keeps_option_encoding(self) -> None:
-        record = BenchmarkRecord(
-            record_id="superchem-1",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            eval_kind="superchem_multiple_choice_rpf",
-            prompt="Choose the product.\nA. X\nB. Y",
-            reference_answer="B",
-        )
-
-        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
-
-        self.assertIn("Use only uppercase option letters", prompt)
-        self.assertIn("separate multiple correct letters with `|`", prompt)
-
-    def test_chembench_prompt_uses_same_minimal_output_format_for_all_answers(self) -> None:
-        numeric_record = BenchmarkRecord(
-            record_id="chembench-numeric",
-            dataset="chembench",
-            source_file="/tmp/chembench.jsonl",
-            eval_kind="chembench_open_ended",
-            prompt="Calculate the pH.",
-            reference_answer="4.7",
-            payload={},
-        )
-        exact_record = BenchmarkRecord(
-            record_id="chembench-exact",
-            dataset="chembench",
-            source_file="/tmp/chembench.jsonl",
-            eval_kind="chembench_open_ended",
-            prompt="What is the IUPAC name of [START_SMILES]CCO[END_SMILES]?",
-            reference_answer="ethanol",
-            payload={},
-        )
-
-        numeric_prompt = build_single_llm_prompt(numeric_record, websearch_enabled=True, skills_enabled=True)
-        exact_prompt = build_single_llm_prompt(exact_record, websearch_enabled=True, skills_enabled=True)
-
-        for prompt in (numeric_prompt, exact_prompt):
-            self.assertIn("FINAL ANSWER: <answer>", prompt)
-            self.assertNotIn("formulas, substitutions, units, rounding", prompt)
-            self.assertNotIn("precise final string, structure, name, or count", prompt)
-            self.assertNotIn("Avoid adding irrelevant formulas", prompt)
-
-    def test_single_llm_prompt_keeps_only_frontierscience_research_output_format(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-research",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_research",
-            prompt="Context: protocol. Question: evaluate each changed condition.",
-            reference_answer="Points: 1.0, Item: Covers each condition.",
-            payload={"track": "research"},
-        )
-
-        prompt = build_single_llm_prompt(record, websearch_enabled=True, skills_enabled=True)
-
-        self.assertIn("## FINAL RESEARCH ANSWER", prompt)
-        self.assertNotIn("FINAL ANSWER:", prompt)
-        self.assertNotIn("research-track", prompt)
-        self.assertNotIn("itemized reasoning criteria", prompt)
-        self.assertNotIn("every requested sub-question", prompt)
-        self.assertNotIn("Do not collapse", prompt)
-
-    def test_frontierscience_olympiad_uses_official_prompt_without_repetition(self) -> None:
+    def test_vgb_uses_official_prompt_without_repetition(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-olympiad",
-            dataset="frontierscience",
+            dataset="verifier_grounded_rdkit",
             source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
+            eval_kind="verifier_grounded",
             prompt="Calculate the pH.\n\nEnd with FINAL ANSWER: <answer>.",
             reference_answer="4.7",
             payload={"track": "olympiad"},

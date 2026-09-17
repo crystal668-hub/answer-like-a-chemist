@@ -79,7 +79,8 @@ def render_run_config(
     duckduckgo["enabled"] = spec.websearch_enabled
     duckduckgo.setdefault("config", {})
 
-    _upsert_agent_entry(payload, provisioned_agent=provisioned.judge, model=judge_model, skills=None)
+    if provisioned.judge is not None:
+        _upsert_agent_entry(payload, provisioned_agent=provisioned.judge, model=judge_model, skills=None)
     runner_skills = list(spec.skill_allowlist or ()) if spec.skills_enabled else []
     for runner_agent in provisioned.runner_agents:
         _upsert_agent_entry(
