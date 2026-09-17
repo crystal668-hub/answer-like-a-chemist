@@ -50,6 +50,20 @@ class RecordValidationError(ValueError):
     pass
 
 
+RETIRED_BENCHMARK_LABELS = frozenset({
+    "chembench", "chembench_open_ended",
+    "frontierscience", "frontierscience_olympiad", "frontierscience_research",
+    "hle", "hle_chemistry", "superchem", "superchem_multimodal",
+    "superchem_multiple_choice_rpf",
+})
+
+
+def is_retired_benchmark(*, dataset: str = "", eval_kind: str = "", subset: str = "") -> bool:
+    """Exact persisted identifiers only; never match task text or VGB name fragments."""
+    return any(str(value).strip().casefold() in RETIRED_BENCHMARK_LABELS
+               for value in (dataset, eval_kind, subset))
+
+
 @dataclass
 class BenchmarkRecord:
     record_id: str

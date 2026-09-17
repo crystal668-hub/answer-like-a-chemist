@@ -506,12 +506,11 @@ def _is_complete_frontierscience_research_rescue_answer(text: str) -> bool:
 
 def is_complete_rescue_answer(text: str, *, eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> bool:
     candidate = str(text or "").strip()
+    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND:
+        return has_final_answer_marker(candidate) or has_schema_final_answer_block(
+            candidate, answer_schema=answer_schema,
+        )
     if is_complete_benchmark_answer(candidate):
-        return True
-    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND and has_schema_final_answer_block(
-        candidate,
-        answer_schema=answer_schema,
-    ):
         return True
     if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
         return False
@@ -520,12 +519,11 @@ def is_complete_rescue_answer(text: str, *, eval_kind: str = "", answer_schema: 
 
 def is_complete_answer_for_eval(text: str, *, eval_kind: str = "", answer_schema: dict[str, Any] | None = None) -> bool:
     candidate = str(text or "").strip()
+    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND:
+        return has_final_answer_marker(candidate) or has_schema_final_answer_block(
+            candidate, answer_schema=answer_schema,
+        )
     if is_complete_benchmark_answer(candidate):
-        return True
-    if str(eval_kind or "").strip() == VERIFIER_GROUNDED_EVAL_KIND and has_schema_final_answer_block(
-        candidate,
-        answer_schema=answer_schema,
-    ):
         return True
     if str(eval_kind or "").strip() != FRONTIERSCIENCE_RESEARCH_EVAL_KIND:
         return False

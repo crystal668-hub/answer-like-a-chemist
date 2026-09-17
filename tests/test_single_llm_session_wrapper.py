@@ -656,7 +656,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                                     "content": [
                                         {
                                             "type": "text",
-                                            "text": "Explanation: ok\nAnswer: 273\nConfidence: 60%",
+                                            "text": "Checked derivation.\nFINAL ANSWER: 273",
                                         }
                                     ],
                                 },
@@ -712,7 +712,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(0, exit_code)
         payload = json.loads(stdout.getvalue())
         result = payload["result"]
-        self.assertEqual("Explanation: ok\nAnswer: 273\nConfidence: 60%", result["payloads"][0]["text"])
+        self.assertEqual("Checked derivation.\nFINAL ANSWER: 273", result["payloads"][0]["text"])
         convergence = result["meta"]["convergence"]
         self.assertTrue(convergence["transcript_answer_recovered"])
         self.assertEqual(90, convergence["policy"]["finalization_safety_seconds"])

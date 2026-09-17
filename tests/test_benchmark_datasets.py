@@ -205,13 +205,13 @@ class BenchmarkDatasetsTests(unittest.TestCase):
             register_evaluator("unit_test_eval_kind", evaluator)
             record = BenchmarkRecord(
                 record_id="chem-1",
-                dataset="chembench",
+                dataset="custom",
                 source_file="/tmp/sample.jsonl",
                 prompt="Q",
                 grading=GradingSpec(
                     kind="unit_test_eval_kind",
                     reference_answer="42",
-                    subset="chembench",
+                    subset="custom",
                     config={},
                 ),
                 raw_payload={"id": "chem-1"},

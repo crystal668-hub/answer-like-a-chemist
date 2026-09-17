@@ -58,9 +58,9 @@ def test_frozen_entrypoint_paths_and_scoring_are_retained(monkeypatch):
     for bundle in ('chemqa-review', 'debateclaw-v1', 'benchmark-cleanroom'):
         assert (ROOT / 'skills' / bundle / 'SKILL.md').is_file()
     assert 'generic_semantic' in frozen.evaluator_registry()
-    monkeypatch.setattr(sys, 'argv', ['legacy', '--subsets', 'hle_chemistry', '--judge-timeout', '123'])
+    monkeypatch.setattr(sys, 'argv', ['legacy', '--subsets', 'custom', '--judge-timeout', '123'])
     args = cli.parse_args(frozen)
-    assert args.subsets == 'hle_chemistry' and args.judge_timeout == 123
+    assert args.subsets == 'custom' and args.judge_timeout == 123
 
 
 def test_invocation_registry_does_not_fall_back_to_global_legacy_registry(monkeypatch):
@@ -130,13 +130,11 @@ def test_adapter_never_materializes_dataset_bundle(monkeypatch, tmp_path):
         runner.run(SimpleNamespace(eval_kind='chembench_open_ended'), object())
 
 
-def test_frozen_record_selection_filters_ids_before_sampling(monkeypatch):
+def test_frozen_record_selection_rejects_retired_records_before_filtering(monkeypatch):
     from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.service.chemdebate import execution as frozen
-    records = [BenchmarkRecord(record_id=str(i), dataset='chembench', source_file='fixture',
-                               prompt='Q', eval_kind='chembench_open_ended', reference_answer='A')
-               for i in range(4)]
-    monkeypatch.setattr(dataset_selection, 'load_records', lambda files: records)
-    args = SimpleNamespace(subsets='chembench', record_ids='3,1', random_count_per_subset=1, random_seed=0)
-    selected = frozen.select_records([], args)
-    assert len(selected) == 1 and selected[0].record_id in {'3', '1'}
+    record = BenchmarkRecord(record_id='old', dataset='chembench', source_file='fixture',
+                             prompt='Q', eval_kind='chembench_open_ended', reference_answer='A')
+    monkeypatch.setattr(dataset_selection, 'load_records', lambda files: [record])
+    with pytest.raises(BenchmarkError, match='retired'):
+        frozen.select_records([], SimpleNamespace(subsets='custom', record_ids='other'))

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,6 @@ from benchmarking.core.datasets import (
     RecordValidationError,
     classify_subset,
     dataset_name_from_file,
-    source_pair_key,
 )
 from benchmarking.core.datasets import (
     load_records as load_benchmark_records,
@@ -20,15 +18,6 @@ from benchmarking.core.datasets import (
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.run_state import slugify
-
-SUBSET_ORDER = (
-    "chembench",
-    "frontierscience_Olympiad",
-    "frontierscience_Research",
-    "superchem_multimodal",
-    "hle_chemistry",
-)
-SUPERCHEM_SUBSETS = ("superchem_multimodal",)
 
 CANONICAL_BENCHMARK_NAMES = {
     "verifier_grounded_rdkit": "vgb-rdkit",
@@ -47,71 +36,6 @@ def load_records(paths: Iterable[Path]) -> list[BenchmarkRecord]:
         return load_benchmark_records(paths)
     except RecordValidationError as exc:
         raise BenchmarkError(str(exc)) from exc
-
-
-def sample_superchem_pairs(
-    grouped: dict[str, list[BenchmarkRecord]],
-    *,
-    per_subset_count: int,
-    seed: int,
-) -> list[BenchmarkRecord]:
-    if not all(grouped.get(subset) for subset in SUPERCHEM_SUBSETS):
-        return []
-
-    by_uuid: dict[str, dict[str, BenchmarkRecord]] = {}
-    for subset in SUPERCHEM_SUBSETS:
-        for record in grouped.get(subset, []):
-            by_uuid.setdefault(source_pair_key(record), {})[subset] = record
-
-    paired = [pair for pair in by_uuid.values() if all(subset in pair for subset in SUPERCHEM_SUBSETS)]
-    if not paired:
-        return []
-    if len(paired) < per_subset_count:
-        raise BenchmarkError(f"SUPERChem 成对题目仅有 {len(paired)} 题，无法随机抽取 {per_subset_count} 题。")
-
-    rng = random.Random(seed)
-    sampled_pairs = rng.sample(paired, per_subset_count)
-    sampled: list[BenchmarkRecord] = []
-    for pair in sampled_pairs:
-        for subset in SUPERCHEM_SUBSETS:
-            sampled.append(pair[subset])
-    return sampled
-
-
-def sample_records_per_subset(
-    records: list[BenchmarkRecord],
-    *,
-    per_subset_count: int,
-    seed: int,
-) -> list[BenchmarkRecord]:
-    if per_subset_count <= 0:
-        raise BenchmarkError("--random-count-per-subset 必须是正整数")
-
-    grouped: dict[str, list[BenchmarkRecord]] = {}
-    for record in records:
-        grouped.setdefault(classify_subset(record), []).append(record)
-
-    available_supported = [subset for subset in SUBSET_ORDER if grouped.get(subset)]
-    if not available_supported:
-        raise BenchmarkError("当前选定的数据范围内没有可用于按子集抽样的记录。")
-
-    rng = random.Random(seed)
-    sampled: list[BenchmarkRecord] = []
-    handled_subsets: set[str] = set()
-    superchem_sampled = sample_superchem_pairs(grouped, per_subset_count=per_subset_count, seed=seed)
-    if superchem_sampled:
-        sampled.extend(superchem_sampled)
-        handled_subsets.update(SUPERCHEM_SUBSETS)
-    for subset in available_supported:
-        if subset in handled_subsets:
-            continue
-        subset_records = grouped[subset]
-        if len(subset_records) < per_subset_count:
-            raise BenchmarkError(
-                f"子集 `{subset}` 仅有 {len(subset_records)} 题，无法随机抽取 {per_subset_count} 题。"
-            )
-        sampled.extend(rng.sample(subset_records, per_subset_count))
-    return sampled
 
 
 def apply_offset_limit(

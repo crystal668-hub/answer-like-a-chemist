@@ -596,6 +596,10 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                     payload.setdefault("cleanup_report", cleanup_report)
 
     def run(self, record: Any, group: Any) -> RunnerResult:
+        from benchmarking.core.datasets import is_retired_benchmark
+        if is_retired_benchmark(dataset=record.dataset, eval_kind=record.eval_kind,
+                                subset=record.grading.subset):
+            raise ValueError("This benchmark has been retired; ChemQA execution is unavailable.")
         run_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{self._now_stamp()}"
         if self._unique_run_suffix:
             run_id = f"{run_id}-{uuid.uuid4().hex[:8]}"

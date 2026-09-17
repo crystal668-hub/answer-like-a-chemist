@@ -81,6 +81,17 @@ def _dashboard_dataset_subset(result: dict[str, Any]) -> tuple[str, str]:
     return dataset, subset
 
 
+def _selectable_facets(results: list[dict[str, Any]]) -> list[dict[str, str]]:
+    from benchmarking.core.datasets import is_retired_benchmark
+    pairs = set()
+    for result in results:
+        dataset, subset = _dashboard_dataset_subset(result)
+        if not is_retired_benchmark(dataset=dataset, subset=subset,
+                                    eval_kind=str(result.get("eval_kind") or "")):
+            pairs.add((dataset, subset))
+    return [{"dataset": dataset, "subset": subset} for dataset, subset in sorted(pairs)]
+
+
 def _score_label(result: dict[str, Any]) -> str:
     evaluation = result.get("evaluation") if isinstance(result.get("evaluation"), dict) else {}
     status = {key: result.get(key) for key in ("evaluable", "scored")}
@@ -388,6 +399,7 @@ class BenchmarkDashboard:
                     "dataset_files": payload.get("dataset_files") or [],
                     "datasets": datasets,
                     "subsets": subsets,
+                    "selectable_facets": _selectable_facets(results),
                     "progress": progress,
                     "summary": summary,
                 }

@@ -67,12 +67,6 @@ Build atoms at the granularity a grader would need to award visible reasoning cr
 - `done`: each material atom is supported by retrieved/provided sources, scoped evidence, or explicit derivation, with uncertainty separated from facts.
 - `blocked`: full text, database record, identifier resolution, or provider access remains unavailable after two failed attempts.
 
-### HLE Tasks
-
-- `todo`: atomize answer type, required final format, decisive facts, image/table inputs, elimination checks, confidence basis, and any source or tool evidence needed.
-- `done`: explanation covers the decisive facts and checks, answer is directly stated, and confidence reflects remaining uncertainty.
-- `blocked`: unresolved evidence is explicitly named before giving the best supported answer in the official HLE format.
-
 ## Candidate / Hypothesis Verification
 
 - Treat tool results as evidence, not verdicts. If a tool checks a guessed answer, state whether it verifies an intermediate step or the decisive final-answer condition.

@@ -5,7 +5,9 @@ from benchmarking.runtime import paths
 from benchmarking.runtime.agent_workspace import default_workspace_templates
 from benchmarking.runtime.agent_workspace import WorkspaceTemplate
 from benchmarking.scoring.registry import legacy_evaluators as evaluator_registry
-from benchmarking.workflow.dataset_selection import select_dataset_files
+from benchmarking.core.datasets import dataset_name_from_file, is_retired_benchmark
+from benchmarking.workflow.dataset_selection import select_dataset_files as shared_select_dataset_files
+from benchmarking.workflow.errors import BenchmarkError
 from . import experiments
 from .orchestration import runner_options
 
@@ -16,46 +18,33 @@ SCHEDULING_MODE = "legacy-chemqa-waves"
 DEFAULT_CHEMQA_ROOT = paths.skills_root / "chemqa-review"
 USES_JUDGE = True
 
+def select_dataset_files(args):
+    requested = [value.strip() for value in str(args.datasets or "").split(",") if value.strip()]
+    if any(is_retired_benchmark(dataset=value) for value in requested):
+        raise BenchmarkError("This benchmark has been retired; ChemQA execution is unavailable.")
+    files = shared_select_dataset_files(args)
+    if args.files:
+        return files
+    return [path for path in files if not is_retired_benchmark(dataset=dataset_name_from_file(path))]
+
+
 def select_records(files, args):
     from benchmarking.workflow import dataset_selection
-    records = dataset_selection.filter_records_by_subsets(dataset_selection.load_records(files), args.subsets)
-    records = dataset_selection.filter_records_by_ids(records, args.record_ids)
-    if args.random_count_per_subset is not None:
-        records = dataset_selection.sample_records_per_subset(
-            records, per_subset_count=args.random_count_per_subset, seed=args.random_seed,
-        )
-    return records
+    records = dataset_selection.load_records(files)
+    if any(is_retired_benchmark(dataset=record.dataset, eval_kind=record.eval_kind,
+                               subset=record.grading.subset) for record in records):
+        raise BenchmarkError("This benchmark has been retired; ChemQA execution is unavailable.")
+    records = dataset_selection.filter_records_by_subsets(records, args.subsets)
+    return dataset_selection.filter_records_by_ids(records, args.record_ids)
 
 
 def sampling_metadata(args):
-    return {"enabled": args.random_count_per_subset is not None,
-            "count_per_subset": args.random_count_per_subset, "seed": args.random_seed}
+    return {"enabled": False, "count_per_subset": None, "seed": None}
 
 
 def add_arguments(parser):
     from benchmarking.workflow import experiments as shared_experiments
-    parser.add_argument(
-        "--subsets",
-        help=(
-            "仅运行指定子集，逗号分隔；例如 "
-            "frontierscience_Research,superchem_multimodal"
-        ),
-    )
-    parser.add_argument(
-        "--random-count-per-subset",
-        type=int,
-        help=(
-            "按子集随机抽样时，每个子集抽取多少题；当前支持 chembench / "
-            "frontierscience_Olympiad / frontierscience_Research / "
-            "superchem_multimodal"
-        ),
-    )
-    parser.add_argument(
-        "--random-seed",
-        type=int,
-        default=0,
-        help="随机抽样的 seed，默认 0，便于复现",
-    )
+    parser.add_argument("--subsets", help="Filter supported record subsets, comma-separated")
     parser.add_argument("--judge-agent", default=shared_experiments.DEFAULT_JUDGE_AGENT, help="rubric / 语义评测所用 judge agent id")
     parser.add_argument(
         "--judge-model",

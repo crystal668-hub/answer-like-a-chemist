@@ -47,9 +47,9 @@ runbooks.
   `/Users/xutao/.openclaw/data/formal-benchmarks`; temporary datasets default to
   `/Users/xutao/.openclaw/data/temp-benchmarks`.
 - Legacy ChemBench, FrontierScience, HLE, and SUPERChem inputs are not installed
-  in these local roots. Frozen ChemQA replay requires independently supplied
-  input through `--benchmark-root` or `--files`; its source and historical
-  result readers remain available.
+  in these local roots. Their execution, evaluator implementations and dedicated
+  prompts are retired, including in frozen ChemQA. Saved results and artifact
+  readers remain available; supplying external input does not restore scoring.
 - Benchmark run records are generated under
   `workspace/state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>`.
   Formal and temporary inputs determine the top-level category; benchmark and
@@ -77,7 +77,7 @@ runbooks.
 | Module | Ownership |
 | --- | --- |
 | `benchmarking/core/` | Dataset normalization, runner/result dataclasses, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
-| `benchmarking/scoring/` | Evaluator registry plus per-track implementations and result/error contracts for ChemBench, FrontierScience, SuperChem, HLE, verifier-grounded tracks, and generic semantic fallback. |
+| `benchmarking/scoring/` | VGB evaluator, generic semantic scoring for supported frozen-service inputs, explicit retired-benchmark rejection, and result/error contracts. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, invocation observability, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
@@ -97,7 +97,7 @@ templates, leases, recovery, sealing, quarantine, and audit orchestration.
 Benchmark workflow responsibilities follow the same ownership rule:
 `benchmarking.workflow.experiments` owns group definitions and effective specs,
 `benchmarking.workflow.dataset_selection` owns release-validated VGB discovery,
-shared legacy loaders and subset sampling, and output-root classification;
+shared record loaders and filters, and output-root classification;
 each service selects its own loading and filtering entrypoints.
 `benchmarking.workflow.run_state` owns persisted
 results and run metadata, and `benchmarking.workflow.runner_adapters` lazily selects business runners.
@@ -316,8 +316,9 @@ For each invocation, the CLI:
    record's eval kind, dataset/track, task ID, and release identity before ID,
    offset, or limit filtering, including explicit `--files` inputs. Explicit
    files retain the shared `<dataset>/data/<file>.jsonl` layout contract. The
-   frozen service keeps shared loading, subset filtering, and sampling; its
-   entrypoint alone exposes subset, random-sampling, and judge options. Output
+   frozen service keeps shared loading and subset filtering but rejects the four
+   retired benchmarks before filtering or execution. Its entrypoint exposes
+   subset and judge options; retired-dataset subset sampling is removed. Output
    classification uses the canonical single-dataset benchmark directory mapping.
 2. Projects the complete benchmark skill routing inventory without startup
    dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
@@ -468,7 +469,8 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   JSON stdout, and enforces the schema-aware VGB candidate-answer contract.
   Its prompt and rescue paths accept only `verifier_grounded`; the official
   task prompt supplies the answer format. Shared historical answer parsers
-  remain available to frozen execution and evidence readers.
+  remain available to evidence readers. VGB normal/rescue completeness dispatches
+  before generic historical parsing and cannot accept an HLE-only answer format.
 - The canonical workspace contract requires agent-created Python virtual
   environments under `scratch/` to use `python3 -m venv --copies venv`.
   Runner-created VGB environments use `uv venv --seed --no-project`, are
@@ -530,7 +532,8 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - The VGB adapter never materializes dataset input bundles and has no input mount.
   `RuntimePathProjection` still supplies config policy projection and persisted
   audit mappings. Shared visual bundle materialization and localized question
-  Markdown remain available to frozen ChemQA. Historical replay
+  Markdown helpers remain available to historical tooling; ChemQA admission
+  rejects retired visual benchmarks. Historical replay
   consumes persisted path mappings when present and preserves legacy reads.
   The image tool's `image` and `images` arguments, including every array member,
   are checked by the guard and parsed by transcript audit.
@@ -555,6 +558,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 
 ### ChemQA runner (legacy, frozen)
 
+- ChemBench, FrontierScience, HLE, and SUPERChem are rejected before workspace
+  allocation. Generic supported tasks and VGB retain their prompt and artifact
+  contracts; retired benchmark-specific prompt branches and answer-kind
+  inference are absent from this execution path. Historical artifact parsing
+  remains available independently of execution admission.
 - Each attempt prepares one coordinator workspace and five role workspaces as an
   all-or-fail lease set.
 - The runner compiles and materializes a `chemqa-review@1` launch, then the role
@@ -575,10 +583,13 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 - `benchmarking.scoring.registry` dispatches by `record.grading.kind` using an
   invocation-owned evaluator table. The active service registers only
   `verifier_grounded`, with no semantic fallback; importing its CLI does not load
-  old evaluators or the judge runtime. Frozen ChemQA explicitly loads the shared
-  old evaluators and `generic_semantic` fallback. The public
-  `register_default_evaluators` API retains explicit historical registration for
-  shared callers without influencing active invocation scoring. Frozen LLM-judge
+  the judge runtime. Frozen ChemQA explicitly registers VGB and
+  `generic_semantic` for supported inputs. The four retired evaluator modules and
+  their judge prompts are removed. `benchmarking.core.datasets.is_retired_benchmark`
+  identifies exact dataset, subset and eval-kind labels; registry dispatch rejects
+  them before overrides or generic fallback. The public
+  `register_default_evaluators` API registers only the remaining shared evaluators
+  without influencing active invocation scoring. Frozen LLM-judge
   calls use a fresh isolated judge session and attempt workspace; pure answer
   and agent-response parsing lives in `benchmarking.core.answer_processing`.
 - Verifier-grounded tasks use `benchmarking.runtime.vgb_bridge` to call the
@@ -622,6 +633,13 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   duration from `runner_meta.durationMs`, converted from milliseconds to
   seconds, and falls back to persisted `elapsed_seconds` for legacy results
   without that metadata.
+- Dashboard run-list responses retain historical `datasets` and `subsets` for
+  display and add `selectable_facets` for the filter controls. These pairs exclude
+  the four retired benchmark families using exact labels, canonical source-file
+  dataset identity and eval kind. The browser builds Dataset/Subset options from
+  these pairs, scopes subsets to the selected dataset and clears stale selections.
+  Mixed historical/VGB runs retain their VGB choices. Historical records, scores,
+  run summaries and detail views remain readable and are not deleted or rewritten.
 
 ### Paper pipeline
 
@@ -803,14 +821,6 @@ boundary. Processes still run as the same local user.
 ## 5. Current Risks and Non-goals
 
 ### Current risks
-
-- Shared answer completeness helpers currently accept the HLE
-  `Explanation`/`Answer`/`Confidence` format before checking the requested eval
-  kind. VGB runner and rescue paths call these helpers, so HLE-shaped text can
-  pass completeness checks without the VGB final marker or XYZ block. The
-  exposed `act-like-a-chemist` skill also retains an HLE-specific checklist.
-  These are active residual behaviors, distinct from deliberately frozen
-  evaluator and historical dashboard support.
 
 - Experimental verifier workers retain Python/native module state within each
   generation despite reloading track objects per request. Pinned-release shadow

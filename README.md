@@ -51,8 +51,10 @@ the complete selected dataset. The supported dataset names are
 `benchmarking/resources/verifier_grounded/release.json` owns their task inventory.
 Default discovery excludes legacy datasets. Explicit `--files` inputs must use
 the `<dataset>/data/<file>.jsonl` layout and satisfy the same release contract.
-Subset sampling and judge flags are available only through the frozen ChemQA
-entrypoint; active VGB scoring does not provision a judge.
+Subset filtering and judge flags are available only through the frozen ChemQA
+entrypoint; active VGB scoring does not provision a judge. ChemBench,
+FrontierScience, HLE, and SUPERChem execution/scoring are retired in both
+entrypoints, while saved historical results remain readable.
 
 The complete integration contract is documented in
 `docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`.

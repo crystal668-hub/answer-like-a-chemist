@@ -159,12 +159,14 @@ function renderFilterOptions() {
   const subsetFilter = $("subset-filter");
   const selectedDataset = datasetFilter.value;
   const selectedSubset = subsetFilter.value;
-  const datasets = Array.from(new Set(state.runs.flatMap((run) => run.datasets || []))).filter(Boolean).sort();
-  const scopedRuns = selectedDataset
-    ? state.runs.filter((run) => (run.datasets || []).includes(selectedDataset))
-    : state.runs;
-  const subsets = Array.from(new Set(scopedRuns.flatMap((run) => run.subsets || []))).filter(Boolean).sort();
-  datasetFilter.innerHTML = optionMarkup(datasets, selectedDataset);
+  const facets = state.runs.flatMap((run) => run.selectable_facets || []);
+  const datasets = Array.from(new Set(facets.map((facet) => facet.dataset))).filter(Boolean).sort();
+  const activeDataset = datasets.includes(selectedDataset) ? selectedDataset : "";
+  const scopedFacets = activeDataset
+    ? facets.filter((facet) => facet.dataset === activeDataset)
+    : facets;
+  const subsets = Array.from(new Set(scopedFacets.map((facet) => facet.subset))).filter(Boolean).sort();
+  datasetFilter.innerHTML = optionMarkup(datasets, activeDataset);
   subsetFilter.innerHTML = optionMarkup(subsets, subsets.includes(selectedSubset) ? selectedSubset : "");
 }
 

@@ -281,7 +281,7 @@ def test_act_like_a_chemist_defines_coverage_checklist_contract() -> None:
     assert "Numeric, Formula, Or Table Tasks" in text
     assert "Multiple-Choice Tasks" in text
     assert "Research Or Open-Ended Tasks" in text
-    assert "HLE Tasks" in text
+    assert "HLE Tasks" not in text
     assert "Do not use `python`, `python3`, `pip`" not in text
     assert "usage error" not in text
     assert "`done` only after its derivation or evidence is complete" in text

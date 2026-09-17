@@ -106,7 +106,9 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - 刷新 run 列表
 - 显示或隐藏已隐藏的 run
 
-verifier-grounded benchmark 的三个 track 在 dashboard 中会归为同一个 Dataset：`vgb`；具体 track 通过 Subset 区分，例如 `verifier_grounded_rdkit`、`verifier_grounded_xtb_xyz`、`verifier_grounded_property_calculation`。
+verifier-grounded benchmark 的四个 track 在 dashboard 中归为同一个 Dataset：`vgb`；具体 track 通过 Subset 区分，包括 `verifier_grounded_rdkit`、`verifier_grounded_xtb_xyz`、`property_calculation_advanced` 和 `property_calculation_basic`。旧 VGB run 保留其原有可读取的 subset 标识。
+
+Dataset/Subset 筛选选项不再包含 ChemBench、FrontierScience、HLE、SUPERChem 及其子集。筛选选项来自 API 的 `selectable_facets`，与保留历史事实的 `datasets`/`subsets` 展示字段分开。历史 run 和详情仍可在“全部”或搜索结果中查看；混合 run 中的 VGB 筛选项继续保留，不删除任何历史结果文件。
 
 常用操作：
 

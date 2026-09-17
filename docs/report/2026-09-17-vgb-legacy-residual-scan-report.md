@@ -10,6 +10,12 @@ Status: scan complete. Two active HLE residues remain unmodified. The original
 marked `close` at the user's request; that administrative status does not resolve
 the new findings below.
 
+Supersession (2026-09-17): the user subsequently authorized removal of the four
+retired evaluators/prompts and their dashboard filter choices. The active HLE
+findings were addressed in that follow-up; see the
+[removal report](2026-09-17-retired-benchmark-removal-report.md). The scan results
+below remain the original pre-removal evidence.
+
 Evidence baseline: `42178e42d14f443d0f9fef397cbb341b30ca1350`, clean worktree.
 The scan uses case-insensitive tracked-text searches for ChemBench,
 FrontierScience, SUPERChem and HLE identifiers, including underscore variants.

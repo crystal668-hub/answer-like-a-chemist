@@ -3,9 +3,7 @@ from __future__ import annotations
 import unittest
 
 from benchmarking.core.datasets import BenchmarkRecord
-from benchmarking.service.chemdebate.prompts import build_chemqa_goal
 from benchmarking.service.single.prompts import build_single_llm_prompt
-from benchmarking.service.chemdebate.prompts import resolve_chemqa_answer_kind
 from benchmarking.service.single.runner import validate_candidate_answer_contract
 
 
@@ -16,68 +14,6 @@ class BenchmarkPromptsTests(unittest.TestCase):
         "value_type": "xyz",
         "fence_language": "xyz",
     }
-
-    def test_frontierscience_olympiad_uses_numeric_answer_kind(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Calculate the pH.",
-            reference_answer="4.7",
-            payload={"track": "olympiad"},
-        )
-
-        self.assertEqual("numeric_short_answer", resolve_chemqa_answer_kind(record))
-
-    def test_frontierscience_olympiad_formula_reference_uses_formula_answer_kind(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-formula",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Determine the corresponding \\( K_M \\) in terms of \\( [S] \\) and constants.",
-            reference_answer="The corresponding `\\( K_M \\)` is KM=Ks1+Js[S]2",
-            payload={"track": "olympiad"},
-        )
-
-        self.assertEqual("formula_short_answer", resolve_chemqa_answer_kind(record))
-        self.assertIn(
-            "ChemQA Artifact Flow answer kind: formula_short_answer.",
-            build_chemqa_goal(record, websearch_enabled=True),
-        )
-
-    def test_frontierscience_olympiad_latex_prompt_with_numeric_reference_stays_numeric(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-numeric-latex",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Determine dissolved `\\( Sr^{2+} \\)` in micrograms for `\\( SrF_2 \\)`.",
-            reference_answer="7.59",
-            payload={"track": "olympiad"},
-        )
-
-        self.assertEqual("numeric_short_answer", resolve_chemqa_answer_kind(record))
-
-    def test_hle_prompts_use_official_answer_confidence_format(self) -> None:
-        record = BenchmarkRecord(
-            record_id="hle-1",
-            dataset="hle",
-            source_file="/tmp/hle.jsonl",
-            eval_kind="hle",
-            prompt="Which option is correct?\nA. X\nB. Y",
-            reference_answer="B",
-            payload={"answer_type": "multiple-choice"},
-        )
-
-        chemqa_goal = build_chemqa_goal(record, websearch_enabled=True)
-
-        self.assertEqual("multiple_choice", resolve_chemqa_answer_kind(record))
-        self.assertIn("Explanation:", chemqa_goal)
-        self.assertIn("Answer:", chemqa_goal)
-        self.assertIn("Confidence:", chemqa_goal)
-        self.assertIn("ChemQA Artifact Flow answer kind: multiple_choice.", chemqa_goal)
 
     def test_verifier_grounded_prompt_uses_official_prompt_without_schema_repetition(self) -> None:
         record = BenchmarkRecord(
@@ -337,43 +273,3 @@ class BenchmarkPromptsTests(unittest.TestCase):
         self.assertNotIn("heredoc", prompt.lower())
         self.assertNotIn("scratch/tmp", prompt)
         self.assertNotIn("inline multiline", prompt)
-
-    def test_chemqa_goal_specializes_frontierscience_research(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-research",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_research",
-            prompt="Context: protocol. Question: evaluate each changed condition.",
-            reference_answer="Points: 1.0, Item: Covers each condition.",
-            payload={"track": "research"},
-        )
-
-        goal = build_chemqa_goal(record, websearch_enabled=True)
-
-        self.assertIn("complete multi-part research answer", goal)
-        self.assertIn("Do not compress the response to a concise final answer", goal)
-        self.assertIn("## FINAL RESEARCH ANSWER", goal)
-        self.assertNotIn("concise answer summary", goal)
-        self.assertIn("ChemQA Artifact Flow answer kind: multi_part_research_answer.", goal)
-
-    def test_chemqa_goal_omits_websearch_guidance(self) -> None:
-        record = BenchmarkRecord(
-            record_id="fs-1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Calculate the pH.",
-            reference_answer="4.7",
-            payload={"track": "olympiad"},
-        )
-
-        web_on = build_chemqa_goal(record, websearch_enabled=True)
-        web_off = build_chemqa_goal(record, websearch_enabled=False)
-
-        self.assertNotIn("Web search may be used", web_on)
-        self.assertNotIn("Do not use web search", web_on)
-        self.assertNotIn("external browsing", web_on)
-        self.assertNotIn("Web search may be used", web_off)
-        self.assertNotIn("Do not use web search", web_off)
-        self.assertNotIn("external browsing", web_off)

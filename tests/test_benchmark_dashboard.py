@@ -108,6 +108,48 @@ def write_demo_run(root: Path, run_id: str = "benchmark-20260604-120000") -> Pat
     return run_root
 
 
+def test_retired_selector_facets_preserve_mixed_vgb_and_historical_details(tmp_path):
+    run = write_demo_run(tmp_path)
+    records = [result_payload(group_id='chemqa_skills_on', record_id=dataset,
+                              dataset=dataset, subset=subset, eval_kind=kind)
+               for dataset, subset, kind in (
+                   ('chembench', 'chembench', 'chembench_open_ended'),
+                   ('frontierscience', 'frontierscience_Research', 'frontierscience_research'),
+                   ('hle', 'hle_chemistry', 'hle'),
+                   ('superchem', 'superchem_multimodal', 'superchem_multiple_choice_rpf'))]
+    from benchmarking.runtime.vgb_bridge import load_release_config
+    for track, spec in load_release_config().tracks.items():
+        row = result_payload(group_id='single_llm_skills_on', record_id=spec['task_ids'][0],
+                             dataset=spec['dataset'], subset=spec['dataset'], eval_kind='verifier_grounded')
+        records.append(row)
+    records.append(result_payload(group_id='custom', record_id='other', dataset='custom_hle_study',
+                                  subset='custom-subset', eval_kind='generic_semantic'))
+    write_json(run / 'results.json', {'records': len(records), 'results': records})
+    before = (run / 'results.json').read_bytes()
+    store = dashboard_annotations.AnnotationStore(tmp_path / 'annotations.sqlite')
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store)
+    summary = dashboard.list_runs()[0]
+    assert summary['selectable_facets'] == [
+        {'dataset': 'custom_hle_study', 'subset': 'custom-subset'},
+        {'dataset': 'vgb', 'subset': 'property_calculation_advanced'},
+        {'dataset': 'vgb', 'subset': 'property_calculation_basic'},
+        {'dataset': 'vgb', 'subset': 'verifier_grounded_rdkit'},
+        {'dataset': 'vgb', 'subset': 'verifier_grounded_xtb_xyz'},
+    ]
+    assert 'hle' in summary['datasets']
+    assert dashboard.get_record(run.name, 'hle')['dataset'] == 'hle'
+    assert (run / 'results.json').read_bytes() == before
+
+
+def test_retired_selector_detection_handles_aliases_and_source_dataset():
+    assert dashboard_service._selectable_facets([
+        {'dataset': 'old-run-id', 'subset': 'unknown', 'eval_kind': 'generic_semantic',
+         'source_file': '/input/chembench/data/records.jsonl'},
+        {'dataset': 'unknown', 'subset': 'frontierscience_Olympiad'},
+        {'dataset': 'unknown', 'eval_kind': 'superchem_multiple_choice_rpf'},
+    ]) == []
+
+
 def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> None:
     run_root = write_demo_run(tmp_path)
     store = dashboard_annotations.AnnotationStore(tmp_path / "dashboard.sqlite")

@@ -88,9 +88,9 @@ Important:
 
 ## Prompt Routing Notes
 
-- `FrontierScience` numeric questions should prefer `chem-calculator` before
+- Numeric questions should prefer `chem-calculator` before
   web search when the prompt already provides the needed givens.
-- `SuperChem` structure questions should extract available SMILES or name text
+- Structure questions should extract available SMILES or name text
   first, then route to `rdkit`, `opsin`, and `pubchem` as appropriate.
 - Reviewer lanes should cite provider result JSON artifact paths or structured
   `tool_trace` entries when challenging numeric or structural claims.

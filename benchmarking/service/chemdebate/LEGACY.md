@@ -17,3 +17,10 @@ stable for script and persisted-artifact compatibility.
 Persisted `chemqa`, `chemqa_skills_on`, artifact filenames, historical results,
 and read-only dashboard/analysis support are retained. Provider skills, shared
 scoring, and the project distribution name `chemqa` are not deprecated.
+
+ChemBench, FrontierScience, HLE, and SUPERChem are retired even through this
+explicit entrypoint. Their evaluator modules, judge prompts, answer-prompt
+branches and subset-sampling options are removed. Records with their dataset,
+subset or eval-kind identifiers are rejected before dispatch; external files
+cannot restore support through generic scoring. Generic supported tasks and VGB
+remain available. Historical result and artifact readers preserve old identifiers.

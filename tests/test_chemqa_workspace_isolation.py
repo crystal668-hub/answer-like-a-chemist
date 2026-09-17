@@ -63,9 +63,9 @@ class ChemQAWorkspaceIsolationTests(unittest.TestCase):
     def _record(record_id: str) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id=record_id,
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Return water.",
             reference_answer="O",
             payload={},

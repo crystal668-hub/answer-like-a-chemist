@@ -7,8 +7,6 @@ from benchmarking.service.chemdebate.orchestration import runner_options as lega
 from benchmarking.service.chemdebate.config import build_runner_config as legacy_config
 from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
-from benchmarking.service.chemdebate.prompts import build_chemqa_goal
-
 import base64
 import io
 import json
@@ -61,7 +59,6 @@ from benchmarking.runtime import subprocess_utils
 from benchmarking.service.chemdebate.cleanroom import CleanroomRuntime
 from benchmarking.runtime.workspace_policy import ContaminationAudit
 from benchmarking.scoring import registry as scoring_evaluation
-from benchmarking.scoring.evaluators import chembench, frontierscience, superchem
 from benchmarking.scoring.results import (
     EvaluationResult,
     build_execution_error_evaluation,
@@ -322,70 +319,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
         self.assertEqual("frontierscience_Research,superchem_multimodal", args.subsets)
 
-    def test_main_print_selected_records_filters_by_subsets(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            fs_path = root / "frontierscience" / "data" / "frontierscience.jsonl"
-            superchem_path = root / "superchem" / "data" / "superchem.jsonl"
-            fs_path.parent.mkdir(parents=True, exist_ok=True)
-            superchem_path.parent.mkdir(parents=True, exist_ok=True)
-            fs_path.write_text(
-                "\n".join(
-                    json.dumps(payload, ensure_ascii=False)
-                    for payload in [
-                        {
-                            "id": "fs-olympiad",
-                            "problem": "Olympiad problem?",
-                            "answer": "A",
-                            "eval_kind": "frontierscience_olympiad",
-                            "track": "olympiad",
-                        },
-                        {
-                            "id": "fs-research",
-                            "problem": "Research problem?",
-                            "answer": "B",
-                            "eval_kind": "frontierscience_research",
-                            "track": "research",
-                        },
-                    ]
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            superchem_path.write_text(
-                json.dumps(
-                    {
-                        "id": "superchem-mm",
-                        "question": "SuperChem problem?",
-                        "answer": "C",
-                        "eval_kind": "superchem_multiple_choice_rpf",
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-
-            argv = [
-                "benchmarking.workflow.cli",
-                "--benchmark-root",
-                str(root),
-                "--subsets",
-                "frontierscience_Research,superchem_multimodal",
-                "--print-selected-records",
-            ]
-            stream = io.StringIO()
-            with mock.patch.object(sys, "argv", argv), redirect_stdout(stream):
-                exit_code = benchmark_test.main(service=legacy_execution)
-
-            self.assertEqual(0, exit_code)
-            selected = json.loads(stream.getvalue())
-            self.assertEqual(["fs-research", "superchem-mm"], [item["record_id"] for item in selected])
-            self.assertEqual(
-                ["frontierscience_Research", "superchem_multimodal"],
-                [item["subset"] for item in selected],
-            )
-
     def test_filter_records_by_subsets_rejects_unknown_subset(self) -> None:
         records = [
             BenchmarkRecord(
@@ -424,52 +357,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         self.assertEqual("42", extract_final_answer_line(text))
         self.assertEqual("42", extract_candidate_short_answer(text))
 
-    def test_hle_evaluator_registered_for_benchmark_dispatch(self) -> None:
-        record = BenchmarkRecord(
-            record_id="hle-demo",
-            dataset="hle",
-            source_file="/tmp/hle.jsonl",
-            eval_kind="hle",
-            prompt="Which reagent oxidizes a primary alcohol to an aldehyde?",
-            reference_answer="PCC",
-            payload={"answer_type": "short-answer", "category": "Chemistry"},
-        )
-        judge = JudgeStub(
-            {
-                "extracted_final_answer": "PCC",
-                "reasoning": "The answer matches.",
-                "correct": "yes",
-                "confidence": 90,
-            }
-        )
-
-        result = scoring_evaluation.evaluate_record(
-            record,
-            short_answer_text="PCC",
-            full_response_text="Explanation: short\nAnswer: PCC\nConfidence: 90%",
-            judge=judge,
-        )
-
-        self.assertTrue(result.passed)
-        self.assertEqual("hle_judge_accuracy", result.primary_metric)
-
-    def test_random_subset_sampling_includes_hle_chemistry(self) -> None:
-        records = [
-            BenchmarkRecord(
-                record_id="hle-demo",
-                dataset="hle",
-                source_file="/tmp/hle.jsonl",
-                eval_kind="hle",
-                prompt="Which reagent oxidizes a primary alcohol to an aldehyde?",
-                reference_answer="PCC",
-                payload={"answer_type": "short-answer", "category": "Chemistry"},
-            )
-        ]
-
-        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=1, seed=7)
-
-        self.assertEqual(["hle-demo"], [record.record_id for record in sampled])
-
     def test_runner_result_should_score_when_recovery_is_evaluable(self) -> None:
         result = RunnerResult(
             status=RunStatus.RECOVERED,
@@ -494,20 +381,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         )
 
         self.assertTrue(result.should_score())
-
-    def test_parse_frontierscience_research_rubric(self) -> None:
-        rubric = """
-Points: 1.0, Item: First criterion
-more detail
-Points: 0.5, Item: Second criterion
-""".strip()
-        items = frontierscience.parse_frontierscience_research_rubric(rubric)
-        self.assertEqual(2, len(items))
-        self.assertEqual(1.0, items[0]["points"])
-        self.assertIn("First criterion", items[0]["description"])
-        self.assertIn("more detail", items[0]["description"])
-        self.assertEqual(0.5, items[1]["points"])
-
 
     def test_build_group_waves_batches_in_selected_order(self) -> None:
         waves = benchmark_test.build_group_waves(
@@ -1067,31 +940,6 @@ Points: 0.5, Item: Second criterion
             candidates,
         )
 
-    def test_evaluate_chembench_open_ended_numeric_match_uses_judge(self) -> None:
-        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
-        record = BenchmarkRecord(
-            record_id="demo",
-            dataset="chembench",
-            source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
-            prompt="What is 2+2?",
-            reference_answer="4",
-            payload={"target": "4", "preferred_score": "mae"},
-        )
-        result = chembench.evaluate_chembench_open_ended(
-            record,
-            short_answer_text="wrong-short-answer",
-            full_response_text="Reasoning\nFINAL ANSWER: 4",
-            answer_text="Reasoning\nFINAL ANSWER: 4",
-            judge=judge,
-        )
-        self.assertTrue(result.passed)
-        self.assertEqual(1.0, result.score)
-        self.assertEqual(1.0, result.normalized_score)
-        self.assertEqual("judge", result.details["method"])
-        self.assertIn("Reasoning\nFINAL ANSWER: 4", judge.prompts[0])
-        self.assertNotIn("wrong-short-answer", judge.prompts[0])
-
     def test_load_records_uses_problem_field_for_frontierscience(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1115,27 +963,6 @@ Points: 0.5, Item: Second criterion
             self.assertEqual(1, len(records))
             self.assertEqual("Solve me", records[0].prompt)
             self.assertEqual("42", records[0].reference_answer)
-
-    def test_evaluate_frontierscience_olympiad_always_uses_judge(self) -> None:
-        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "matches"})
-        record = BenchmarkRecord(
-            record_id="fs-demo",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="What is 6 x 7?",
-            reference_answer="42",
-            payload={"track": "olympiad"},
-        )
-        result = frontierscience.evaluate_frontierscience_olympiad(
-            record,
-            short_answer_text="42",
-            full_response_text="FINAL ANSWER: 42",
-            judge=judge,
-        )
-        self.assertTrue(result.passed)
-        self.assertEqual("judge", result.details["method"])
-        self.assertEqual(1, len(judge.prompts))
 
     def test_evaluate_answer_uses_generic_semantic_fallback(self) -> None:
         judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer matches"})
@@ -1170,22 +997,6 @@ Points: 0.5, Item: Second criterion
 
             with self.assertRaises(json.JSONDecodeError):
                 load_records([path])
-
-    def test_superchem_valid_options_uses_grading_config_before_payload(self) -> None:
-        record = BenchmarkRecord(
-            record_id="superchem-demo",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            prompt="Q",
-            grading=GradingSpec(
-                kind="superchem_multiple_choice_rpf",
-                reference_answer="A",
-                subset="superchem_multimodal",
-                config={"options": {"A": "x", "C": "y"}},
-            ),
-            raw_payload={},
-        )
-        self.assertEqual(("A", "C"), superchem.superchem_valid_options(record))
 
     def test_classify_subset(self) -> None:
         chembench_record = BenchmarkRecord(
@@ -1241,80 +1052,6 @@ Points: 0.5, Item: Second criterion
         self.assertEqual("superchem_multimodal", classify_subset(legacy_text_record))
         self.assertEqual("superchem_multimodal", classify_subset(multimodal_record))
 
-    def test_sample_records_per_subset_draws_requested_count(self) -> None:
-        records = []
-        for idx in range(3):
-            records.append(
-                BenchmarkRecord(
-                    record_id=f"chem-{idx}",
-                    dataset="chembench",
-                    source_file="/tmp/chembench.jsonl",
-                    eval_kind="chembench_open_ended",
-                    prompt="Q",
-                    reference_answer="A",
-                    payload={},
-                )
-            )
-            records.append(
-                BenchmarkRecord(
-                    record_id=f"oly-{idx}",
-                    dataset="frontierscience",
-                    source_file="/tmp/frontierscience.jsonl",
-                    eval_kind="frontierscience_olympiad",
-                    prompt="Q",
-                    reference_answer="A",
-                    payload={"track": "olympiad"},
-                )
-            )
-            records.append(
-                BenchmarkRecord(
-                    record_id=f"res-{idx}",
-                    dataset="frontierscience",
-                    source_file="/tmp/frontierscience.jsonl",
-                    eval_kind="frontierscience_research",
-                    prompt="Q",
-                    reference_answer="A",
-                    payload={"track": "research"},
-                )
-            )
-        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=2, seed=7)
-        self.assertEqual(6, len(sampled))
-        counts = {subset: 0 for subset in dataset_selection.SUBSET_ORDER}
-        for record in sampled:
-            counts[classify_subset(record)] += 1
-        self.assertEqual(2, counts["chembench"])
-        self.assertEqual(2, counts["frontierscience_Olympiad"])
-        self.assertEqual(2, counts["frontierscience_Research"])
-
-    def test_sample_records_per_subset_samples_superchem_multimodal_only(self) -> None:
-        records = [
-            BenchmarkRecord(
-                record_id="s1-mm",
-                dataset="superchem",
-                source_file="/tmp/superchem.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Q1",
-                reference_answer="A",
-                payload={"modality": "multimodal", "source_uuid": "uuid-1"},
-            ),
-            BenchmarkRecord(
-                record_id="s2-mm",
-                dataset="superchem",
-                source_file="/tmp/superchem.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Q2",
-                reference_answer="B",
-                payload={"modality": "multimodal", "source_uuid": "uuid-2"},
-            ),
-        ]
-        sampled = dataset_selection.sample_records_per_subset(records, per_subset_count=1, seed=3)
-        self.assertEqual(1, len(sampled))
-        self.assertEqual(
-            {"superchem_multimodal"},
-            {classify_subset(record) for record in sampled},
-        )
-        self.assertEqual(1, len({record.payload["source_uuid"] for record in sampled}))
-
     def test_print_selected_records_outputs_json(self) -> None:
         records = [
             BenchmarkRecord(
@@ -1350,15 +1087,6 @@ Points: 0.5, Item: Second criterion
         ]
         sliced = dataset_selection.apply_offset_limit(records, offset=3, limit=4)
         self.assertEqual(["r3", "r4", "r5", "r6"], [record.record_id for record in sliced])
-
-    def test_parse_superchem_option_answer_handles_common_formats(self) -> None:
-        valid_options = ("A", "B", "C", "D")
-        self.assertEqual("B", superchem.parse_superchem_option_answer("FINAL ANSWER: B", valid_options=valid_options))
-        self.assertEqual("A|D", superchem.parse_superchem_option_answer("Option A and D are correct.", valid_options=valid_options))
-        self.assertEqual(
-            "B|C",
-            superchem.parse_superchem_option_answer('{"answer": ["C", "B"]}', valid_options=valid_options),
-        )
 
     def test_ensure_runtime_bundle_copies_superchem_images(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
@@ -1586,13 +1314,6 @@ Points: 0.5, Item: Second criterion
             question_text = bundle.question_markdown.read_text(encoding="utf-8")
             self.assertIn("# HLE Benchmark Record", question_text)
             self.assertIn("images/hle-image-01.png", question_text)
-            prompt = build_chemqa_goal(
-                record,
-                websearch_enabled=True,
-                input_bundle=bundle,
-            )
-            self.assertIn(str(bundle.question_markdown), prompt)
-            self.assertIn("inspect any referenced images", prompt)
 
     def test_build_chemqa_full_response_uses_final_submission_rationale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
@@ -1693,49 +1414,6 @@ Points: 0.5, Item: Second criterion
             self.assertEqual("", short_text)
             self.assertIn("No candidate submission achieved acceptance.", full_text)
             self.assertNotIn("FINAL ANSWER:", full_text)
-
-    def test_evaluate_superchem_multiple_choice_rpf(self) -> None:
-        record = BenchmarkRecord(
-            record_id="superchem-1",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            eval_kind="superchem_multiple_choice_rpf",
-            prompt="Select the best answer.",
-            reference_answer="B",
-            payload={
-                "options": {"A": "opt-a", "B": "opt-b"},
-                "reference_reasoning": (
-                    "<Checkpoint id='1' weight='2.0'>Use the first principle.</Checkpoint>"
-                    "<Checkpoint id='2'>Confirm the reagent identity.</Checkpoint>"
-                ),
-            },
-        )
-        judge = JudgeStub(
-            {
-                "answer_correct": True,
-                "items": [
-                    {"index": 1, "matched": True, "rationale": "covered"},
-                    {"index": 2, "matched": False, "rationale": "missing"},
-                ],
-                "summary": "partial",
-            }
-        )
-        result = superchem.evaluate_superchem_multiple_choice_rpf(
-            record,
-            short_answer_text="A",
-            full_response_text="Reasoning\nFINAL ANSWER: B",
-            answer_text="Reasoning\nFINAL ANSWER: B",
-            judge=judge,
-        )
-        self.assertTrue(result.passed)
-        self.assertEqual(1.0, result.score)
-        self.assertAlmostEqual(2.0 / 3.0, result.details["rpf"])
-        self.assertEqual(1.0, result.details["answer_accuracy"])
-        self.assertEqual("Reasoning\nFINAL ANSWER: B", result.details["candidate_answer_text"])
-        self.assertEqual(2, len(result.details["checkpoint_matches"]))
-        self.assertEqual(1, len(judge.prompts))
-        self.assertIn("Reasoning", judge.prompts[0])
-        self.assertNotIn("FINAL ANSWER: A", judge.prompts[0])
 
     def test_aggregate_results_groups_by_experiment(self) -> None:
         sample = [
@@ -2748,9 +2426,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -2846,9 +2524,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -2953,9 +2631,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="How much product?",
                     reference_answer="7.59",
                     payload={},
@@ -3033,9 +2711,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3112,9 +2790,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Return ethanol.",
                     reference_answer="CCO",
                     payload={},
@@ -3224,12 +2902,12 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="superchem-0001",
-                    dataset="superchem",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="superchem_multiple_choice_rpf",
+                    eval_kind="generic_semantic",
                     prompt="Pick one.",
                     reference_answer="B",
-                    payload={"options": {"A": "wrong", "B": "right"}},
+                    payload={"answer_kind": "multiple_choice", "options": {"A": "wrong", "B": "right"}},
                 )
                 run_id = "benchmark-chemqa_skills_on-superchem-0001-20260427-000000"
                 artifact_dir = chemqa_root / "generated" / "artifacts" / run_id
@@ -3351,9 +3029,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Return ethanol.",
                     reference_answer="CCO",
                     payload={},
@@ -3452,9 +3130,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3555,9 +3233,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3645,9 +3323,9 @@ Points: 0.5, Item: Second criterion
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="chembench",
+                    dataset="generic",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3675,18 +3353,18 @@ Points: 0.5, Item: Second criterion
         records = [
             BenchmarkRecord(
                 record_id="r1",
-                dataset="chembench",
+                dataset="generic",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
+                eval_kind="generic_semantic",
                 prompt="What is 2+2?",
                 reference_answer="4",
                 payload={"target": "4"},
             ),
             BenchmarkRecord(
                 record_id="r2",
-                dataset="chembench",
+                dataset="generic",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="chembench_open_ended",
+                eval_kind="generic_semantic",
                 prompt="What is 2+3?",
                 reference_answer="5",
                 payload={"target": "5"},
@@ -3741,9 +3419,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_passes_single_timeout_retry_options_to_runner(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="What is 2+2?",
             reference_answer="4",
             payload={"target": "4"},
@@ -3798,9 +3476,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_marks_unscored_recovery_as_execution_error(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3873,9 +3551,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_failed_result_axes_for_non_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="failed-record",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3935,9 +3613,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_scores_evaluable_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Q",
             reference_answer="fallback-answer",
             payload={},
@@ -3993,7 +3671,7 @@ Points: 0.5, Item: Second criterion
                 self.assertEqual("FINAL ANSWER: fallback-answer", answer_text)
                 self.assertIs(judge, judge_obj)
                 return EvaluationResult(
-                    eval_kind="chembench_open_ended",
+                    eval_kind="generic_semantic",
                     score=1.0,
                     max_score=1.0,
                     normalized_score=1.0,
@@ -4034,9 +3712,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_accepts_structural_result_object_for_unscored_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-recovery-record",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -4118,9 +3796,9 @@ Points: 0.5, Item: Second criterion
     def test_run_group_structural_unscored_recovery_without_failure_attr_uses_runner_meta_error(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-omitted-failure-record",
-            dataset="chembench",
+            dataset="generic",
             source_file="/tmp/demo.jsonl",
-            eval_kind="chembench_open_ended",
+            eval_kind="generic_semantic",
             prompt="Q",
             reference_answer="A",
             payload={},

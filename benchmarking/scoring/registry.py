@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.datasets import BenchmarkRecord, is_retired_benchmark
 from benchmarking.scoring.errors import EvaluationRegistryError
 from benchmarking.scoring.evaluators.verifier_grounded import evaluate_verifier_grounded
 from benchmarking.runtime.observability import observed_duration
@@ -17,21 +17,10 @@ DEFAULT_EVALUATORS: dict[str, Evaluator] = {
 
 
 def legacy_evaluators() -> dict[str, Evaluator]:
-    """Shared historical scoring API, loaded only by explicit callers."""
-    from benchmarking.scoring.evaluators.chembench import evaluate_chembench_open_ended
-    from benchmarking.scoring.evaluators.frontierscience import (
-        evaluate_frontierscience_olympiad, evaluate_frontierscience_research,
-    )
+    """Remaining frozen-service evaluators, loaded only by explicit callers."""
     from benchmarking.scoring.evaluators.generic import evaluate_generic_semantic
-    from benchmarking.scoring.evaluators.hle import evaluate_hle
-    from benchmarking.scoring.evaluators.superchem import evaluate_superchem_multiple_choice_rpf
     return {
         **DEFAULT_EVALUATORS,
-        "chembench_open_ended": evaluate_chembench_open_ended,
-        "frontierscience_olympiad": evaluate_frontierscience_olympiad,
-        "frontierscience_research": evaluate_frontierscience_research,
-        "superchem_multiple_choice_rpf": evaluate_superchem_multiple_choice_rpf,
-        "hle": evaluate_hle,
         "generic_semantic": evaluate_generic_semantic,
     }
 
@@ -41,7 +30,7 @@ def register_evaluator(kind: str, evaluator: Evaluator) -> None:
 
 
 def register_default_evaluators() -> None:
-    # Preserve the explicit public shared-scoring registration contract.
+    # Explicit shared callers retain generic scoring, but not retired benchmarks.
     EVALUATORS.update(legacy_evaluators())
 
 
@@ -56,6 +45,10 @@ def evaluate_record(
     evaluator_overrides: dict[str, Evaluator] | None = None,
     evaluators: dict[str, Evaluator] | None = None,
 ) -> Any:
+    if is_retired_benchmark(dataset=getattr(record, "dataset", ""),
+                            eval_kind=record.grading.kind,
+                            subset=getattr(record.grading, "subset", "")):
+        raise EvaluationRegistryError("This benchmark has been retired; scoring is unavailable.")
     registry = EVALUATORS if evaluators is None else evaluators
     evaluator = (evaluator_overrides or {}).get(record.grading.kind) or registry.get(
         record.grading.kind
