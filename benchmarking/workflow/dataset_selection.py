@@ -30,6 +30,13 @@ SUBSET_ORDER = (
 )
 SUPERCHEM_SUBSETS = ("superchem_multimodal",)
 
+CANONICAL_BENCHMARK_NAMES = {
+    "verifier_grounded_rdkit": "vgb-rdkit",
+    "verifier_grounded_xtb_xyz": "vgb-xtb",
+    "verifier_grounded_property_calculation": "vgb-property-calculation-advanced",
+    "verifier_grounded_property_calculation_easy": "vgb-property-calculation-basic",
+}
+
 
 def discover_dataset_files(root: Path) -> list[Path]:
     return sorted(path.resolve() for path in root.glob("*/data/*.jsonl") if path.is_file())
@@ -139,7 +146,11 @@ def default_run_output_root(
         else "formal"
     )
     datasets = sorted({record.dataset for record in records if record.dataset})
-    benchmark = slugify(datasets[0] if len(datasets) == 1 else "mixed-datasets")
+    benchmark = (
+        CANONICAL_BENCHMARK_NAMES.get(datasets[0], slugify(datasets[0]))
+        if len(datasets) == 1
+        else "mixed-datasets"
+    )
     model = slugify(str(single_agent_model).rsplit("/", 1)[-1])
     run_id = f"{benchmark}-{model}-{timestamp}"
     return Path(output_dir).expanduser().resolve() / category / benchmark / model / run_id

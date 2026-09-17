@@ -51,6 +51,14 @@ runbooks.
   Formal and temporary inputs determine the top-level category; benchmark and
   single-LLM model slugs provide the next two levels. Verifier-grounded isolated
   runtimes and dashboard metadata also live under `workspace/state/`.
+- Default single-dataset benchmark directory names use the canonical mapping
+  owned by `benchmarking.workflow.dataset_selection`: `verifier_grounded_rdkit`
+  maps to `vgb-rdkit`, `verifier_grounded_xtb_xyz` maps to `vgb-xtb`,
+  `verifier_grounded_property_calculation` maps to
+  `vgb-property-calculation-advanced`, and
+  `verifier_grounded_property_calculation_easy` maps to
+  `vgb-property-calculation-basic`. Other single datasets use their slug and
+  multi-dataset runs use `mixed-datasets`.
 - Explicitly retained fixed-workspace evidence lives under
   `workspace/state/benchmark-runs/legacy-workspace-archives/<workspace>-<timestamp>`.
   These snapshots are maintenance artifacts, not classified benchmark runs or
@@ -298,8 +306,9 @@ For each invocation, the CLI:
 
 1. Uses `benchmarking.workflow.dataset_selection` to discover or accept JSONL
    datasets, normalize them to `BenchmarkRecord`, apply record selection, and
-   classify the run output root. Runner adapters materialize run-local visual
-   bundles when required.
+   classify the run output root using the canonical single-dataset benchmark
+   directory mapping. Runner adapters materialize run-local visual bundles when
+   required.
 2. Projects the complete benchmark skill routing inventory without startup
    dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
    lifetime of the invocation, recovers sentinel-proven stale active workspaces,

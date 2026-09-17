@@ -69,9 +69,54 @@ def test_default_run_output_root_classifies_formal_run_by_dataset_and_model(
         tmp_path
         / "runs"
         / "formal"
-        / "verifier-grounded-rdkit"
+        / "vgb-rdkit"
         / "qwen3-7-max"
-        / "verifier-grounded-rdkit-qwen3-7-max-20260721-120000"
+        / "vgb-rdkit-qwen3-7-max-20260721-120000"
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "benchmark"),
+    [
+        ("verifier_grounded_rdkit", "vgb-rdkit"),
+        ("verifier_grounded_xtb_xyz", "vgb-xtb"),
+        ("verifier_grounded_property_calculation", "vgb-property-calculation-advanced"),
+        ("verifier_grounded_property_calculation_easy", "vgb-property-calculation-basic"),
+    ],
+)
+def test_default_run_output_root_uses_canonical_vgb_benchmark_names(
+    monkeypatch,
+    tmp_path: Path,
+    dataset: str,
+    benchmark: str,
+) -> None:
+    temp_root = tmp_path / "temp-benchmarks"
+    monkeypatch.setattr(dataset_selection.runtime_paths, "temp_benchmarks_root", temp_root)
+    record = BenchmarkRecord(
+        record_id="r1",
+        dataset=dataset,
+        source_file=str(tmp_path / "formal" / f"{dataset}.jsonl"),
+        prompt="question",
+        eval_kind="verifier_grounded",
+        reference_answer="hidden",
+        payload={},
+    )
+
+    output_root = dataset_selection.default_run_output_root(
+        output_dir=tmp_path / "runs",
+        dataset_files=[tmp_path / "formal" / f"{dataset}.jsonl"],
+        records=[record],
+        single_agent_model="qwen/qwen3.7-max",
+        timestamp="20260721-120000",
+    )
+
+    assert output_root == (
+        tmp_path
+        / "runs"
+        / "formal"
+        / benchmark
+        / "qwen3-7-max"
+        / f"{benchmark}-qwen3-7-max-20260721-120000"
     )
 
 

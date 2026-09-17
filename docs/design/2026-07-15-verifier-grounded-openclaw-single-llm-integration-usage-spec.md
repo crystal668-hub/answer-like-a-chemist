@@ -480,8 +480,12 @@ state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>/
 ```
 
 输入文件全部位于临时 benchmark 根时使用 `temporary`，其他 run 使用 `formal`。单数据集使用
-dataset 名作为 benchmark；多数据集使用 `mixed-datasets`。benchmark、模型和 run ID 均使用
-文件系统安全 slug。`--exact-output-dir` 仅在调用者明确需要自定义路径时绕过该默认布局。
+canonical benchmark 目录名；当前 VGB 映射为 `verifier_grounded_rdkit` → `vgb-rdkit`、
+`verifier_grounded_xtb_xyz` → `vgb-xtb`、`verifier_grounded_property_calculation` →
+`vgb-property-calculation-advanced`、`verifier_grounded_property_calculation_easy` →
+`vgb-property-calculation-basic`。其他单数据集使用自身 slug，多数据集使用
+`mixed-datasets`。benchmark、模型和 run ID 均使用文件系统安全 slug。
+`--exact-output-dir` 仅在调用者明确需要自定义路径时绕过该默认布局。
 
 run 名必须符合：
 
