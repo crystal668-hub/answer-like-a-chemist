@@ -50,7 +50,7 @@ Context and remaining work for a new maintainer.
 - [OpenClaw Benchmark Bootstrap、Rescue Context 与路径投影修复交接文档](handoff/2026-09-14-openclaw-bootstrap-rescue-path-fix-handoff.md): GPT-5.6 SOL follow-up evidence and the approved implementation plan for bootstrap suppression, isolated rescue context, and safe path projection.
 - [Benchmark Infra 迁移遗留问题交接文档](handoff/2026-09-11-benchmark-infra-open-issues-handoff.md)
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
-- [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：只读扫描结论、优先级和分阶段重构交接方案。
+- [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：已关闭；记录 Phase 0–5 实施、量化收益、行为变化、验收证据与延期边界。
 
 ## report (14)
 

@@ -1,6 +1,6 @@
 # Benchmark Runtime 架构优化问题交接文档
 
-状态：`OPEN`
+状态：`CLOSED`
 
 整理日期：2026-09-15
 
@@ -8,6 +8,14 @@
 性能、内存、稳定性和可维护性问题，并给出下一次会话可以直接执行的分阶段
 重构方案。本文没有修改运行逻辑，也没有执行 benchmark 或性能测试；当前代码
 和 [GLOBAL_DEV_SPEC.md](../../GLOBAL_DEV_SPEC.md) 仍是系统现状的唯一来源。
+
+关闭日期：2026-09-17
+
+关闭依据：Phase 0–5 实现、定向验收、可复现性能证据和最终完整测试均已完成。
+本机没有第二个可写文件系统，无法执行真实跨文件系统 archive acceptance；维护者于
+2026-09-17 明确决定该项暂不作为本交接的关闭门槛。该限制仍保留在
+[Phase 5 archive report](../report/2026-09-16-benchmark-runtime-phase-5-archive-inventory.md)
+中，不解释为已经完成真实异盘验收。
 
 ## 0. 2026-09-16 实施状态
 
@@ -66,6 +74,69 @@ archive inventory 也已实现并通过同文件系统、跨设备分支模拟�
 文件系统，不能声称真实异盘 acceptance。Docker wait 提交后的完整测试为 991 passed、
 11 skipped、164 subtests，5 个既有 SWIG warnings；archive 收尾后的完整测试为
 997 passed、11 skipped、164 subtests，5 个既有 SWIG warnings。
+
+## 0.1 关闭结论与收益
+
+RT-01 至 RT-05 的代码和当前可执行验收均已完成。最终工作树干净，变更按阶段拆分为
+可回滚提交；`GLOBAL_DEV_SPEC.md`、报告和 raw evidence 与当前实现一致。没有调用
+付费模型，没有改变 prompt、评分公式、记录选择、audit 安全规则或正式结果字段。
+
+### 量化性能收益
+
+| 路径 | 旧路径 | 新路径 | 结果与适用范围 |
+| --- | ---: | ---: | --- |
+| 聚合 accumulator，1k records | 12.84 ms | 9.95 ms | 约快 22%，Phase 0 合成基线 |
+| 聚合 accumulator，10k records | 172.62 ms | 112.14 ms | 约快 35%，Phase 0 合成基线 |
+| Transcript 3 consumers，1k lines | 6.85 ms | 3.89 ms | 约快 43%；RSS 约增加 0.9% |
+| Transcript 3 consumers，10k lines | 86.03 ms | 37.73 ms | 约快 56%；RSS 约增加 2.1% |
+| Final results，10k lightweight | 188.7 MB RSS | 48.9 MB RSS | RSS 约下降 74%；wall 2.267→2.834 s |
+| Final results，1k × 64 KiB detail | 1.19 GB RSS | 31.2 MB RSS | RSS 约下降 97%；wall 1.595→1.996 s |
+| Final results，10k × 16 KiB detail | 2.14 GB RSS | 50.3 MB RSS | RSS 约下降 98%；wall 6.398→7.333 s |
+| Pinned validation，1,000 calls | 121.85 ms | 35.22 ms | 约快 71%，真实 v0.9.2 文件 |
+| Pinned scoring，104 requests | 18.037 s | 13.057 s | worker 约快 28%；进程数 104→2 |
+| Pinned per-request median | 134.49 ms | 86.77 ms | worker 约快 35%，selected tasks |
+| Docker timeout/cancel wait | 2 wait CLIs | 1 wait client | wait 启动减半；Docker commands 8→7 |
+| Docker cancel wall | 1.218 s | 0.760 s | 受控无模型场景约快 38% |
+| Archive same-filesystem inventory | 4 traversals / 0.865 s | 2 / 0.449 s | 遍历减半，校验 wall 约降 48% |
+| Archive cross-device branch | 8 traversals / 1.704 s | 3 / 0.678 s | 分支模拟；遍历约降 63%，wall 约降 60% |
+
+以上数据来自独立进程、多轮交替执行的受控场景。模型推理通常占据真实 benchmark
+wall time 的主要部分，因此这些数字不能直接外推为完整模型 benchmark 的同比加速。
+
+### 运行时行为改变
+
+- 所有关键 JSON state/evidence 使用同目录原子替换；progress journal 保持 append、
+  flush 和 fsync，完整 snapshot 改为周期 checkpoint，terminal/cancellation 强制刷新。
+- canonical per-record result 在 record 完成时提交；未变化 payload 不再重复写，resume
+  能从 per-record 恢复尚未生成 aggregate 的记录。
+- 同一进程内的主要 transcript consumers 共享不可变 `TranscriptIndex`，减少重复读取、
+  JSON decode 和 parser 分歧；archive/recovery 等不同证据源仍独立索引。
+- 结果聚合改为单遍有界 accumulator；CLI 落盘后只保留轻量引用，最终
+  `results.json` 逐条读取 canonical 文件并原子流式生成。标准 JSON 文件大小仍随详情
+  线性增长，换取内存上界的代价是额外读取/编码和约 15%–25% 的合成 wall 增量。
+- merge=true 明确按 aggregate group 顺序及组内文件名读取；merge=false 只使用本轮
+  引用并按 selected group/input record 顺序输出，不混入陈旧文件。
+- 取消轻量引用显式保留 archive failure 布尔状态；即使错误文本缺失，仍保持
+  `cancelled_with_errors`。archive 成功与 cleanup failure 独立判定。
+- verifier runtime validation 在 invocation 内缓存成功的不可变 fingerprint；文件或
+  release 配置变化会失效，失败不会缓存为成功。
+- 新增 invocation-owned verifier worker，但默认仍为 `isolated`。worker 每 100 次成功
+  请求回收，故障不自动重放失败题，保留 typed transport evidence 和显式兼容路径。
+- Docker lifecycle 使用一个受管理的 `docker wait` client，collect 与 TERM evidence
+  finalization 共享它；首次/二次取消、typed timeout、remove report 和 orphan recovery
+  语义保持不变，没有新增 Docker SDK 依赖。
+- archive 安全校验和 regular/symlink/dangling inventory 合并为一次遍历；rename/copy
+  后仍独立重验目标，跨设备分支还重验源并检查 sentinel hash 和 source mutation。
+
+### 保持不变的契约与剩余边界
+
+- 正式 `results.json`/per-record schema、完整 `raw`、`runner_meta`、audit findings、
+  回答全文、prompt、评分、记录选择和 dashboard 优先级保持兼容。
+- worker 的 selected-task pinned-release shadow 已通过，但不能证明全部 105 个任务或
+  任意 native 全局状态永久等价，因此它继续为实验性 opt-in，不切换默认模式。
+- 没有真实付费模型端到端性能数据；Docker 验收使用无模型受控容器。
+- 真实跨文件系统 archive acceptance 因本机环境缺失而延期，不再阻塞本交接关闭；
+  当具备第二个可写 `st_dev` 时仍应补跑并追加证据。
 
 ## 1. 接手须知
 
@@ -479,7 +550,7 @@ worker。至少完成一轮旧 bridge vs worker 的 shadow score 对比后，才
 - 不在没有真实基准和契约测试的情况下默认启用持久 verifier worker 或新的
   Docker runtime 依赖。
 
-## 11. 完成定义
+## 11. 完成定义与关闭判定
 
 本交接可以关闭的条件：
 
@@ -487,7 +558,12 @@ worker。至少完成一轮旧 bridge vs worker 的 shadow score 对比后，才
 - RT-02 至少完成 transcript index 的等价性和一次线性主读取验收；
 - RT-03 有固定规模 RSS 和 wall-time 对比，且结果 payload 没有被删减；
 - RT-04 若启用 worker，必须有旧/新 bridge 的 shadow score 和故障恢复证据；
-- RT-05 的 Docker/archive 改动必须有 cancellation、orphan recovery、archive
-  manifest 和跨文件系统测试；
+- RT-05 的 Docker/archive 改动必须有 cancellation、orphan recovery 和 archive
+  manifest 测试；跨文件系统分支必须有强制分支、真实 copy、源/目标独立验证及失败
+  恢复测试。真实异盘 acceptance 在 2026-09-17 被明确延期，不作为本次关闭门槛；
 - 全量测试通过，`GLOBAL_DEV_SPEC.md` 与实际代码一致，所有变更已提交 Git；
 - 另附一份 `docs/report/` 验收报告，记录实际收益、测试范围和遗留限制。
+
+上述条件均已满足。最终完整测试为 `997 passed, 11 skipped, 164 subtests passed`，
+另有 5 个既有 SWIG deprecation warnings。本交接关闭；后续工作应依据具体报告中的
+限制单独立项，而不是继续把本文件作为开放实施队列。

@@ -4,6 +4,10 @@
 
 状态：`ACCEPTED_WITH_CROSS_DEVICE_SIMULATION`
 
+交接判定补充（2026-09-17）：维护者确认本机缺少第二个可写文件系统，真实异盘
+acceptance 暂不作为 Benchmark Runtime 优化交接的关闭门槛。该决定不改变下述证据
+范围；本报告仍不声称真实跨文件系统 I/O 已验收。
+
 范围：RT-05 attempt workspace archive inventory 合并；不改变 workspace 或 archive
 schema、symlink 规则、sentinel hash 或 quarantine 策略。
 
