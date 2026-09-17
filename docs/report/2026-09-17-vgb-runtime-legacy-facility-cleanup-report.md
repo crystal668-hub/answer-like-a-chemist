@@ -1,4 +1,4 @@
-# VGB Runtime Legacy Facility Cleanup Report
+# VGB Runtime Legacy Dataset Cleanup Report
 
 日期：2026-09-17
 
@@ -19,9 +19,9 @@
 
 这四个数据集的记录统一使用 `eval_kind=verifier_grounded`，通过 pinned verifier release、隔离运行时和 single-LLM OpenClaw runner 完成执行与评分。当前正式 run 目录中没有发现非 VGB 数据集；现有 `mixed-datasets` run 也只包含上述 VGB 数据集。
 
-旧数据集 `chembench`、`frontierscience_Olympiad`、`frontierscience_Research`、`superchem_multimodal`、`hle_chemistry` 以及配套的 ChemQA/DebateClaw/cleanroom 设施可以进入删除范围，但不能直接按目录名删除共享 runtime。它们仍嵌入以下共享组件：dataset model、subset 抽样、answer/convergence 分支、multimodal bundle、judge/evaluator registry、automated analysis、dashboard、测试和历史结果读取逻辑。
+旧数据集 `chembench`、`frontierscience_Olympiad`、`frontierscience_Research`、`superchem_multimodal`、`hle_chemistry` 在默认 VGB runtime 中的接入面和本机输入数据可以进入清理范围。ChemQA/DebateClaw 则是已经明确标记为 legacy/frozen 的独立功能，源码、三个依赖 skill bundle、显式入口、持久化标识、历史读取能力和保全测试均不属于本次直接删除范围。
 
-推荐的清理策略是：先从共享组件中移除旧数据集行为，再删除旧 evaluator、ChemQA 专用服务和旧 skill bundle，最后清理 runtime 数据与历史旧测试；每个阶段都以 VGB-only 测试和 smoke check 作为门槛。
+推荐的清理策略是：先把默认 VGB 路径与 frozen ChemQA 路径的注册、参数和依赖边界显式分开，再从默认 single-LLM 路径移除旧数据集行为，最后单独清理旧输入数据。共享 evaluator、judge、multimodal bundle 或 dataset loader 只要仍服务 frozen entrypoint，就保留为 frozen dependency，不做全局删除。
 
 ## 2. 当前边界
 
@@ -40,49 +40,49 @@
 | 结果与 dashboard | per-record persistence、streaming aggregate、progress、run inspection、VGB property track 展示 | `benchmarking/workflow/run_state.py`、`benchmarking/core/reporting.py`、`benchmarking/dashboard/` |
 | VGB 运维脚本 | dataset sync、worker/cache validation、shadow scoring、runtime baseline、archive/inventory/replay 工具 | `scripts/` 中对应 `vgb`、runtime 和 archive 脚本 |
 
-这里的“保留”不代表所有现有代码都无需重构。共享模块中的非 VGB 分支应在删除旧功能时一并简化，但模块本身不能作为旧设施整体移除。
+这里的“保留”不代表默认 VGB composition 无需重构。应简化的是 active VGB service 对旧能力的注册和调用，不是仍由 frozen service 使用的 shared implementation；共享模块不能作为旧设施整体移除。
 
 ### 2.2 旧数据集行为
 
 旧数据集在当前生产代码中的直接分支包括：
 
-| 旧行为 | 当前位置 | 删除前置工作 |
+| 旧行为 | 当前位置 | 本次边界内的处理 |
 | --- | --- | --- |
-| `chembench`、FrontierScience、SUPERChem、HLE subset 分类 | `benchmarking/core/datasets.py::classify_subset` | 将 subset 逻辑收敛为 VGB dataset/track 语义 |
-| SUPERChem 成对抽样和旧 subset order | `benchmarking/workflow/dataset_selection.py` | 移除 `SUBSET_ORDER`、`SUPERCHEM_SUBSETS` 及其抽样路径 |
-| dataset-specific evaluator registry | `benchmarking/scoring/registry.py`、`benchmarking/scoring/evaluators/` | registry 只保留 `verifier_grounded`，并移除 generic fallback 的调用契约 |
-| ChemBench/FrontierScience/SUPERChem/HLE answer prompt | `benchmarking/service/single/prompts.py`、`openclaw_wrapper.py`、`runner.py` | 保留 VGB schema contract，删除旧 eval kind 的 marker/format 分支 |
-| FrontierScience research rescue/convergence | `benchmarking/core/convergence.py` | 删除 research marker、research rescue parser 及对应测试 |
-| HLE answer type、confidence/calibration | `benchmarking/core/prompt_inputs.py`、`benchmarking/core/reporting.py` | 删除 HLE-only API 和 aggregate field |
-| SUPERChem/HLE input image bundle | `benchmarking/runtime/bundles.py` | 保留通用 path projection；删除旧数据集图片定位、下载/复制和 markdown 生成逻辑 |
-| old dataset automated-analysis metrics | `benchmarking/analysis/automated.py` | 保留 VGB run analysis 和通用 run evidence，删除 SUPERChem/HLE/ChemQA 专属统计 |
-| dashboard legacy display branches | `benchmarking/dashboard/service.py` | 保留 VGB dataset/track 展示；删除旧数据集 facet、旧 run schema 兼容分支前先确认历史 run 是否仍需浏览 |
+| `chembench`、FrontierScience、SUPERChem、HLE subset 分类 | `benchmarking/core/datasets.py::classify_subset` | 默认 VGB service 不调用旧分类；shared helper 保留给 frozen service |
+| SUPERChem 成对抽样和旧 subset order | `benchmarking/workflow/dataset_selection.py` | 从默认 VGB 参数/调用链移出，保留为 frozen service helper |
+| dataset-specific evaluator registry | `benchmarking/scoring/registry.py`、`benchmarking/scoring/evaluators/` | 改为 service-scoped registration；默认只注册 VGB，旧 evaluator/generic 保留给 frozen service |
+| ChemBench/FrontierScience/SUPERChem/HLE answer prompt | `benchmarking/service/single/prompts.py`、`openclaw_wrapper.py`、`runner.py` | 只清理 active single-LLM 分支；ChemQA 自有 prompt/driver 不改 |
+| FrontierScience research rescue/convergence | `benchmarking/core/convergence.py` | 默认 VGB 不进入该分支；若 frozen/history 仍依赖则保留 shared parser 和 tests |
+| HLE answer type、confidence/calibration | `benchmarking/core/prompt_inputs.py`、`benchmarking/core/reporting.py` | 默认 VGB 不进入该分支；保留 frozen service 和历史汇总所需 API |
+| SUPERChem/HLE input image bundle | `benchmarking/runtime/bundles.py` | 默认 VGB adapter 不 materialize；保留通用 path projection 和 frozen materialization |
+| old dataset automated-analysis metrics | `benchmarking/analysis/automated.py` | 默认 VGB analysis 不再生成旧 metric；保留 frozen ChemQA 和历史只读解析 |
+| dashboard legacy display branches | `benchmarking/dashboard/service.py` | 保留 VGB dataset/track 展示以及 frozen ChemQA/历史 run 的只读解析 |
 
-### 2.3 ChemQA/DebateClaw 专用设施
+### 2.3 ChemQA/DebateClaw 冻结保留边界
 
-这部分是独立的 legacy business path，不是 VGB 的基础设施：
+这部分是独立的 legacy/frozen business path，不是默认 VGB 基础设施，但也不是本次直接删除对象：
 
 - `benchmarking/service/chemdebate/`，共 19 个 tracked files，约 2,818 行；
 - `skills/chemqa-review/`，共 41 个 tracked files，约 12,798 行；
 - `skills/debateclaw-v1/`，共 65 个 tracked files，约 8,857 行；
 - `skills/benchmark-cleanroom/`，共 5 个 tracked files，约 850 行；
-- 对应的 ChemQA status、artifact reconstruction、slot provisioning、review protocol、DebateClaw state/launch 和 cleanroom 测试。
+- 对应的 ChemQA status、artifact reconstruction、slot provisioning、review protocol、DebateClaw state/launch、cleanroom 和保全测试。
 
-`benchmarking/workflow/runner_adapters.py` 仍保留 `runner_kind == "chemqa"` 的 lazy branch，`benchmarking/workflow/experiments.py` 也保留 legacy 错误提示。这些必须在删除 service 之前移除，否则删除目录会留下不可导入的运行分支。
+`benchmarking/service/chemdebate/LEGACY.md` 是该边界的直接契约：显式历史入口 `uv run python -m benchmarking.service.chemdebate.cli`、上述三个 skill bundle 的物理路径、persisted `chemqa`/`chemqa_skills_on` 标识、artifact filenames、历史结果和 dashboard/analysis 只读支持继续保留；provider skills、shared scoring 和 distribution name `chemqa` 也没有被废弃。`GLOBAL_DEV_SPEC.md` 同样将其定义为“legacy, frozen”，不是待删除功能。
 
-`benchmarking/analysis/automated.py` 和 `benchmarking/dashboard/service.py` 还包含 ChemQA artifact/group 的只读解析。当前正式 run inventory 没有 ChemQA run；按“不保留旧设施兼容入口”的目标，这些分支也应删除。通用 historical schema up-conversion 仍被旧 VGB run 使用，不属于 ChemQA 兼容层，必须保留。
+因此，本次允许做的是默认 VGB 路径解耦：默认 catalog 不加载 ChemQA、默认 CLI 不暴露 ChemQA 参数、active VGB config 不创建 ChemQA runtime。不得删除 `chemdebate` service、三个 skill bundle、`runner_kind == "chemqa"` 的显式 legacy composition、ChemQA dashboard/analysis 只读解析或其保全测试，也不得通过删除 shared evaluator/judge/bundle 间接使显式入口不可导入。
 
 ### 2.4 不能误删的 chemistry skills
 
 `skills/` 顶层的大部分 chemistry provider skill 不是旧数据集设施。当前 `benchmarking/skills/tree.py` 从 matrix 暴露 85 个 `single_agent_exposure=true` 技能，skills-on 的 VGB run 会将它们注入 agent routing inventory。不能因为它们的领域覆盖了旧 benchmark，就把它们归为 legacy。
 
-应删除的 skill bundle 仅限于 ChemQA business path 使用的：
+以下 orchestration skill bundle 不进入 VGB single-agent exposure，但属于 frozen ChemQA dependency，必须保留：
 
 - `skills/chemqa-review/`；
 - `skills/debateclaw-v1/`；
 - `skills/benchmark-cleanroom/`。
 
-`benchmark-cleanroom` 虽然名称包含 benchmark，但当前 VGB single-LLM runtime 使用的是 `benchmarking/runtime/` 内的 attempt cleanup/owned process 机制，不依赖该 skill bundle；`benchmarking/skills/tree.py` 已将这三个 bundle 排除在 single-agent exposure 外。
+`benchmark-cleanroom` 虽然名称包含 benchmark，但当前 VGB single-LLM runtime 使用的是 `benchmarking/runtime/` 内的 attempt cleanup/owned process 机制，不依赖该 skill bundle；它仍由 frozen ChemQA cleanroom integration 使用。`benchmarking/skills/tree.py` 应继续将这三个 bundle 排除在 VGB single-agent exposure 外，而不是从仓库删除它们。
 
 ## 3. 当前数据和历史状态清点
 
@@ -111,52 +111,57 @@ VGB formal 输入为 20、51、14、20 records，分别对应 advanced、basic�
 
 没有发现 `chembench`、`frontierscience`、`superchem` 或 `hle` 的正式 run 目录。因此这次清理不应删除 VGB run evidence，也不需要将旧数据集 run 迁移到别的 benchmark 目录。`legacy-workspace-archives/` 和其他 generated evidence 仍需按文件内容单独判定，不能按名字递归删除。
 
-## 4. 推荐删除范围
+## 4. 推荐清理范围
 
-### 4.1 可以在解耦后删除的源代码
+### 4.1 审批后可直接删除的本机输入数据
 
-完成共享模块收敛后，以下内容可删除：
+本次没有整目录删除 source package 或 frozen tests 的建议。可直接删除的对象仅限 Phase 0 清点并再次审批后的本机旧输入数据：
 
-1. `benchmarking/scoring/evaluators/chembench.py`。
-2. `benchmarking/scoring/evaluators/frontierscience.py`。
-3. `benchmarking/scoring/evaluators/superchem.py`。
-4. `benchmarking/scoring/evaluators/hle.py`。
-5. `benchmarking/scoring/evaluators/generic.py`，前提是 registry 不再保留 generic fallback。
-6. `benchmarking/core/prompt_inputs.py`，前提是 HLE prompt API 已移除。
-7. `benchmarking/service/chemdebate/` 全目录。
-8. `skills/chemqa-review/`、`skills/debateclaw-v1/`、`skills/benchmark-cleanroom/` 全目录。
-9. 只服务于上述模块的 tests、fixtures 和 test-only imports。
+1. `/Users/xutao/.openclaw/data/formal-benchmarks/chembench`。
+2. `/Users/xutao/.openclaw/data/formal-benchmarks/frontierscience`。
+3. `/Users/xutao/.openclaw/data/formal-benchmarks/hle`。
+4. `/Users/xutao/.openclaw/data/formal-benchmarks/superchem`。
+5. `/Users/xutao/.openclaw/data/temp-benchmarks/` 下对应四个旧数据目录。
 
-### 4.2 需要修改而不是直接删除的共享文件
+删除这些本机输入会使 frozen ChemQA entrypoint 不再具备默认旧数据源，但不会删除其代码、显式入口或历史结果读取能力。若仍需本机重放 ChemQA，Phase 3 应跳过数据删除，或先将输入移到独立归档位置。
 
-这些文件仍是 VGB 当前链路的一部分，必须保留并做定向清理：
+### 4.2 默认 VGB 路径需要定向清理的代码
 
-- `benchmarking/core/datasets.py`：只保留 VGB record/grading/track 语义；去除旧 dataset 分类。
-- `benchmarking/core/convergence.py`：只保留 generic final answer 和 VGB schema answer contract。
-- `benchmarking/core/reporting.py`：去掉 HLE calibration 等旧 metric，但保留 VGB aggregate schema。
-- `benchmarking/runtime/bundles.py`：保留 `RuntimeBundle`、`RuntimePathProjection` 和 VGB 通用路径审计；移除旧图片 bundle。
-- `benchmarking/service/single/prompts.py`：移除旧 eval kind prompt 分支，保留 VGB prompt 以及 skills catalog。
-- `benchmarking/service/single/openclaw_wrapper.py`：移除旧 rescue prompt 分支，保留 VGB rescue。
+这些文件仍是 VGB 当前链路或 frozen legacy 共享层的一部分，必须保留，只能定向收窄默认 VGB 行为：
+
+- `benchmarking/service/single/prompts.py`：移除旧 eval kind prompt 分支，只保留 VGB prompt 与 skills catalog。
+- `benchmarking/service/single/openclaw_wrapper.py`：默认 single-LLM wrapper 只保留 VGB rescue prompt；不要修改 ChemQA 自有 prompt/driver。
 - `benchmarking/service/single/runner.py`：移除旧答案 contract 和 eval-kind 分支，保留 VGB contract、Docker/host attempt 与 lifecycle。
-- `benchmarking/workflow/dataset_selection.py`：移除旧 subset sampling，保留 VGB dataset selection、canonical output mapping 和 formal/temporary classification。
-- `benchmarking/workflow/cli.py`：移除旧 subset 参数帮助、judge 初始化和 legacy group 参数；保留 VGB CLI、VGB release validation、run persistence 和 output path。
-- `benchmarking/workflow/orchestration.py`：去除通用 judge/evaluator 依赖后保留 VGB runner-result orchestration。
-- `benchmarking/workflow/runner_adapters.py`：删除 `chemqa` 分支，只保留 `single_llm`。
-- `benchmarking/workflow/experiments.py`、`benchmarking/service/single/experiments.py`：保留两个 single-LLM group，清理 legacy 错误信息和不再使用的 runner kind。
-- `benchmarking/runtime/config_pool.py`、`benchmarking/runtime/config.py`、`benchmarking/service/single/config.py`：移除 judge agent provisioning 后，重新定义只含 VGB single-LLM agent 的 run config。
-- `benchmarking/runtime/judge.py`、`benchmarking/resources/agent-workspace-templates/judge/`：在确认 VGB evaluator 不再接受 judge 参数后删除。
-- `benchmarking/analysis/automated.py`、`benchmarking/dashboard/service.py`：删除旧 dataset/ChemQA 分支，但保留 VGB evidence inspection。
-- `benchmarking/__init__.py`、`benchmarking/scoring/registry.py`：同步缩小 public export 和 evaluator registry。
+- `benchmarking/workflow/cli.py`：默认 service 只接受 release inventory 中的 VGB datasets，并不再显示旧 subset sampling 参数；显式 `chemdebate` service 仍可保留其 legacy 参数和行为。
+- `benchmarking/workflow/dataset_selection.py`：将 VGB selection/目录映射与 legacy subset sampling 分成明确入口；默认 service 只调用 VGB 路径，不能全局删除仍被 frozen service 使用的 loader/sampling helper。
+- `benchmarking/scoring/registry.py`：默认 service 只注册 `verifier_grounded`；旧 evaluator 和 `generic_semantic` fallback 保留给 frozen service/shared scoring，不在 active VGB registry 中注册。
+- `benchmarking/workflow/orchestration.py`：VGB 评分路径不创建或调用 judge；保留 frozen service 所需的 judge-compatible orchestration contract，除非先拆成独立 legacy adapter。
+- `benchmarking/runtime/config_pool.py`、`benchmarking/runtime/config.py`、`benchmarking/service/single/config.py`：默认 VGB config 不物化 judge agent；judge provisioning 仍供 frozen ChemQA/shared scoring 使用。
+- `benchmarking/runtime/bundles.py`：默认 VGB single-LLM adapter 使用无 input bundle 路径；保留 `RuntimePathProjection`，并保留 frozen ChemQA 所需的 SUPERChem/HLE materialization。
+- `benchmarking/core/datasets.py`：保留共享 `BenchmarkRecord` 和 frozen dataset normalization；默认 VGB service 在加载后额外执行 VGB allowlist/release validation。
+- `benchmarking/core/convergence.py`、`benchmarking/core/reporting.py`：VGB active path 不进入 FrontierScience/HLE 分支；若这些分支仍被 frozen tests/entrypoint 使用则保留，不做全局删除。
+- `benchmarking/analysis/automated.py`、`benchmarking/dashboard/service.py`、`benchmarking/workflow/run_state.py`：保留 ChemQA 与历史 schema 的只读支持；默认新 run 只产生 VGB 数据。
+- `benchmarking/workflow/runner_adapters.py`：保留 explicit frozen service 使用的 `chemqa` lazy branch；默认 experiment catalog 继续只暴露 `single_llm`。
+- `benchmarking/__init__.py`：只有在 public exports 与 frozen import contract 均确认后才能收窄。
 
-### 4.3 暂不删除的项目级依赖
+### 4.3 明确禁止直接删除的 frozen surface
 
-`pyproject.toml` 的 distribution name 仍是 `chemqa`，extras 也使用 `chemqa[...]`。这属于项目身份/打包契约，不是旧 dataset 设施本身。建议不要在第一次代码删除中顺便改名；如需改成 VGB 名称，应另开一个有独立迁移和 `uv.lock` 重建的任务。
+以下内容是本次清理的保护对象：
 
-同样，历史 `docs/design/`、`docs/plan/`、`docs/handoff/`、`docs/report/` 不应因旧内容而静默删除。项目文档规则要求保留历史决策和证据；只有在明确批准文档归档/清理时，才另行处理。
+- `benchmarking/service/chemdebate/` 全目录；
+- `skills/chemqa-review/`、`skills/debateclaw-v1/`、`skills/benchmark-cleanroom/`；
+- `benchmarking/runtime/judge.py`、judge workspace template 与 judge provisioning；
+- ChemBench、FrontierScience、SUPERChem、HLE、generic shared evaluator 源文件；
+- ChemQA artifact/group 的 dashboard 和 automated-analysis 只读解析；
+- `chemqa`、`chemqa_skills_on`、artifact filenames 和 historical result schema；
+- distribution name `chemqa` 和现有 extras 名称；
+- 历史设计、计划、handoff、report 文档。
+
+这些内容不再新增功能、不做模型适配、不跟进未来 OpenClaw compatibility，但“冻结”不等于“删除”。本次清理若需要调整 shared composition，必须证明显式 legacy entrypoint 仍可导入，现有 frozen regression tests 仍通过，且 physical paths 与 persisted identifiers 未变化。
 
 ### 4.4 测试清理边界
 
-可以随 legacy implementation 整文件删除的测试候选包括：
+ChemQA/DebateClaw/cleanroom 测试及其 skill-local tests 全部保留，作为 frozen surface 的保全哨兵，包括：
 
 - `tests/test_benchmark_status.py`；
 - `tests/test_benchmark_cleanroom.py`；
@@ -166,22 +171,19 @@ VGB formal 输入为 20、51、14、20 records，分别对应 advanced、basic�
 - `tests/test_chemqa_convergence.py`；
 - `tests/test_chemqa_epoch_flow.py`；
 - `tests/test_chemqa_workspace_isolation.py`；
-- `tests/test_benchmarking_runtime_bundles.py`，前提是 `RuntimePathProjection` 的 VGB/container 覆盖保留在 `tests/test_infra_input_projection.py` 等测试中；
-- 被删除 skill bundle 自带的 `skills/chemqa-review/tests/`。
+- `skills/chemqa-review/tests/`；
+- `tests/test_service_boundaries.py` 中 frozen import/entrypoint assertions；
+- `tests/test_automated_evaluation.py`、`tests/test_benchmark_dashboard.py` 中 ChemQA 历史只读 cases。
 
-以下是混合测试文件，不能整文件删除，应移除 legacy cases 并保留或改写 VGB/runtime cases：
+旧 shared evaluator、judge、SUPERChem/HLE bundle 仍被 frozen surface 使用，因此对应测试也保留。可以删除或改写的仅是默认 `service.single` 对旧 eval kind 的 cases，以及把旧 dataset 名当作无关占位值的 active VGB/runtime tests：
 
-- `tests/test_benchmark_test.py`：同时包含大量 ChemQA、旧 dataset、judge 和仍有效的 single-LLM/runtime contract；建议先按责任拆分再删除旧 cases。
-- `tests/test_benchmark_evaluators.py`：保留 VGB evaluator tests，删除五个旧 evaluator tests。
-- `tests/test_benchmark_datasets.py`：保留 VGB JSONL/release fields，删除旧 dataset normalization cases，并新增非 VGB dataset 拒绝测试。
-- `tests/test_benchmark_prompts.py`、`tests/test_benchmark_convergence.py`、`tests/test_single_llm_session_wrapper.py`：保留 VGB answer-schema/finalization tests，删除旧 answer format branches。
-- `tests/test_benchmarking_cli.py`：保留四个 VGB dataset、目录映射、selection 和 lifecycle tests，删除旧 subset sampling fixtures；新增 release inventory 与 canonical mapping key 完全一致的测试。
-- `tests/test_benchmark_config_runtime.py`、`tests/test_benchmark_cancellation.py`、`tests/test_service_boundaries.py`：删除 judge/ChemQA cases，保留 single-LLM config、cancellation 和 import-boundary assertions。
-- `tests/test_automated_evaluation.py`、`tests/test_benchmark_dashboard.py`：删除 ChemQA/旧 metric cases，保留 VGB historical run inspection。
-- `tests/test_experimental_chemistry_skill_matrix.py`、`tests/test_benchmark_skill_tree.py`、`tests/test_act_like_a_chemist_skill.py`：移除三个 legacy orchestration bundle 的断言，但保留 85 个 VGB skills-on inventory 的完整性检查。
-- `tests/test_benchmarking_orchestration.py`：将作为中性 fixture 的 `chembench`/`generic_semantic` records 改为最小合法 VGB records，不能因此删除调度、持久化或 error-path coverage。
+- `tests/test_benchmark_prompts.py`、`tests/test_benchmark_convergence.py`、`tests/test_single_llm_session_wrapper.py`：删除默认 single-LLM 的旧 answer format cases，保留 VGB 和 shared/frozen coverage。
+- `tests/test_benchmarking_cli.py`：默认 service cases 收敛到四个 VGB dataset；legacy service 参数/entrypoint cases 保留。新增 release inventory 与 canonical mapping key 完全一致的测试。
+- `tests/test_benchmark_test.py`：先按 active single 与 frozen ChemQA/shared scoring 责任拆分；只删除 active single 的旧 dataset cases，不能整文件或批量删除 ChemQA/judge coverage。
+- `tests/test_benchmarking_orchestration.py`：将 active-path 中作为中性 fixture 的 `chembench`/`generic_semantic` records 改为最小合法 VGB records，同时保留 frozen evaluator orchestration coverage。
+- `tests/test_benchmark_skill_tree.py`、`tests/test_experimental_chemistry_skill_matrix.py`、`tests/test_act_like_a_chemist_skill.py`：继续断言三个 frozen orchestration bundles 不会暴露给 VGB single agent；不能移除这些 bundle 的存在性边界。
 
-旧 dataset 名被大量用作与业务无关的测试占位值；删除会话必须区分“测试数据标签”与“被测旧行为”。最终 production scan 应为零命中，测试 scan 只允许历史文档或明确的拒绝测试命中。
+最终 production scan 不能简单要求旧名称零命中。正确标准是：默认 VGB service 的 import、参数、registry 和 execution branches 中无旧 dataset 能力；命中只允许存在于 frozen `chemdebate` surface、明确的 shared dependency、历史只读解析、拒绝测试和历史文档中。
 
 ## 5. 推荐执行顺序
 
@@ -193,36 +195,39 @@ VGB formal 输入为 20、51、14、20 records，分别对应 advanced、basic�
 4. 对 `data/formal-benchmarks/{chembench,frontierscience,hle,superchem}` 和 `data/temp-benchmarks/*` 做内容/大小/SHA-256 清单。
 5. 明确保留 `state/benchmark-runs/` 下的 VGB results、VGB archive evidence、dashboard metadata 和 legacy-workspace evidence，除非有单独批准。
 
-### Phase 1：删除 legacy business path
+### Phase 1：锁定 frozen surface
 
-1. 从 workflow runner selection、experiments、config pool 和 CLI 中移除 `chemqa` runner。
-2. 删除 `benchmarking/service/chemdebate/`。
-3. 删除 `skills/chemqa-review/`、`skills/debateclaw-v1/`、`skills/benchmark-cleanroom/`。
-4. 删除仅用于这三套设施的 tests 和 fixtures。
-5. 从 `benchmarking/skills/tree.py` 的 orchestration exclusion 和相关 tests 中删除已经不存在的 bundle 名称。
-6. 运行 service-boundary、workspace、runtime config 和 full suite，确认 import graph 不再加载 legacy service。
+1. 把 `benchmarking/service/chemdebate/LEGACY.md` 和 `GLOBAL_DEV_SPEC.md` 中的 frozen contract 转成保全测试：显式 entrypoint 可导入，三个 skill path 存在，persisted IDs 不变，dashboard/analysis 只读 fixture 可读取。
+2. 记录 frozen service 对 shared dataset loader、evaluator、judge、bundle、orchestration 和 config 的 import graph。
+3. 保持 `runner_kind == "chemqa"` 只由显式 legacy service 选择；默认 experiment catalog 继续不暴露 ChemQA。
+4. 后续每个清理提交先运行 frozen contract tests，再运行 VGB tests 和 full suite。
 
-### Phase 2：收敛 VGB-only shared runtime
+### Phase 2：收敛默认 VGB runtime
 
-1. 将 evaluator registry 缩为 `verifier_grounded`，同时删除 `judge` 参数在 VGB-only 调用链上的传递；让 dataset loader 或 CLI 对非 VGB dataset/eval kind fail closed。
-2. 删除 judge config、judge workspace template、`JudgeClient` 和 judge-specific tests。
-3. 收敛 dataset model、subset、sampling、prompt、answer contract、convergence、reporting、analysis 和 dashboard 的旧分支。
-4. 将 `runtime/bundles.py` 重构为只支持 VGB 所需的通用 bundle/path projection；VGB 四个内置数据集没有 image bundle 依赖，若确认 VGB 输入永远只含 JSON prompt，可进一步移除 `ensure_runtime_bundle` 及其所有调用。
-5. 删除 `generic_semantic` fallback，令未知 eval kind 在加载或 registry 阶段显式失败，避免旧数据重新进入当前 runtime。
-6. 建立 release inventory 与 canonical output mapping 的一致性测试，确保 `release.json` 的四个 track/dataset 与默认目录映射不会独立漂移。
+1. 默认 service 从 `release.json` 派生允许的四个 VGB dataset，并对非 VGB dataset/eval kind fail closed；显式 legacy service 继续使用 shared loader。
+2. 把 subset sampling 等旧参数移到 frozen service-owned argument path；默认 VGB CLI 不再显示或处理这些参数。
+3. 将 evaluator 注册改为 service-scoped：默认 service 只注册 `verifier_grounded`，frozen service 显式注册旧 evaluator 和 generic fallback；保留 evaluator 源文件。
+4. 默认 VGB CLI 不构建 `JudgeClient`、judge config 或 judge workspace；frozen service 的 judge path、模板和 tests 保持不变。
+5. 默认 `service.single` 的 prompt、rescue 和 answer-contract 分支只保留 VGB；ChemQA 自有 prompt/driver 与 shared frozen helpers 不改。
+6. 默认 VGB adapter 固定使用无 dataset input bundle 的路径；保留 `RuntimePathProjection` 以及 frozen service 使用的 SUPERChem/HLE materialization。
+7. 保留 dashboard/analysis 对 ChemQA 和历史 result schema 的只读支持，同时确保新默认 run 只能写入 VGB records。
+8. 建立 release inventory 与 canonical output mapping 的一致性测试，确保四个 track/dataset 与默认目录映射不会独立漂移。
 
-### Phase 3：删除旧输入数据与生成状态
+### Phase 3：删除旧输入数据
 
 仅在 Phase 0 清单确认且用户单独批准后执行：
 
 1. 删除 `/Users/xutao/.openclaw/data/formal-benchmarks/chembench`、`frontierscience`、`hle`、`superchem`。
 2. 删除 `/Users/xutao/.openclaw/data/temp-benchmarks/` 下对应旧数据目录。
-3. 检查 `agents/`、`benchmark/`、`logs/`、`flows/`、`tasks/` 和 dashboard DB 是否仍包含未完成旧 benchmark 引用；只清理确认属于旧设施的 generated state。
-4. 不删除 VGB release cache、VGB runtime、VGB resources、VGB run records 或 VGB skills-on skill tree。
+3. 删除前明确选择：若仍需在本机通过默认 benchmark root 重放 frozen ChemQA，则不删除或先独立归档这些输入；否则 frozen code 仍可通过显式 `--files` 使用外部输入。
+4. 检查 `agents/`、`benchmark/`、`logs/`、`flows/`、`tasks/` 和 dashboard DB 是否仍包含未完成旧 benchmark 引用；本次不删除 ChemQA/DebateClaw generated state 或历史结果。
+5. 不删除 VGB release cache、VGB runtime、VGB resources、VGB run records、VGB skills-on skill tree、frozen service 或其 skill bundles。
 
-### Phase 4：可选项目身份清理
+### Phase 4：文档与当前规范收口
 
-单独评审是否将 distribution name 从 `chemqa` 改为 `vgb-benchmark`。此项会影响 `pyproject.toml`、`uv.lock`、extras 文本、错误消息、文档和安装缓存，不应与功能删除隐式合并。
+1. 更新 `GLOBAL_DEV_SPEC.md`，把默认 VGB runtime 与 frozen ChemQA surface 的依赖和支持级别分开描述。
+2. 保留历史设计、计划、handoff 和 report；必要时增加 supersession 说明，不改写历史事实。
+3. 保持 distribution name `chemqa` 和 extras 名称不变；它们由 frozen contract 明确保留，不属于本次清理候选。
 
 ## 6. 验收矩阵
 
@@ -230,15 +235,16 @@ VGB formal 输入为 20、51、14、20 records，分别对应 advanced、basic�
 
 | 验收项 | 目标 |
 | --- | --- |
-| production import scan | `benchmarking/`、`scripts/` 中不再引用被删除的 ChemQA/DebateClaw/旧 evaluator 模块 |
-| dataset contract | 只接受 `release.json` 声明的四个 VGB dataset，所有记录 `eval_kind=verifier_grounded`，track/task/release identity 校验仍有效；未知 dataset/eval kind fail closed |
+| active import scan | 默认 VGB entrypoint 的 import closure 不 eager-load `chemdebate` 或旧 evaluator；frozen entrypoint 仍可加载其 shared dependencies |
+| dataset contract | 默认 service 只接受 `release.json` 声明的四个 VGB dataset，所有记录 `eval_kind=verifier_grounded`，track/task/release identity 校验仍有效；frozen service 的 shared loader contract 保留 |
 | output layout | 四个单数据集和 mixed VGB 运行都进入 canonical formal/temporary 目录；不再生成旧 dataset slug 目录 |
 | scoring | 四个 VGB track 均可完成 isolated verifier scoring；worker/cache opt-in 测试仍通过 |
 | single-LLM | skills-on/off、Docker 默认 backend、host fallback、timeout/retry、session isolation、cancellation、workspace audit 仍通过 |
-| skill exposure | 85 个 matrix skills 仍可生成 routing inventory；只有 legacy orchestration bundles 不再出现 |
-| dashboard | VGB run discovery、property advanced/basic track facets、record detail、progress reconciliation 正常 |
-| no legacy data | formal/temp benchmark input root 中没有旧数据集目录；运行时配置不再暴露旧 dataset/subset 参数 |
-| tests | VGB 相关测试、runtime/infrastructure 测试和全量测试均通过；删除后的旧测试已移除而非简单 skip |
+| skill exposure | 85 个 matrix skills 仍可生成 routing inventory；三个 frozen orchestration bundles 保留但继续不暴露给 VGB single agent |
+| frozen surface | explicit ChemQA entrypoint、三个依赖 skill path、persisted IDs、shared evaluator/judge/bundle 和历史只读 fixtures 均保持可用 |
+| dashboard | VGB run discovery、property advanced/basic track facets、record detail 和 progress reconciliation 正常；ChemQA/历史 schema 只读支持不回归 |
+| no active legacy data | formal/temp benchmark input root 中不再默认发现旧数据集；默认 VGB CLI 不暴露旧 dataset/subset 参数 |
+| tests | VGB、runtime/infrastructure、frozen contract 和全量测试均通过；不得通过 skip 或删除 frozen tests 获得绿色结果 |
 | repository state | `git diff --check` 通过，文档索引和 `GLOBAL_DEV_SPEC.md` 与实际实现一致；每个代码变更按 AGENTS 要求单独提交 |
 
 建议 VGB smoke 命令至少覆盖：
@@ -256,11 +262,11 @@ uv run pytest -q
 
 ## 7. 风险和审批边界
 
-- 删除 `JudgeClient` 是共享调用链改动，不应因为 VGB evaluator 当前不使用 judge 就直接删除；必须先修改 orchestration/config/CLI 并通过 VGB-only tests。
-- `runtime/bundles.py` 同时承担 container path projection 和旧 multimodal input materialization；只能删除数据集专属部分，不能删除整个模块。
-- `benchmarking/core/datasets.py` 的通用 `BenchmarkRecord` 是 VGB 的输入模型；只能删除旧分类分支，不能删除 record loader。
-- `benchmarking/analysis/automated.py` 和 dashboard 的 dataset/ChemQA 专属只读解析应随旧设施删除；但与 dataset 无关的 historical schema up-conversion 仍服务旧 VGB run，不得一并删除。
-- `state/benchmark-runs/`、runtime home data、agents/session/logs 和 dashboard DB 都是本机生成状态，不应与 Git source 删除混合执行。
+- `JudgeClient`、旧 evaluator、generic fallback 和 multimodal bundle 当前是 frozen service 的 shared dependencies，不能因默认 VGB 不使用而全局删除；正确动作是 service-scoped registration/composition。
+- `runtime/bundles.py` 同时承担 container path projection 和 frozen multimodal input materialization；默认 VGB 可绕开后者，但模块和 frozen branches 保留。
+- `benchmarking/core/datasets.py` 的 `BenchmarkRecord`、normalization 和 subset helpers 被 active/frozen 两条路径共享；默认 VGB allowlist 应放在 service 边界，不应破坏 shared loader。
+- `benchmarking/analysis/automated.py` 和 dashboard 的 ChemQA/历史只读解析由 frozen contract 明确保留。
+- `state/benchmark-runs/`、ChemQA/DebateClaw generated state、agents/session/logs 和 dashboard DB 不属于本次删除范围。
 - 历史 docs 保留是当前文档治理规则，不代表旧设施仍受支持；可以在清理完成后增加 supersession 说明，但不要静默改写历史报告。
 
-本报告完成后，下一会话应先等待用户对 Phase 1、Phase 2、Phase 3 是否全部批准；未明确批准的数据状态删除和项目 distribution rename 不得执行。
+本报告完成后，下一会话应先等待用户对 Phase 1–4 的修订范围是否批准。未明确批准的旧输入数据不得删除；ChemQA/DebateClaw frozen source、skills、tests、persisted identifiers、历史只读支持和 distribution name 均视为禁止删除。
