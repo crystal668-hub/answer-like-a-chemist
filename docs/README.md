@@ -8,7 +8,7 @@ Their status and code examples may describe an older system; check current code
 and the global specification before implementation or operation. Directory
 placement does not imply approval, implementation, or current validity.
 
-## design (10)
+## design (11)
 
 Architecture, specifications, interfaces, and invariants.
 
@@ -16,6 +16,7 @@ Architecture, specifications, interfaces, and invariants.
 - [ChemQA Phase-Scoped Agent Driver Design](design/2026-04-29-chemqa-phase-scoped-agent-driver-design.md)
 - [Benchmark Agent Workspace Attempt Isolation Specification](design/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md)
 - [Verifier-Grounded Benchmark 与 OpenClaw Single-LLM 标准接入使用规格](design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md)
+- [VGB Track-Only Identity Specification](design/2026-09-17-vgb-track-only-identity-spec.md): canonical Track table, schema v4, CLI and storage layout, historical read compatibility, and dashboard filtering.
 - [Benchmark Attempt Workspace Behavior and Contamination Adjudication Specification](design/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md)
 - [Benchmark Forbidden Path Root Containment Specification](design/2026-07-16-benchmark-forbidden-path-root-containment-spec.md)
 - [Benchmark Audit Error Allowlist and Cancellation Specification](design/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md)

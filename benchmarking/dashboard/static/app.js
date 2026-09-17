@@ -1,5 +1,6 @@
 const state = {
   runs: [],
+  trackOptions: [],
   selectedRun: null,
   selectedRecord: null,
   records: [],
@@ -127,7 +128,10 @@ function optionMarkup(values, selected) {
 }
 
 async function loadRuns() {
-  state.runs = await api(`/api/runs${state.includeHidden ? "?include_hidden=true" : ""}`);
+  [state.trackOptions, state.runs] = await Promise.all([
+    api("/api/tracks"),
+    api(`/api/runs${state.includeHidden ? "?include_hidden=true" : ""}`),
+  ]);
   renderFilterOptions();
   renderRuns();
   const stillVisible = state.runs.some((run) => run.run_id === state.selectedRun);
@@ -155,39 +159,28 @@ async function refreshRuns() {
 }
 
 function renderFilterOptions() {
-  const datasetFilter = $("dataset-filter");
-  const subsetFilter = $("subset-filter");
-  const selectedDataset = datasetFilter.value;
-  const selectedSubset = subsetFilter.value;
-  const facets = state.runs.flatMap((run) => run.selectable_facets || []);
-  const datasets = Array.from(new Set(facets.map((facet) => facet.dataset))).filter(Boolean).sort();
-  const activeDataset = datasets.includes(selectedDataset) ? selectedDataset : "";
-  const scopedFacets = activeDataset
-    ? facets.filter((facet) => facet.dataset === activeDataset)
-    : facets;
-  const subsets = Array.from(new Set(scopedFacets.map((facet) => facet.subset))).filter(Boolean).sort();
-  datasetFilter.innerHTML = optionMarkup(datasets, activeDataset);
-  subsetFilter.innerHTML = optionMarkup(subsets, subsets.includes(selectedSubset) ? selectedSubset : "");
+  const trackFilter = $("track-filter");
+  const selectedTrack = trackFilter.value;
+  trackFilter.innerHTML = optionMarkup(
+    state.trackOptions,
+    state.trackOptions.includes(selectedTrack) ? selectedTrack : "",
+  );
 }
 
-function renderRunFacets(run) {
-  const datasets = (run.datasets || []).join(", ") || "unknown dataset";
-  const subsets = (run.subsets || []).join(", ") || "unknown subset";
-  return `<p class="muted">Dataset: ${escapeHtml(datasets)}</p>
-    <p class="muted">Subset: ${escapeHtml(subsets)}</p>`;
+function renderRunTracks(run) {
+  const tracks = (run.tracks || []).join(", ") || "unknown track";
+  return `<p class="muted">Track: ${escapeHtml(tracks)}</p>`;
 }
 
 function renderRuns() {
   const query = $("search-input").value.toLowerCase();
   const status = $("status-filter").value;
-  const dataset = $("dataset-filter").value;
-  const subset = $("subset-filter").value;
+  const track = $("track-filter").value;
   const rows = state.runs
     .filter((run) => !status || run.status === status)
-    .filter((run) => !dataset || (run.datasets || []).includes(dataset))
-    .filter((run) => !subset || (run.subsets || []).includes(subset))
+    .filter((run) => !track || (run.tracks || []).includes(track))
     .filter((run) => {
-      const text = `${run.run_id} ${run.alias || ""} ${(run.dataset_files || []).join(" ")} ${(run.datasets || []).join(" ")} ${(run.subsets || []).join(" ")}`.toLowerCase();
+      const text = `${run.run_id} ${run.alias || ""} ${(run.track_files || []).join(" ")} ${(run.tracks || []).join(" ")}`.toLowerCase();
       return !query || text.includes(query);
     })
     .map((run) => {
@@ -201,7 +194,7 @@ function renderRuns() {
         <div class="bar" aria-label="进度"><div style="width:${pct(run.progress)}%"></div></div>
         <p class="muted">${run.progress?.completed || 0}/${run.progress?.total || 0} · ${run.group_count || 0} groups</p>
         ${renderRunScoreComparison(run)}
-        ${renderRunFacets(run)}
+        ${renderRunTracks(run)}
       </button>`;
     })
     .join("");
@@ -218,9 +211,8 @@ async function selectRun(runId) {
   state.currentRun = run;
   state.records = await api(`/api/runs/${encodeURIComponent(runId)}/records`);
   $("run-title").textContent = run.alias || runId;
-  const datasets = state.records.map((item) => item.dataset).filter(Boolean);
-  const subsets = state.records.map((item) => item.subset).filter(Boolean);
-  $("run-subtitle").textContent = `${run.payload?.records || state.records.length} records · ${run.progress?.status || "unknown"} · ${Array.from(new Set(datasets)).join(", ") || "unknown dataset"} · ${Array.from(new Set(subsets)).join(", ") || "unknown subset"}`;
+  const tracks = state.records.map((item) => item.track).filter(Boolean);
+  $("run-subtitle").textContent = `${run.payload?.records || state.records.length} records · ${run.progress?.status || "unknown"} · ${Array.from(new Set(tracks)).join(", ") || "unknown track"}`;
   $("favorite-run").textContent = run.favorite ? "★" : "☆";
   $("hide-run").textContent = run.hidden ? "↩" : "⌫";
   $("hide-run").title = run.hidden ? "恢复 run" : "隐藏 run";
@@ -250,7 +242,7 @@ function renderRecords() {
   const query = $("search-input").value.toLowerCase();
   const rows = state.records
     .filter((record) => {
-      const text = `${record.record_id} ${record.dataset} ${record.subset} ${record.eval_kind}`.toLowerCase();
+      const text = `${record.record_id} ${record.track} ${record.eval_kind}`.toLowerCase();
       return !query || text.includes(query);
     })
     .map((record) => {
@@ -260,7 +252,7 @@ function renderRecords() {
           <span class="id-text">${escapeHtml(record.record_id)}</span>
           ${renderRecordScoreBadges(record.group_results || [])}
         </div>
-        <p class="muted">${escapeHtml(record.dataset)} · ${escapeHtml(record.subset)}</p>
+        <p class="muted">${escapeHtml(record.track)}</p>
         <p class="muted">${escapeHtml(record.eval_kind)} · notes ${record.annotation_count || 0}</p>
       </button>`;
     })
@@ -276,7 +268,7 @@ async function selectRecord(recordId) {
   const record = await api(`/api/runs/${encodeURIComponent(state.selectedRun)}/records/${encodeURIComponent(recordId)}`);
   state.currentRecord = record;
   $("record-title").textContent = record.record_id;
-  $("record-subtitle").textContent = `${record.dataset} · ${record.subset} · ${record.eval_kind}`;
+  $("record-subtitle").textContent = `${record.track} · ${record.eval_kind}`;
   renderRecords();
   renderQuestion(record);
   renderReference(record);
@@ -450,11 +442,7 @@ async function deleteAnnotation(annotationId) {
 
 $("refresh-button").addEventListener("click", refreshRuns);
 $("status-filter").addEventListener("change", renderRuns);
-$("dataset-filter").addEventListener("change", () => {
-  renderFilterOptions();
-  renderRuns();
-});
-$("subset-filter").addEventListener("change", renderRuns);
+$("track-filter").addEventListener("change", renderRuns);
 $("search-input").addEventListener("input", () => {
   renderRuns();
   renderRecords();

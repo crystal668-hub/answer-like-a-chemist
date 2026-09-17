@@ -1,23 +1,25 @@
 from __future__ import annotations
-from benchmarking.service.single.orchestration import runner_options as single_runner_options
 
-import tempfile
-import unittest
 import json
+import tempfile
 import threading
+import unittest
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
-from benchmarking.core.datasets import BenchmarkRecord
 from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.core.reporting import build_error_group_record_result
 from benchmarking.dashboard.progress import ProgressWriter
 from benchmarking.scoring.results import EvaluationResult
+from benchmarking.service.single.orchestration import (
+    runner_options as single_runner_options,
+)
 from benchmarking.workflow.orchestration import run_group
 
 
@@ -55,13 +57,12 @@ class OrchestrationTests(unittest.TestCase):
             def run(index):
                 return run_group(
         group=Group(),
-        records=[BenchmarkRecord(record_id=str(index), dataset="verifier_grounded_rdkit", source_file="demo", prompt="Q", reference_answer="A", eval_kind="verifier_grounded")],
+        records=[BenchmarkRecord(record_id=str(index), track="rdkit", source_file="demo", prompt="Q", reference_answer="A", eval_kind="verifier_grounded")],
         output_root=root,
         judge=None,
         build_runner_fn=build,
         evaluate_answer_fn=lambda *a, **k: EvaluationResult(eval_kind="verifier_grounded", score=1, max_score=1, normalized_score=1, passed=True, primary_metric="score", primary_metric_direction="higher_is_better", details={}),
         build_error_group_record_result_fn=lambda **kw: self.fail(str(kw)),
-        classify_subset_fn=lambda r: "demo",
         save_json_fn=lambda p,d: p.write_text(json.dumps(d)),
         slugify_fn=str,
         manage_group_lifecycle=False,
@@ -89,7 +90,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_scores_successful_runner_result(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -136,7 +137,6 @@ class OrchestrationTests(unittest.TestCase):
         def build_error_entry(**kwargs: Any):
             return build_error_group_record_result(
                 **kwargs,
-                classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
                 normalize_answer_tracks_fn=normalize_answer_tracks,
                 build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
                     eval_kind=actual_record.eval_kind,
@@ -161,7 +161,6 @@ class OrchestrationTests(unittest.TestCase):
         build_runner_fn=build_runner_fn,
         evaluate_answer_fn=evaluate_answer_fn,
         build_error_group_record_result_fn=build_error_entry,
-        classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
         save_json_fn=lambda path, payload: (saved.append(path), path.parent.mkdir(parents=True, exist_ok=True), path.write_text(str(payload), encoding="utf-8")),
         slugify_fn=lambda value, **_kwargs: str(value),
         runner_options_factory=lambda: single_runner_options(
@@ -196,7 +195,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_writes_progress_events(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -217,7 +216,6 @@ class OrchestrationTests(unittest.TestCase):
         def build_error_entry(**kwargs: Any):
             return build_error_group_record_result(
                 **kwargs,
-                classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
                 normalize_answer_tracks_fn=normalize_answer_tracks,
                 build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
                     eval_kind=actual_record.eval_kind,
@@ -252,7 +250,6 @@ class OrchestrationTests(unittest.TestCase):
                     details={},
                 ),
         build_error_group_record_result_fn=build_error_entry,
-        classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
         save_json_fn=lambda path, payload: (
                     path.parent.mkdir(parents=True, exist_ok=True),
                     path.write_text(str(payload), encoding="utf-8"),
@@ -287,7 +284,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_marks_progress_failed_when_runner_init_fails(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -299,7 +296,6 @@ class OrchestrationTests(unittest.TestCase):
         def build_error_entry(**kwargs: Any):
             return build_error_group_record_result(
                 **kwargs,
-                classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
                 normalize_answer_tracks_fn=normalize_answer_tracks,
                 build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
                     eval_kind=actual_record.eval_kind,
@@ -325,7 +321,6 @@ class OrchestrationTests(unittest.TestCase):
         build_runner_fn=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
         evaluate_answer_fn=lambda *_args, **_kwargs: None,
         build_error_group_record_result_fn=build_error_entry,
-        classify_subset_fn=lambda _record: "verifier_grounded_rdkit",
         save_json_fn=lambda path, payload: (
                     path.parent.mkdir(parents=True, exist_ok=True),
                     path.write_text(str(payload), encoding="utf-8"),
@@ -360,7 +355,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_preserves_runner_diagnostics_when_evaluator_raises(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -394,7 +389,6 @@ class OrchestrationTests(unittest.TestCase):
         def build_error_entry(**kwargs: Any):
             return build_error_group_record_result(
                 **kwargs,
-                classify_subset_fn=lambda _record: "superchem",
                 normalize_answer_tracks_fn=normalize_answer_tracks,
                 build_execution_error_evaluation_fn=lambda actual_record, *, error_message: EvaluationResult(
                     eval_kind=actual_record.eval_kind,
@@ -418,7 +412,6 @@ class OrchestrationTests(unittest.TestCase):
         build_runner_fn=build_runner_fn,
         evaluate_answer_fn=evaluate_answer_fn,
         build_error_group_record_result_fn=build_error_entry,
-        classify_subset_fn=lambda _record: "superchem",
         save_json_fn=lambda path, payload: (
                     path.parent.mkdir(parents=True, exist_ok=True),
                     path.write_text(str(payload), encoding="utf-8"),

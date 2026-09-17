@@ -27,24 +27,23 @@ def make_executable(path: Path) -> str:
 
 def minimal_record_payload(*, group_id: str, record_id: str, runner: str, runner_meta: dict[str, object]) -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "group_id": group_id,
         "group_label": group_id,
         "runner": runner,
         "websearch": True,
         "skills_enabled": group_id.endswith("skills_on"),
         "record_id": record_id,
-        "subset": "chembench",
-        "dataset": "demo",
+        "track": "rdkit",
         "source_file": "/tmp/demo.jsonl",
-        "eval_kind": "chembench_open_ended",
+        "eval_kind": "verifier_grounded",
         "prompt": "What is the answer?",
         "reference_answer": "A",
         "answer_text": "FINAL ANSWER: A",
         "short_answer_text": "A",
         "full_response_text": "FINAL ANSWER: A",
         "evaluation": {
-            "eval_kind": "chembench_open_ended",
+            "eval_kind": "verifier_grounded",
             "score": 1.0,
             "max_score": 1.0,
             "normalized_score": 1.0,

@@ -2,7 +2,7 @@
 
 Documentation catalog: [docs/README.md](docs/README.md).
 
-The integration follows the public `verifier-grounded-benchmark` API. Dataset
+The integration follows the public `verifier-grounded-benchmark` API. Track
 provisioning reads `track.prompts()`, OpenClaw acts as the external model
 caller, and isolated scoring calls `track.evaluate_one({task_id, response})`.
 No VGB compatibility CLI or parameter-translation wrapper is added.
@@ -14,7 +14,7 @@ without calling a model:
 cd ~/.openclaw/workspace
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --datasets verifier_grounded_rdkit \
+  --tracks rdkit \
   --limit 1 \
   --print-selected-records
 ```
@@ -24,7 +24,7 @@ Run the same selection and skip optional post-run analysis:
 ```bash
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --datasets verifier_grounded_rdkit \
+  --tracks rdkit \
   --limit 1 \
   --no-analysis
 ```
@@ -34,7 +34,7 @@ Select an exact package task ID:
 ```bash
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --datasets verifier_grounded_xtb_xyz \
+  --tracks xtb \
   --record-ids xtb_gap_window_001 \
   --no-analysis
 ```
@@ -44,20 +44,17 @@ Without `--exact-output-dir`, runs are classified under
 
 Use `single_llm_skills_off` for the skills-disabled condition, or pass both
 single-LLM group IDs to compare them. Omit `--limit` and `--record-ids` to run
-the complete selected dataset. The supported dataset names are
-`verifier_grounded_rdkit`, `verifier_grounded_xtb_xyz`,
-`verifier_grounded_property_calculation` (advanced), and
-`verifier_grounded_property_calculation_easy` (basic). The pinned
-`benchmarking/resources/verifier_grounded/release.json` owns their task inventory.
-Default discovery excludes legacy datasets. Explicit `--files` inputs must use
-the `<dataset>/data/<file>.jsonl` layout and satisfy the same release contract.
-Subset filtering and judge flags are available only through the frozen ChemQA
-entrypoint; active VGB scoring does not provision a judge. ChemBench,
-FrontierScience, HLE, and SUPERChem execution/scoring are retired in both
-entrypoints, while saved historical results remain readable.
+the complete selected Track. The supported Track names are `rdkit`, `xtb`,
+`property_calculation_advanced`, and `property_calculation_basic`. The pinned
+`benchmarking/resources/verifier_grounded/release.json` owns their order and task
+inventory. Explicit `--files` inputs must use the
+`<track>/data/<track>.jsonl` layout and satisfy the same release contract.
+Both the active and frozen ChemQA entrypoints accept only these VGB Tracks;
+generic and retired benchmark execution is unavailable. Saved historical
+results remain readable through the Track compatibility adapter.
 
-The complete integration contract is documented in
-`docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`.
+The current identity and storage contract is documented in
+`docs/design/2026-09-17-vgb-track-only-identity-spec.md`.
 
 ## Local paper-processing
 

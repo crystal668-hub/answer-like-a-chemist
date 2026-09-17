@@ -7,11 +7,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarking.core.contracts import RunnerResult
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.core.status import build_result_axes_from_runner
 from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationToken
-from benchmarking.workflow.attempt_queue import WorkStep, staged, persist_runner_result, load_runner_result
-from benchmarking.core.contracts import RunnerResult
+from benchmarking.workflow.attempt_queue import (
+    WorkStep,
+    load_runner_result,
+    persist_runner_result,
+    staged,
+)
 
 
 class OrchestrationError(RuntimeError):
@@ -147,7 +152,6 @@ def run_group(
     build_runner_fn: Callable[..., Any],
     evaluate_answer_fn: Callable[..., Any],
     build_error_group_record_result_fn: Callable[..., GroupRecordResult],
-    classify_subset_fn: Callable[[Any], str],
     save_json_fn: Callable[[Path, Any], None],
     slugify_fn: Callable[..., str],
     progress_writer: Any | None = None,
@@ -328,8 +332,7 @@ def run_group(
                     websearch=group.websearch,
                     skills_enabled=group.skills_enabled,
                     record_id=record.record_id,
-                    subset=classify_subset_fn(record),
-                    dataset=record.dataset,
+                    track=record.track,
                     source_file=record.source_file,
                     eval_kind=record.eval_kind,
                     prompt=record.prompt,

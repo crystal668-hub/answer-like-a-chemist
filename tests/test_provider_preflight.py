@@ -1,6 +1,6 @@
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -62,18 +62,19 @@ def test_provider_connection_rejects_unresolved_endpoint(setup_preflight):
 
 
 def test_cli_connection_failure_stops_before_workspace_recovery_and_scheduling(setup_preflight, monkeypatch, tmp_path):
-    from benchmarking.core.datasets import BenchmarkRecord
-    from benchmarking.workflow import cli
+    from benchmarking.core.records import load_records
     from benchmarking.service.single import execution
-    from benchmarking.core.datasets import load_records
+    from benchmarking.workflow import cli
     from benchmarking.workflow.errors import BenchmarkError
 
     config, _, runtime = setup_preflight
     output = tmp_path / "run"
-    record = load_records([Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/datasets/verifier_grounded_rdkit.jsonl"])[0]
-    record.dataset = "verifier_grounded_rdkit"
+    record = load_records([
+        Path(__file__).resolve().parents[1]
+        / "benchmarking/resources/verifier_grounded/tracks/rdkit.jsonl"
+    ])[0]
     monkeypatch.setattr(sys, "argv", ["benchmark", "--openclaw-config", str(config), "--exact-output-dir", str(output), "--single-agent-model", "qwen/flash"])
-    monkeypatch.setattr(execution, "select_dataset_files", lambda args: [tmp_path / "test.jsonl"])
+    monkeypatch.setattr(execution, "select_track_files", lambda args: [tmp_path / "test.jsonl"])
     monkeypatch.setattr(execution, "select_records", lambda files, args: [record])
     manager = Mock(runtime_root=tmp_path / "workspaces")
     monkeypatch.setattr(cli, "AttemptWorkspaceManager", Mock(return_value=manager))

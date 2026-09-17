@@ -1,13 +1,5 @@
 from __future__ import annotations
-from benchmarking.service.chemdebate.convergence import ChemQAConvergencePolicy
-from benchmarking.service.chemdebate import experiments as legacy_experiments
-from benchmarking.service.chemdebate import execution as legacy_execution
-from benchmarking.service.single.orchestration import runner_options as single_runner_options
-from benchmarking.service.chemdebate.orchestration import runner_options as legacy_runner_options
-from benchmarking.service.chemdebate.config import build_runner_config as legacy_config
-from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
-import base64
 import io
 import json
 import os
@@ -34,13 +26,10 @@ from benchmarking.core.contracts import (
     RunStatus,
 )
 from benchmarking.core.convergence import ConvergencePolicy, extract_final_answer_line
-from benchmarking.core.datasets import (
+from benchmarking.core.records import (
     BenchmarkRecord,
     GradingSpec,
-    classify_subset,
-    load_records,
 )
-from benchmarking.core.experiments import ExperimentSpec
 from benchmarking.core.reporting import (
     GroupRecordResult,
     aggregate_results,
@@ -49,40 +38,53 @@ from benchmarking.core.reporting import (
 from benchmarking.core.reporting import (
     build_error_group_record_result as shared_build_error_group_record_result,
 )
-from benchmarking.service.chemdebate.status import is_chemqa_terminal_status
-from benchmarking.service.chemdebate.status import normalize_chemqa_run_status
 from benchmarking.runtime import bundles as runtime_bundles
 from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import judge as judge_runtime
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
-from benchmarking.service.chemdebate.cleanroom import CleanroomRuntime
 from benchmarking.runtime.workspace_policy import ContaminationAudit
 from benchmarking.scoring import registry as scoring_evaluation
 from benchmarking.scoring.results import (
     EvaluationResult,
     build_execution_error_evaluation,
 )
-from benchmarking.skills.tree import (
-    benchmark_skill_routing_inventory,
-    load_chemistry_skill_inventory,
-)
-from benchmarking.workflow import cli as benchmark_test
-from benchmarking.service.single import adapter as single_adapter
-from benchmarking.workflow import (
-    dataset_selection,
-    experiments,
-    orchestration,
-    run_state,
-    runner_adapters,
-    runtime_config,
+from benchmarking.service.chemdebate import adapter as chemdebate_adapter
+from benchmarking.service.chemdebate import execution as legacy_execution
+from benchmarking.service.chemdebate import experiments as legacy_experiments
+from benchmarking.service.chemdebate.cleanroom import CleanroomRuntime
+from benchmarking.service.chemdebate.config import build_runner_config as legacy_config
+from benchmarking.service.chemdebate.convergence import ChemQAConvergencePolicy
+from benchmarking.service.chemdebate.orchestration import (
+    runner_options as legacy_runner_options,
 )
 from benchmarking.service.chemdebate.response import (
     build_chemqa_full_response,
     build_chemqa_response_from_submission,
 )
-from benchmarking.workflow.errors import BenchmarkError
+from benchmarking.service.chemdebate.status import (
+    is_chemqa_terminal_status,
+    normalize_chemqa_run_status,
+)
+from benchmarking.service.single import adapter as single_adapter
+from benchmarking.service.single.orchestration import (
+    runner_options as single_runner_options,
+)
 from benchmarking.service.single.prompts import build_single_llm_prompt
+from benchmarking.skills.tree import (
+    benchmark_skill_routing_inventory,
+    load_chemistry_skill_inventory,
+)
+from benchmarking.workflow import cli as benchmark_test
+from benchmarking.workflow import (
+    experiments,
+    orchestration,
+    run_state,
+    runner_adapters,
+    runtime_config,
+    track_selection,
+)
+from benchmarking.workflow.errors import BenchmarkError
 
 
 @contextmanager
@@ -110,7 +112,6 @@ class JudgeStub:
 def build_error_result_for_test(**kwargs: object) -> GroupRecordResult:
     return shared_build_error_group_record_result(
         **kwargs,
-        classify_subset_fn=classify_subset,
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
@@ -122,7 +123,6 @@ def materialize_failure_results_for_test(**kwargs: object) -> list[GroupRecordRe
         **kwargs,
         save_json_fn=run_state.save_json,
         slugify_fn=run_state.slugify,
-        classify_subset_fn=classify_subset,
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
@@ -142,9 +142,9 @@ def run_group_for_test(**kwargs: object) -> list[GroupRecordResult]:
     return orchestration.run_group(
         **common, runner_options_factory=lambda: builder(**options),
         build_runner_fn=runner_adapters.build_runner,
-        evaluate_answer_fn=scoring_evaluation.evaluate_record,
+        evaluate_answer_fn=kwargs.get("evaluate_answer_fn", scoring_evaluation.evaluate_record),
         build_error_group_record_result_fn=build_error_result_for_test,
-        classify_subset_fn=classify_subset, save_json_fn=run_state.save_json, slugify_fn=run_state.slugify,
+        save_json_fn=run_state.save_json, slugify_fn=run_state.slugify,
     )
 
 
@@ -269,7 +269,6 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli"]):
             args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("high", args.single_agent_thinking)
-        self.assertEqual("high", args.judge_agent_thinking)
 
         with mock.patch.object(
             sys,
@@ -278,13 +277,10 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "benchmarking.workflow.cli",
                 "--single-agent-thinking",
                 "medium",
-                "--judge-agent-thinking",
-                "minimal",
             ],
         ):
             args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("medium", args.single_agent_thinking)
-        self.assertEqual("minimal", args.judge_agent_thinking)
 
         with mock.patch.object(
             sys,
@@ -293,47 +289,14 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 "benchmarking.workflow.cli",
                 "--single-agent-thinking",
                 "adaptive",
-                "--judge-agent-thinking",
-                "adaptive",
             ],
         ):
             args = benchmark_test.parse_args(legacy_execution)
         self.assertEqual("adaptive", args.single_agent_thinking)
-        self.assertEqual("adaptive", args.judge_agent_thinking)
 
         with mock.patch.object(sys, "argv", ["benchmarking.workflow.cli", "--single-agent-thinking", "extreme"]):
             with self.assertRaises(SystemExit):
                 benchmark_test.parse_args(legacy_execution)
-
-    def test_parse_args_accepts_subsets_filter(self) -> None:
-        with mock.patch.object(
-            sys,
-            "argv",
-            [
-                "benchmarking.workflow.cli",
-                "--subsets",
-                "frontierscience_Research,superchem_multimodal",
-            ],
-        ):
-            args = benchmark_test.parse_args(legacy_execution)
-
-        self.assertEqual("frontierscience_Research,superchem_multimodal", args.subsets)
-
-    def test_filter_records_by_subsets_rejects_unknown_subset(self) -> None:
-        records = [
-            BenchmarkRecord(
-                record_id="chem-1",
-                dataset="chembench",
-                source_file="/tmp/chembench.jsonl",
-                eval_kind="chembench_open_ended",
-                prompt="Q",
-                reference_answer="A",
-                payload={},
-            )
-        ]
-
-        with self.assertRaisesRegex(BenchmarkError, "Unknown subset"):
-            dataset_selection.filter_records_by_subsets(records, "hle_chemistry")
 
     def test_current_python_prefers_virtualenv_python(self) -> None:
         original_virtual_env = os.environ.get("VIRTUAL_ENV")
@@ -424,14 +387,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             group_dir = root / "per-record" / "single_llm_skills_on"
             group_dir.mkdir(parents=True, exist_ok=True)
             payload = GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="single_llm_skills_on",
                 group_label="单一 LLM + 启用 websearch plugin",
                 runner="single_llm",
                 websearch=True,
                 record_id="demo-record",
-                subset="chembench",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q",
@@ -501,7 +463,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("legacy-record", entry.record_id)
-            self.assertEqual(3, entry.schema_version)
+            self.assertEqual(4, entry.schema_version)
+            self.assertEqual("legacy:chembench", entry.track)
             self.assertEqual("completed", entry.run_lifecycle_status)
             self.assertEqual("completed", entry.protocol_completion_status)
             self.assertIsNone(entry.protocol_acceptance_status)
@@ -940,123 +903,11 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             candidates,
         )
 
-    def test_load_records_uses_problem_field_for_frontierscience(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            path = root / "frontierscience" / "data" / "frontierscience_chemistry_pool.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(
-                    {
-                        "id": "fs-demo",
-                        "problem": "Solve me",
-                        "answer": "42",
-                        "eval_kind": "frontierscience_olympiad",
-                        "track": "olympiad",
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            records = load_records([path])
-            self.assertEqual(1, len(records))
-            self.assertEqual("Solve me", records[0].prompt)
-            self.assertEqual("42", records[0].reference_answer)
-
-    def test_evaluate_answer_uses_generic_semantic_fallback(self) -> None:
-        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer matches"})
-        record = BenchmarkRecord(
-            record_id="generic-demo",
-            dataset="customset",
-            source_file="/tmp/custom.jsonl",
-            eval_kind="custom_eval_kind",
-            prompt="Name the molecule.",
-            reference_answer="benzene",
-            payload={},
-        )
-        result = scoring_evaluation.evaluate_record(
-            record,
-            short_answer_text="wrong-short-answer",
-            full_response_text="Full answer contains benzene.",
-            answer_text="Full answer contains benzene.",
-            judge=judge,
-        )
-        self.assertTrue(result.passed)
-        self.assertEqual("semantic_match", result.primary_metric)
-        self.assertEqual("judge", result.details["method"])
-        self.assertIn("Full answer contains benzene.", judge.prompts[0])
-        self.assertNotIn("wrong-short-answer", judge.prompts[0])
-
-    def test_load_records_malformed_json_propagates_decode_error(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            path = root / "chembench" / "data" / "broken.jsonl"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('{"id":"broken","prompt":"Q"\n', encoding="utf-8")
-
-            with self.assertRaises(json.JSONDecodeError):
-                load_records([path])
-
-    def test_classify_subset(self) -> None:
-        chembench_record = BenchmarkRecord(
-            record_id="c1",
-            dataset="chembench",
-            source_file="/tmp/chembench.jsonl",
-            eval_kind="chembench_open_ended",
-            prompt="Q",
-            reference_answer="A",
-            payload={},
-        )
-        olympiad_record = BenchmarkRecord(
-            record_id="f1",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_olympiad",
-            prompt="Q",
-            reference_answer="A",
-            payload={"track": "olympiad"},
-        )
-        research_record = BenchmarkRecord(
-            record_id="f2",
-            dataset="frontierscience",
-            source_file="/tmp/frontierscience.jsonl",
-            eval_kind="frontierscience_research",
-            prompt="Q",
-            reference_answer="A",
-            payload={"track": "research"},
-        )
-        self.assertEqual("chembench", classify_subset(chembench_record))
-        self.assertEqual("frontierscience_Olympiad", classify_subset(olympiad_record))
-        self.assertEqual("frontierscience_Research", classify_subset(research_record))
-
-    def test_classify_subset_superchem(self) -> None:
-        legacy_text_record = BenchmarkRecord(
-            record_id="s1",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            eval_kind="superchem_multiple_choice_rpf",
-            prompt="Q",
-            reference_answer="A",
-            payload={"modality": "text_only"},
-        )
-        multimodal_record = BenchmarkRecord(
-            record_id="s2",
-            dataset="superchem",
-            source_file="/tmp/superchem.jsonl",
-            eval_kind="superchem_multiple_choice_rpf",
-            prompt="Q",
-            reference_answer="A",
-            payload={"modality": "multimodal"},
-        )
-        self.assertEqual("superchem_multimodal", classify_subset(legacy_text_record))
-        self.assertEqual("superchem_multimodal", classify_subset(multimodal_record))
-
     def test_print_selected_records_outputs_json(self) -> None:
         records = [
             BenchmarkRecord(
                 record_id="chem-1",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/chembench.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="What is the answer?",
@@ -1066,17 +917,17 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         ]
         stream = io.StringIO()
         with redirect_stdout(stream):
-            dataset_selection.print_selected_records(records)
+            track_selection.print_selected_records(records)
         payload = json.loads(stream.getvalue())
         self.assertEqual("chem-1", payload[0]["record_id"])
-        self.assertEqual("chembench", payload[0]["subset"])
+        self.assertEqual("chembench", payload[0]["track"])
         self.assertEqual("chembench_open_ended", payload[0]["eval_kind"])
 
     def test_apply_offset_limit_preserves_existing_behavior(self) -> None:
         records = [
             BenchmarkRecord(
                 record_id=f"r{idx}",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q",
@@ -1085,235 +936,8 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             )
             for idx in range(10)
         ]
-        sliced = dataset_selection.apply_offset_limit(records, offset=3, limit=4)
+        sliced = track_selection.apply_offset_limit(records, offset=3, limit=4)
         self.assertEqual(["r3", "r4", "r5", "r6"], [record.record_id for record in sliced])
-
-    def test_ensure_runtime_bundle_copies_superchem_images(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            data_dir = temp_dir / "data"
-            source_image = temp_dir / "assets" / "source.png"
-            source_image.parent.mkdir(parents=True)
-            source_image.write_bytes(b"image-bytes")
-            record = BenchmarkRecord(
-                record_id="superchem-demo-mm",
-                dataset="superchem",
-                source_file=str(data_dir / "superchem.jsonl"),
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Question prompt",
-                reference_answer="B",
-                payload={
-                    "source_uuid": "uuid-demo",
-                    "modality": "multimodal",
-                    "question": "Question prompt",
-                    "options": {"A": "foo", "B": "bar"},
-                    "question_image_paths": ["../assets/source.png"],
-                    "option_image_paths": {},
-                },
-            )
-            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-            assert bundle is not None
-            self.assertTrue(bundle.question_markdown.is_file())
-            self.assertIn("Local images to inspect", bundle.question_markdown.read_text(encoding="utf-8"))
-            self.assertEqual(1, len(bundle.image_files))
-            self.assertTrue(bundle.image_files[0].is_file())
-            self.assertEqual(b"image-bytes", bundle.image_files[0].read_bytes())
-
-    def test_ensure_runtime_bundle_prunes_superchem_question_images_to_visible_locator(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            data_dir = temp_dir / "data"
-            assets_dir = temp_dir / "assets"
-            locator = "/media/uploads/question-visible.png"
-            visible_image = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator)
-            visible_image.parent.mkdir(parents=True)
-            visible_image.write_bytes(b"visible")
-            noisy_paths: list[str] = []
-            for index in range(120):
-                noisy = assets_dir / "_shared" / "noise" / f"unused-{index:03d}.png"
-                noisy.parent.mkdir(parents=True, exist_ok=True)
-                noisy.write_bytes(b"noise")
-                noisy_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
-            visible_relpath = os.path.relpath(visible_image, start=data_dir).replace(os.sep, "/")
-            record = BenchmarkRecord(
-                record_id="superchem-visible-question-mm",
-                dataset="superchem",
-                source_file=str(data_dir / "superchem.jsonl"),
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt=f"Question ![q]({locator})",
-                reference_answer="A",
-                payload={
-                    "source_uuid": "uuid-visible-question",
-                    "modality": "multimodal",
-                    "question": f"Question ![q]({locator})",
-                    "options": {"A": "answer"},
-                    "question_image_paths": noisy_paths[:60] + [visible_relpath] + noisy_paths[60:],
-                    "option_image_paths": {},
-                },
-            )
-
-            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-
-            assert bundle is not None
-            markdown = bundle.question_markdown.read_text(encoding="utf-8")
-            self.assertEqual(1, len(bundle.image_files))
-            self.assertEqual(b"visible", bundle.image_files[0].read_bytes())
-            self.assertNotIn(locator, markdown)
-            self.assertIn("](images/img01.png)", markdown)
-            self.assertEqual(1, markdown.count("- images/img"))
-
-    def test_ensure_runtime_bundle_ignores_shared_option_bucket_and_rewrites_visible_options(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            data_dir = temp_dir / "data"
-            assets_dir = temp_dir / "assets"
-            locator_b = "/media/uploads/option-b.png"
-            locator_c = "https://superchem.pku.edu.cn/media/uploads/option-c.jpg"
-            option_b = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator_b)
-            option_c = assets_dir / runtime_bundles._superchem_asset_cache_relative_path(locator_c)
-            option_b.parent.mkdir(parents=True)
-            option_c.parent.mkdir(parents=True)
-            option_b.write_bytes(b"option-b")
-            option_c.write_bytes(b"option-c")
-            shared_paths: list[str] = []
-            for index in range(150):
-                noisy = assets_dir / "_shared" / "shared" / f"unused-{index:03d}.png"
-                noisy.parent.mkdir(parents=True, exist_ok=True)
-                noisy.write_bytes(b"noise")
-                shared_paths.append(os.path.relpath(noisy, start=data_dir).replace(os.sep, "/"))
-            record = BenchmarkRecord(
-                record_id="superchem-visible-options-mm",
-                dataset="superchem",
-                source_file=str(data_dir / "superchem.jsonl"),
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Question",
-                reference_answer="B",
-                payload={
-                    "source_uuid": "uuid-visible-options",
-                    "modality": "multimodal",
-                    "question": "Question",
-                    "options": {
-                        "A": "plain",
-                        "B": f"<MultiModal>![b]({locator_b})</MultiModal>",
-                        "C": f"<MultiModal>![c]({locator_c})</MultiModal>",
-                    },
-                    "question_image_paths": [],
-                    "option_image_paths": {
-                        "_shared": shared_paths,
-                        "B": [os.path.relpath(option_b, start=data_dir).replace(os.sep, "/")],
-                        "C": [os.path.relpath(option_c, start=data_dir).replace(os.sep, "/")],
-                    },
-                },
-            )
-
-            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-
-            assert bundle is not None
-            markdown = bundle.question_markdown.read_text(encoding="utf-8")
-            self.assertEqual(2, len(bundle.image_files))
-            self.assertEqual([b"option-b", b"option-c"], [path.read_bytes() for path in bundle.image_files])
-            self.assertNotIn(locator_b, markdown)
-            self.assertNotIn(locator_c, markdown)
-            self.assertIn("](images/img01.png)", markdown)
-            self.assertIn("](images/img02.jpg)", markdown)
-            self.assertEqual(2, markdown.count("- images/img"))
-            self.assertNotIn("unused-", markdown)
-
-    def test_ensure_runtime_bundle_fails_when_visible_superchem_locator_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            locator = "/media/uploads/missing-visible.png"
-            record = BenchmarkRecord(
-                record_id="superchem-missing-visible-mm",
-                dataset="superchem",
-                source_file=str(temp_dir / "data" / "superchem.jsonl"),
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt=f"Question ![q]({locator})",
-                reference_answer="A",
-                payload={
-                    "source_uuid": "uuid-missing-visible",
-                    "modality": "multimodal",
-                    "question": f"Question ![q]({locator})",
-                    "options": {"A": "answer"},
-                    "question_image_paths": [],
-                    "option_image_paths": {},
-                },
-            )
-
-            with self.assertRaisesRegex(runtime_bundles.RuntimeBundleError, "missing-visible"):
-                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-
-    def test_ensure_runtime_bundle_rejects_superchem_absolute_asset_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            source_image = temp_dir / "assets" / "source.png"
-            source_image.parent.mkdir(parents=True)
-            source_image.write_bytes(b"image-bytes")
-            record = BenchmarkRecord(
-                record_id="superchem-absolute-mm",
-                dataset="superchem",
-                source_file=str(temp_dir / "data" / "superchem.jsonl"),
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Question prompt",
-                reference_answer="B",
-                payload={
-                    "source_uuid": "uuid-demo",
-                    "modality": "multimodal",
-                    "question": "Question prompt",
-                    "options": {"A": "foo", "B": "bar"},
-                    "question_image_paths": [source_image.as_posix()],
-                    "option_image_paths": {},
-                },
-            )
-            with self.assertRaises(runtime_bundles.RuntimeBundleError):
-                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-
-    def test_ensure_runtime_bundle_fails_when_superchem_multimodal_images_are_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            record = BenchmarkRecord(
-                record_id="superchem-missing-mm",
-                dataset="superchem",
-                source_file="/tmp/superchem.jsonl",
-                eval_kind="superchem_multiple_choice_rpf",
-                prompt="Question prompt",
-                reference_answer="B",
-                payload={
-                    "source_uuid": "uuid-demo",
-                    "modality": "multimodal",
-                    "question": "Question prompt",
-                    "options": {"A": "foo", "B": "bar"},
-                    "question_image_paths": ["/missing/source.png"],
-                    "option_image_paths": {},
-                },
-            )
-            with self.assertRaises(runtime_bundles.RuntimeBundleError):
-                runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-
-    def test_ensure_runtime_bundle_materializes_hle_base64_image(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir_name:
-            temp_dir = Path(temp_dir_name)
-            data_uri = "data:image/png;base64," + base64.b64encode(b"png-bytes").decode("ascii")
-            record = BenchmarkRecord(
-                record_id="hle-chemistry-demo",
-                dataset="hle",
-                source_file="/tmp/hle.jsonl",
-                eval_kind="hle",
-                prompt="Using the provided information, identify the step.",
-                reference_answer="Final step",
-                payload={
-                    "question": "Using the provided information, identify the step.",
-                    "answer": "Final step",
-                    "image": data_uri,
-                },
-            )
-            bundle = runtime_bundles.ensure_runtime_bundle(record, bundle_root=temp_dir / "bundles")
-            assert bundle is not None
-            self.assertEqual(1, len(bundle.image_files))
-            self.assertEqual(b"png-bytes", bundle.image_files[0].read_bytes())
-            question_text = bundle.question_markdown.read_text(encoding="utf-8")
-            self.assertIn("# HLE Benchmark Record", question_text)
-            self.assertIn("images/hle-image-01.png", question_text)
 
     def test_build_chemqa_full_response_uses_final_submission_rationale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir_name:
@@ -1418,14 +1042,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_aggregate_results_groups_by_experiment(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="r1",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q1",
@@ -1484,14 +1107,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 execution_error_kind=None,
             ),
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="r2",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q2",
@@ -1585,14 +1207,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_aggregate_results_tracks_evaluable_and_degraded_counts(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="chemqa",
                 websearch=True,
                 record_id="r1",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q1",
@@ -1623,14 +1244,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 execution_error_kind=None,
             ),
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="chemqa",
                 websearch=True,
                 record_id="r2",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q2",
@@ -1678,14 +1298,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_aggregate_results_includes_superchem_metrics(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="superchem-1",
-                subset="superchem_multimodal",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/superchem.jsonl",
                 eval_kind="superchem_multiple_choice_rpf",
                 prompt="Q1",
@@ -1723,14 +1342,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_aggregate_results_includes_hle_calibration_error(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="hle-1",
-                subset="hle_chemistry",
-                dataset="hle",
+                track="hle",
                 source_file="/tmp/hle.jsonl",
                 eval_kind="hle",
                 prompt="Q1",
@@ -1761,14 +1379,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 execution_error_kind=None,
             ),
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="hle-2",
-                subset="hle_chemistry",
-                dataset="hle",
+                track="hle",
                 source_file="/tmp/hle.jsonl",
                 eval_kind="hle",
                 prompt="Q2",
@@ -1799,14 +1416,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 execution_error_kind=None,
             ),
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="chembench-1",
-                subset="chembench",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/chembench.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q3",
@@ -1850,22 +1466,21 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             summary["groups"]["g1"]["hle_calibration_rmse"],
-            summary["group_subset"]["g1::hle_chemistry"]["hle_calibration_rmse"],
+            summary["group_track"]["g1::hle"]["hle_calibration_rmse"],
         )
         self.assertIsNone(summary["groups"]["g1"]["by_eval_kind"]["chembench_open_ended"]["hle_calibration_rmse"])
-        self.assertIsNone(summary["group_subset"]["g1::chembench"]["hle_calibration_rmse"])
+        self.assertIsNone(summary["group_track"]["g1::chembench"]["hle_calibration_rmse"])
 
     def test_results_json_keeps_legacy_top_level_shape(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="r1",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q1",
@@ -1896,14 +1511,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 execution_error_kind=None,
             ),
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="r2",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q2",
@@ -1937,22 +1551,21 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         summary = aggregate_results(sample)
         self.assertEqual("benchmarking.core.reporting", GroupRecordResult.__module__)
         self.assertEqual("benchmarking.core.reporting", aggregate_results.__module__)
-        self.assertEqual(["group_order", "groups", "group_subset"], list(summary.keys()))
+        self.assertEqual(["group_order", "groups", "group_track"], list(summary.keys()))
         self.assertEqual(["g1"], summary["group_order"])
         self.assertIn("g1", summary["groups"])
-        self.assertIn("g1::chembench", summary["group_subset"])
+        self.assertIn("g1::d1", summary["group_track"])
 
     def test_results_json_payload_adds_schema_version_without_dropping_legacy_keys(self) -> None:
         sample = [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="g1",
                 group_label="Group 1",
                 runner="single_llm",
                 websearch=False,
                 record_id="r1",
-                subset="chembench",
-                dataset="d1",
+                track="d1",
                 source_file="/tmp/a.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q1",
@@ -2000,14 +1613,13 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_group_record_result_includes_evaluability_axes(self) -> None:
         result = GroupRecordResult(
-            schema_version=2,
+            schema_version=4,
             group_id="g1",
             group_label="Group 1",
             runner="single_llm",
             websearch=False,
             record_id="r1",
-            subset="chembench",
-            dataset="d1",
+            track="d1",
             source_file="/tmp/a.jsonl",
             eval_kind="chembench_open_ended",
             prompt="Q1",
@@ -2038,7 +1650,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             execution_error_kind=None,
             error=None,
         )
-        self.assertEqual(2, result.schema_version)
+        self.assertEqual(4, result.schema_version)
         self.assertTrue(result.evaluable)
         self.assertTrue(result.scored)
 
@@ -2426,9 +2038,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -2524,9 +2136,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -2631,9 +2243,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="How much product?",
                     reference_answer="7.59",
                     payload={},
@@ -2711,9 +2323,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -2790,9 +2402,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Return ethanol.",
                     reference_answer="CCO",
                     payload={},
@@ -2902,9 +2514,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="superchem-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Pick one.",
                     reference_answer="B",
                     payload={"answer_kind": "multiple_choice", "options": {"A": "wrong", "B": "right"}},
@@ -3029,9 +2641,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Return ethanol.",
                     reference_answer="CCO",
                     payload={},
@@ -3130,9 +2742,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3233,9 +2845,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3323,9 +2935,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    dataset="generic",
+                    track="rdkit",
                     source_file="/tmp/demo.jsonl",
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
                     reference_answer="42",
                     payload={},
@@ -3353,18 +2965,18 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         records = [
             BenchmarkRecord(
                 record_id="r1",
-                dataset="generic",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="generic_semantic",
+                eval_kind="verifier_grounded",
                 prompt="What is 2+2?",
                 reference_answer="4",
                 payload={"target": "4"},
             ),
             BenchmarkRecord(
                 record_id="r2",
-                dataset="generic",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
-                eval_kind="generic_semantic",
+                eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
                 reference_answer="5",
                 payload={"target": "5"},
@@ -3406,6 +3018,16 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                     chemqa_model_profile="unused",
                     review_rounds=None,
                     rebuttal_rounds=None,
+                    evaluate_answer_fn=lambda *_args, **_kwargs: EvaluationResult(
+                        eval_kind="verifier_grounded",
+                        score=1.0,
+                        max_score=1.0,
+                        normalized_score=1.0,
+                        passed=True,
+                        primary_metric="verifier_score",
+                        primary_metric_direction="higher_is_better",
+                        details={},
+                    ),
                 )
                 self.assertEqual(2, len(results))
                 self.assertIsNotNone(results[0].error)
@@ -3419,9 +3041,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_passes_single_timeout_retry_options_to_runner(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="What is 2+2?",
             reference_answer="4",
             payload={"target": "4"},
@@ -3476,9 +3098,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_marks_unscored_recovery_as_execution_error(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3551,9 +3173,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_failed_result_axes_for_non_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="failed-record",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3613,9 +3235,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_scores_evaluable_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="Q",
             reference_answer="fallback-answer",
             payload={},
@@ -3671,7 +3293,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 self.assertEqual("FINAL ANSWER: fallback-answer", answer_text)
                 self.assertIs(judge, judge_obj)
                 return EvaluationResult(
-                    eval_kind="generic_semantic",
+                    eval_kind="verifier_grounded",
                     score=1.0,
                     max_score=1.0,
                     normalized_score=1.0,
@@ -3712,9 +3334,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_accepts_structural_result_object_for_unscored_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-recovery-record",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3796,9 +3418,9 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_structural_unscored_recovery_without_failure_attr_uses_runner_meta_error(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-omitted-failure-record",
-            dataset="generic",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             prompt="Q",
             reference_answer="A",
             payload={},
@@ -3874,7 +3496,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         records = [
             BenchmarkRecord(
                 record_id="r1",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q1",
@@ -3883,7 +3505,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             ),
             BenchmarkRecord(
                 record_id="r2",
-                dataset="chembench",
+                track="chembench",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="chembench_open_ended",
                 prompt="Q2",
@@ -3906,13 +3528,12 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_benchmark_test_build_error_group_record_result_preserves_legacy_compatibility(self) -> None:
         record = BenchmarkRecord(
             record_id="demo-record",
-            dataset="frontierscience",
+            track="frontierscience",
             source_file="/tmp/frontier.jsonl",
             prompt="Question?",
             grading=GradingSpec(
                 kind="frontierscience_research",
                 reference_answer="42",
-                subset="frontierscience_Research",
                 config={"track": "research"},
             ),
             raw_payload={"track": "research"},
@@ -3923,7 +3544,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             error_message="boom",
             full_response_text="Reasoning\nFinal conclusion",
         )
-        self.assertEqual("frontierscience_Research", entry.subset)
+        self.assertEqual("frontierscience", entry.track)
         self.assertEqual("Final conclusion", entry.short_answer_text)
         self.assertEqual("Reasoning\nFinal conclusion", entry.full_response_text)
         self.assertEqual("Reasoning\nFinal conclusion", entry.answer_text)
@@ -3931,7 +3552,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_shared_reporting_build_error_group_record_result_requires_explicit_dependencies(self) -> None:
         record = BenchmarkRecord(
             record_id="demo-record",
-            dataset="chembench",
+            track="chembench",
             source_file="/tmp/demo.jsonl",
             eval_kind="chembench_open_ended",
             prompt="Q",
@@ -3970,7 +3591,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
         reference_answer = "B" if eval_kind == "verifier_grounded" else "5"
         return BenchmarkRecord(
             record_id="demo",
-            dataset=dataset,
+            track=dataset,
             source_file="/tmp/demo.jsonl",
             eval_kind=eval_kind,
             prompt="Question?",
@@ -4008,8 +3629,8 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            source = Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/datasets/verifier_grounded_rdkit.jsonl"
-            dataset_path = root / "verifier_grounded_rdkit/data/verifier_grounded_rdkit.jsonl"
+            source = Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/tracks/rdkit.jsonl"
+            dataset_path = root / "rdkit/data/rdkit.jsonl"
             dataset_path.parent.mkdir(parents=True)
             dataset_path.write_text(source.read_text().splitlines()[0] + "\n")
 
@@ -4050,6 +3671,8 @@ class ActiveSingleLLMTests(unittest.TestCase):
                 str(output_root),
                 "--groups",
                 "single_llm_skills_off",
+                "--tracks",
+                "rdkit",
                 "--single-agent-id-override",
                 "custom-single-agent",
             ]
@@ -4082,7 +3705,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH of a buffer from the supplied concentrations.",
@@ -4118,7 +3741,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH of a buffer from the supplied concentrations.",
@@ -4190,7 +3813,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4261,7 +3884,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4319,7 +3942,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4385,7 +4008,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4440,7 +4063,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5001,7 +4624,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="superchem-demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5062,7 +4685,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="superchem-demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5125,7 +4748,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="superchem-demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5179,7 +4802,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="superchem-demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5233,7 +4856,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="superchem-demo",
-                dataset="superchem",
+                track="superchem",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Choose.",
@@ -5293,7 +4916,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="hle-demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -5355,7 +4978,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="hle-demo",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",

@@ -7,17 +7,19 @@ from unittest.mock import patch
 
 import pytest
 
-from benchmarking.core.datasets import load_records
+from benchmarking.core.records import RecordValidationError, load_records
 from benchmarking.runtime.vgb_bridge import (
     VerifierGroundedRuntimeError,
     load_release_config,
 )
-from scripts.sync_verifier_grounded_datasets import (
+from scripts.sync_verifier_grounded_tracks import (
+    LEGACY_TRACK_DIRECTORIES,
     REFERENCE_PLACEHOLDER,
-    RESOURCE_DATASET_ROOT,
-    build_dataset_records,
+    RESOURCE_TRACK_ROOT,
+    build_track_records,
+    migrate_legacy_track_layout,
     prune_runtime_history,
-    sync_datasets,
+    sync_tracks,
 )
 
 FORBIDDEN_KEYS = {
@@ -86,12 +88,12 @@ def _assert_no_forbidden_keys(value: Any) -> None:
             _assert_no_forbidden_keys(item)
 
 
-def test_build_dataset_records_exposes_only_public_scoring_identity() -> None:
+def test_build_track_records_exposes_only_public_scoring_identity() -> None:
     config = load_release_config()
     description = _description()
 
     for track_name, track_config in config.tracks.items():
-        rows = build_dataset_records(
+        rows = build_track_records(
             config=config,
             description=description,
             track_name=track_name,
@@ -105,12 +107,12 @@ def test_build_dataset_records_exposes_only_public_scoring_identity() -> None:
         _assert_no_forbidden_keys(rows)
 
 
-def test_sync_datasets_writes_tracked_and_runtime_copies(tmp_path: Path) -> None:
+def test_sync_tracks_writes_tracked_and_runtime_copies(tmp_path: Path) -> None:
     config = load_release_config()
     resource_root = tmp_path / "resources"
     benchmarks_root = tmp_path / "formal-benchmarks"
 
-    written = sync_datasets(
+    written = sync_tracks(
         config=config,
         description=_description(),
         resource_root=resource_root,
@@ -118,10 +120,9 @@ def test_sync_datasets_writes_tracked_and_runtime_copies(tmp_path: Path) -> None
     )
 
     assert len(written) == 8
-    for track in config.tracks.values():
-        dataset = track["dataset"]
-        resource_path = resource_root / f"{dataset}.jsonl"
-        runtime_path = benchmarks_root / dataset / "data" / f"{dataset}.jsonl"
+    for track in config.tracks:
+        resource_path = resource_root / f"{track}.jsonl"
+        runtime_path = benchmarks_root / track / "data" / f"{track}.jsonl"
         assert resource_path.read_bytes() == runtime_path.read_bytes()
 
 
@@ -200,7 +201,7 @@ def test_prune_runtime_history_reports_delete_failures(tmp_path: Path) -> None:
 
     with (
         patch(
-            "scripts.sync_verifier_grounded_datasets.shutil.rmtree",
+            "scripts.sync_verifier_grounded_tracks.shutil.rmtree",
             side_effect=OSError("permission denied"),
         ),
         pytest.raises(VerifierGroundedRuntimeError, match=str(stale)),
@@ -208,11 +209,10 @@ def test_prune_runtime_history_reports_delete_failures(tmp_path: Path) -> None:
         prune_runtime_history(config=config, runtime_root=runtime_root)
 
 
-def test_checked_in_datasets_match_pinned_release_inventory() -> None:
+def test_checked_in_tracks_match_pinned_release_inventory() -> None:
     config = load_release_config()
     for track_name, track_config in config.tracks.items():
-        dataset = track_config["dataset"]
-        path = RESOURCE_DATASET_ROOT / f"{dataset}.jsonl"
+        path = RESOURCE_TRACK_ROOT / f"{track_name}.jsonl"
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert [row["id"] for row in rows] == track_config["task_ids"]
         assert len(rows) == track_config["task_count"]
@@ -225,7 +225,7 @@ def test_checked_in_datasets_match_pinned_release_inventory() -> None:
 
 
 def test_rdkit_chain_distance_prompt_exposes_smarts_and_uff_protocol() -> None:
-    path = RESOURCE_DATASET_ROOT / "verifier_grounded_rdkit.jsonl"
+    path = RESOURCE_TRACK_ROOT / "rdkit.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     record = next(row for row in rows if row["id"] == "rdkit_chain_end_to_end_max_013")
 
@@ -235,3 +235,53 @@ def test_rdkit_chain_distance_prompt_exposes_smarts_and_uff_protocol() -> None:
     )
     assert "Universal Force Field (UFF)" in record["prompt"]
     assert "lowest-energy converged UFF conformer" in record["prompt"]
+
+
+def _write_legacy_layout(root: Path) -> None:
+    for track, legacy_name in LEGACY_TRACK_DIRECTORIES.items():
+        source = RESOURCE_TRACK_ROOT / f"{track}.jsonl"
+        target = root / legacy_name / "data" / f"{legacy_name}.jsonl"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(source.read_bytes())
+
+
+def test_migrate_legacy_layout_validates_all_tracks_before_removal(tmp_path: Path) -> None:
+    config = load_release_config()
+    _write_legacy_layout(tmp_path)
+
+    result = migrate_legacy_track_layout(config=config, benchmarks_root=tmp_path)
+
+    assert len(result["promoted"]) == 4
+    assert len(result["removed"]) == 4
+    for track, legacy_name in LEGACY_TRACK_DIRECTORIES.items():
+        assert (tmp_path / track / "data" / f"{track}.jsonl").is_file()
+        assert not (tmp_path / legacy_name).exists()
+
+
+def test_migrate_legacy_layout_preserves_all_legacy_dirs_on_validation_failure(
+    tmp_path: Path,
+) -> None:
+    config = load_release_config()
+    _write_legacy_layout(tmp_path)
+    broken = tmp_path / LEGACY_TRACK_DIRECTORIES["xtb"] / "data" / (
+        LEGACY_TRACK_DIRECTORIES["xtb"] + ".jsonl"
+    )
+    broken.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(RecordValidationError):
+        migrate_legacy_track_layout(config=config, benchmarks_root=tmp_path)
+
+    assert all((tmp_path / legacy_name).is_dir() for legacy_name in LEGACY_TRACK_DIRECTORIES.values())
+
+
+def test_migrate_legacy_layout_rejects_incomplete_destination_without_cleanup(
+    tmp_path: Path,
+) -> None:
+    config = load_release_config()
+    _write_legacy_layout(tmp_path)
+    (tmp_path / "rdkit").mkdir()
+
+    with pytest.raises(VerifierGroundedRuntimeError, match="destination exists but is incomplete"):
+        migrate_legacy_track_layout(config=config, benchmarks_root=tmp_path)
+
+    assert all((tmp_path / legacy_name).is_dir() for legacy_name in LEGACY_TRACK_DIRECTORIES.values())

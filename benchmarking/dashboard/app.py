@@ -56,6 +56,10 @@ def create_app(
     def api_list_runs(include_hidden: bool = False) -> list[dict[str, Any]]:
         return dashboard.list_runs(include_hidden=include_hidden)
 
+    @app.get("/api/tracks")
+    def api_list_tracks() -> list[str]:
+        return dashboard.track_options()
+
     @app.get("/api/runs/{run_id}")
     def api_get_run(run_id: str) -> dict[str, Any]:
         try:

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from benchmarking.service.single import execution as single_execution
 
 import json
 import sys
@@ -9,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.core.datasets import BenchmarkRecord, GradingSpec
 from benchmarking.core.experiments import ExperimentSpec
+from benchmarking.core.records import BenchmarkRecord, GradingSpec
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import judge as judge_runtime
@@ -20,14 +19,14 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceTemplate,
 )
+from benchmarking.service.single import execution as single_execution
 from benchmarking.workflow import cli as benchmarking_cli
 from benchmarking.workflow import (
-    dataset_selection,
     experiments,
     orchestration,
     run_state,
-    runner_adapters,
     runtime_config,
+    track_selection,
 )
 from benchmarking.workflow.errors import BenchmarkError
 
@@ -41,15 +40,15 @@ def test_benchmarking_cli_owns_benchmark_entrypoint_behavior() -> None:
     assert all(spec.websearch_enabled is False for spec in experiments.EXPERIMENT_SPECS.values())
 
 
-def test_default_run_output_root_classifies_formal_run_by_dataset_and_model(
+def test_default_run_output_root_classifies_formal_run_by_track_and_model(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     temp_root = tmp_path / "temp-benchmarks"
-    monkeypatch.setattr(dataset_selection.runtime_paths, "temp_benchmarks_root", temp_root)
+    monkeypatch.setattr(track_selection.runtime_paths, "temp_benchmarks_root", temp_root)
     record = BenchmarkRecord(
         record_id="r1",
-        dataset="verifier_grounded_rdkit",
+        track="rdkit",
         source_file=str(tmp_path / "formal" / "rdkit.jsonl"),
         prompt="question",
         eval_kind="verifier_grounded",
@@ -57,9 +56,9 @@ def test_default_run_output_root_classifies_formal_run_by_dataset_and_model(
         payload={},
     )
 
-    output_root = dataset_selection.default_run_output_root(
+    output_root = track_selection.default_run_output_root(
         output_dir=tmp_path / "runs",
-        dataset_files=[tmp_path / "formal" / "rdkit.jsonl"],
+        track_files=[tmp_path / "formal" / "rdkit.jsonl"],
         records=[record],
         single_agent_model="qwen/qwen3.7-max",
         timestamp="20260721-120000",
@@ -76,35 +75,35 @@ def test_default_run_output_root_classifies_formal_run_by_dataset_and_model(
 
 
 @pytest.mark.parametrize(
-    ("dataset", "benchmark"),
+    ("track", "benchmark"),
     [
-        ("verifier_grounded_rdkit", "vgb-rdkit"),
-        ("verifier_grounded_xtb_xyz", "vgb-xtb"),
-        ("verifier_grounded_property_calculation", "vgb-property-calculation-advanced"),
-        ("verifier_grounded_property_calculation_easy", "vgb-property-calculation-basic"),
+        ("rdkit", "vgb-rdkit"),
+        ("xtb", "vgb-xtb"),
+        ("property_calculation_advanced", "vgb-property-calculation-advanced"),
+        ("property_calculation_basic", "vgb-property-calculation-basic"),
     ],
 )
 def test_default_run_output_root_uses_canonical_vgb_benchmark_names(
     monkeypatch,
     tmp_path: Path,
-    dataset: str,
+    track: str,
     benchmark: str,
 ) -> None:
     temp_root = tmp_path / "temp-benchmarks"
-    monkeypatch.setattr(dataset_selection.runtime_paths, "temp_benchmarks_root", temp_root)
+    monkeypatch.setattr(track_selection.runtime_paths, "temp_benchmarks_root", temp_root)
     record = BenchmarkRecord(
         record_id="r1",
-        dataset=dataset,
-        source_file=str(tmp_path / "formal" / f"{dataset}.jsonl"),
+        track=track,
+        source_file=str(tmp_path / "formal" / f"{track}.jsonl"),
         prompt="question",
         eval_kind="verifier_grounded",
         reference_answer="hidden",
         payload={},
     )
 
-    output_root = dataset_selection.default_run_output_root(
+    output_root = track_selection.default_run_output_root(
         output_dir=tmp_path / "runs",
-        dataset_files=[tmp_path / "formal" / f"{dataset}.jsonl"],
+        track_files=[tmp_path / "formal" / f"{track}.jsonl"],
         records=[record],
         single_agent_model="qwen/qwen3.7-max",
         timestamp="20260721-120000",
@@ -120,28 +119,28 @@ def test_default_run_output_root_uses_canonical_vgb_benchmark_names(
     )
 
 
-def test_default_run_output_root_classifies_multi_dataset_temp_run(
+def test_default_run_output_root_classifies_multi_track_temp_run(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     temp_root = tmp_path / "temp-benchmarks"
-    monkeypatch.setattr(dataset_selection.runtime_paths, "temp_benchmarks_root", temp_root)
+    monkeypatch.setattr(track_selection.runtime_paths, "temp_benchmarks_root", temp_root)
     records = [
         BenchmarkRecord(
             record_id=f"r{index}",
-            dataset=dataset,
-            source_file=str(temp_root / f"{dataset}.jsonl"),
+            track=track,
+            source_file=str(temp_root / f"{track}.jsonl"),
             prompt="question",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
             reference_answer="answer",
             payload={},
         )
-        for index, dataset in enumerate(("chembench", "superchem"), start=1)
+        for index, track in enumerate(("rdkit", "xtb"), start=1)
     ]
 
-    output_root = dataset_selection.default_run_output_root(
+    output_root = track_selection.default_run_output_root(
         output_dir=tmp_path / "runs",
-        dataset_files=[temp_root / "chembench.jsonl", temp_root / "superchem.jsonl"],
+        track_files=[temp_root / "rdkit.jsonl", temp_root / "xtb.jsonl"],
         records=records,
         single_agent_model="openai/gpt-5.5",
         timestamp="20260721-120000",
@@ -151,9 +150,9 @@ def test_default_run_output_root_classifies_multi_dataset_temp_run(
         tmp_path
         / "runs"
         / "temporary"
-        / "mixed-datasets"
+        / "mixed-tracks"
         / "gpt-5-5"
-        / "mixed-datasets-gpt-5-5-20260721-120000"
+        / "mixed-tracks-gpt-5-5-20260721-120000"
     )
 
 
@@ -248,32 +247,30 @@ def test_production_forbidden_path_policy_uses_explicit_runtime_roots_and_custom
 
 def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None:
     property_result = SimpleNamespace(
-        dataset="verifier_grounded_property_calculation",
+        track="property_calculation_advanced",
         record_id="property_calc_free_energy_001",
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
     rdkit_result = SimpleNamespace(
-        dataset="verifier_grounded_rdkit",
+        track="rdkit",
         record_id="rdkit_qed_max_001",
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
     easy_property_result = SimpleNamespace(
-        dataset="verifier_grounded_property_calculation_easy",
+        track="property_calculation_basic",
         record_id="property_calc_easy_001_toluene_aqueous_solvation_free_energy",
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
     release_config = SimpleNamespace(
         tracks={
-            "property_calculation": {"dataset": "verifier_grounded_property_calculation"},
-            "property_calculation_easy": {
-                "dataset": "verifier_grounded_property_calculation_easy"
-            },
-            "rdkit": {"dataset": "verifier_grounded_rdkit"},
+            "property_calculation_advanced": {},
+            "property_calculation_basic": {},
+            "rdkit": {},
         }
     )
 
     def sample_answers(track, *, release_config):
-        if track == "property_calculation_easy":
+        if track == "property_calculation_basic":
             return [
                 {
                     "task_id": "property_calc_easy_001_toluene_aqueous_solvation_free_energy",
@@ -315,12 +312,12 @@ def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None
 
 def test_reporting_references_require_every_selected_property_gold(monkeypatch) -> None:
     result = SimpleNamespace(
-        dataset="verifier_grounded_property_calculation",
+        track="property_calculation_advanced",
         record_id="property_calc_crystal_phase_002",
         reference_answer="placeholder",
     )
     release_config = SimpleNamespace(
-        tracks={"property_calculation": {"dataset": "verifier_grounded_property_calculation"}}
+        tracks={"property_calculation_advanced": {}}
     )
     monkeypatch.setattr(
         run_state,
@@ -363,7 +360,7 @@ def test_filter_records_by_ids_preserves_requested_order() -> None:
     records = [
         BenchmarkRecord(
             record_id=record_id,
-            dataset="demo",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -372,7 +369,7 @@ def test_filter_records_by_ids_preserves_requested_order() -> None:
         for record_id in ("first", "second")
     ]
 
-    selected = dataset_selection.filter_records_by_ids(records, "second,first")
+    selected = track_selection.filter_records_by_ids(records, "second,first")
 
     assert [record.record_id for record in selected] == ["second", "first"]
 
@@ -381,7 +378,7 @@ def test_filter_records_by_ids_rejects_unknown_ids() -> None:
     records = [
         BenchmarkRecord(
             record_id="known",
-            dataset="demo",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -390,14 +387,14 @@ def test_filter_records_by_ids_rejects_unknown_ids() -> None:
     ]
 
     with pytest.raises(BenchmarkError, match="Unknown record id"):
-        dataset_selection.filter_records_by_ids(records, "missing")
+        track_selection.filter_records_by_ids(records, "missing")
 
 
 def test_filter_records_by_ids_rejects_duplicate_requested_ids() -> None:
     records = [
         BenchmarkRecord(
             record_id="known",
-            dataset="demo",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -406,24 +403,24 @@ def test_filter_records_by_ids_rejects_duplicate_requested_ids() -> None:
     ]
 
     with pytest.raises(BenchmarkError, match="duplicate ids"):
-        dataset_selection.filter_records_by_ids(records, "known,known")
+        track_selection.filter_records_by_ids(records, "known,known")
 
 
-def test_filter_records_by_ids_rejects_ambiguous_selected_dataset_ids() -> None:
+def test_filter_records_by_ids_rejects_ambiguous_selected_track_ids() -> None:
     records = [
         BenchmarkRecord(
             record_id="shared",
-            dataset=dataset,
-            source_file=f"/tmp/{dataset}.jsonl",
+            track=track,
+            source_file=f"/tmp/{track}.jsonl",
             prompt="Question?",
             reference_answer="Answer",
-            eval_kind="generic_semantic",
+            eval_kind="verifier_grounded",
         )
-        for dataset in ("first", "second")
+        for track in ("rdkit", "xtb")
     ]
 
     with pytest.raises(BenchmarkError, match="Ambiguous record id"):
-        dataset_selection.filter_records_by_ids(records, "shared")
+        track_selection.filter_records_by_ids(records, "shared")
 
 
 @pytest.mark.skip(reason="web-search preflight was removed; container provider probe is authoritative")
@@ -455,7 +452,7 @@ def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> 
     records = [
         BenchmarkRecord(
             record_id=record_id,
-            dataset="demo",
+            track="rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -481,7 +478,7 @@ def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> 
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="record-1",
-        dataset="demo",
+        track="rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
@@ -489,7 +486,6 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
         grading=GradingSpec(
             kind="generic_semantic",
             reference_answer="Answer",
-            subset="demo_subset",
         ),
     )
     run_group_calls: list[str] = []
@@ -550,11 +546,8 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
                 "groups": "single_llm_skills_on",
                 "benchmark_root": str(tmp_path),
                 "files": None,
-                "datasets": None,
-                "list_datasets": False,
-                "subsets": None,
-                "random_count_per_subset": None,
-                "random_seed": 0,
+                "tracks": None,
+                "list_tracks": False,
                 "offset": 0,
                 "limit": None,
                 "print_selected_records": False,
@@ -578,8 +571,8 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
             },
         )(),
     )
-    monkeypatch.setattr(dataset_selection, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
-    monkeypatch.setattr(dataset_selection, "load_records", lambda paths: [record])
+    monkeypatch.setattr(track_selection, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(track_selection, "load_records", lambda paths: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(
         benchmarking_cli,
@@ -619,7 +612,7 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
 def test_main_launches_automated_evaluation_after_results_are_written(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="rdkit_qed_max_001",
-        dataset="verifier_grounded_rdkit",
+        track="rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
@@ -629,7 +622,6 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
         grading=GradingSpec(
             kind="verifier_grounded",
             reference_answer="Answer",
-            subset="demo_subset",
         ),
     )
     launched: list[Path] = []
@@ -653,14 +645,13 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
     def fake_run_group(**kwargs):
         return [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="single_llm_skills_off",
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
                 record_id="rdkit_qed_max_001",
-                subset="demo_subset",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -730,11 +721,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
                 "groups": "single_llm_skills_off",
                 "benchmark_root": str(tmp_path),
                 "files": None,
-                "datasets": None,
-                "list_datasets": False,
-                "subsets": None,
-                "random_count_per_subset": None,
-                "random_seed": 0,
+                "tracks": None,
+                "list_tracks": False,
                 "offset": 0,
                 "limit": None,
                 "print_selected_records": False,
@@ -758,7 +746,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             },
         )(),
     )
-    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
@@ -793,7 +781,7 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
 def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="rdkit_qed_max_001",
-        dataset="verifier_grounded_rdkit",
+        track="rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
@@ -803,7 +791,6 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
         grading=GradingSpec(
             kind="verifier_grounded",
             reference_answer="Answer",
-            subset="demo_subset",
         ),
     )
     launched: list[Path] = []
@@ -827,14 +814,13 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
     def fake_run_group(**kwargs):
         return [
             GroupRecordResult(
-                schema_version=2,
+                schema_version=4,
                 group_id="single_llm_skills_off",
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
                 record_id="rdkit_qed_max_001",
-                subset="demo_subset",
-                dataset="verifier_grounded_rdkit",
+                track="rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -887,11 +873,8 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
                 "groups": "single_llm_skills_off",
                 "benchmark_root": str(tmp_path),
                 "files": None,
-                "datasets": None,
-                "list_datasets": False,
-                "subsets": None,
-                "random_count_per_subset": None,
-                "random_seed": 0,
+                "tracks": None,
+                "list_tracks": False,
                 "offset": 0,
                 "limit": None,
                 "print_selected_records": False,
@@ -915,7 +898,7 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             },
         )(),
     )
-    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())
@@ -948,14 +931,14 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="rdkit_qed_max_001",
-        dataset="verifier_grounded_rdkit",
+        track="rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
         eval_kind="verifier_grounded",
         payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
             "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
-        grading=GradingSpec(kind="verifier_grounded", reference_answer="Answer", subset="demo_subset"),
+        grading=GradingSpec(kind="verifier_grounded", reference_answer="Answer"),
     )
 
     class FakeConfigPool:
@@ -993,11 +976,8 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
                 "groups": "single_llm_skills_off",
                 "benchmark_root": str(tmp_path),
                 "files": None,
-                "datasets": None,
-                "list_datasets": False,
-                "subsets": None,
-                "random_count_per_subset": None,
-                "random_seed": 0,
+                "tracks": None,
+                "list_tracks": False,
                 "offset": 0,
                 "limit": None,
                 "print_selected_records": False,
@@ -1021,7 +1001,7 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             },
         )(),
     )
-    monkeypatch.setattr(single_execution, "select_dataset_files", lambda args: [tmp_path / "demo.jsonl"])
+    monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
     monkeypatch.setattr(judge_runtime, "JudgeClient", lambda **kwargs: object())

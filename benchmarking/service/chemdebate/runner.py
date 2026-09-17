@@ -14,7 +14,6 @@ from benchmarking.core.contracts import (
     RunnerResult,
     RunStatus,
 )
-from .convergence import ChemQAConvergencePolicy as ConvergencePolicy
 from benchmarking.runtime.agent_workspace import (
     AttemptOutcome,
     AttemptWorkspaceManager,
@@ -28,6 +27,8 @@ from benchmarking.runtime.workspace_policy import (
 )
 from benchmarking.service.chemdebate.artifacts import ChemQAArtifactSupport
 from benchmarking.service.chemdebate.workspaces import ChemQAWorkspaceSupport
+
+from .convergence import ChemQAConvergencePolicy as ConvergencePolicy
 
 
 class ConvergenceLimitExceeded(RuntimeError):
@@ -596,10 +597,8 @@ class ChemQARunner(ChemQAArtifactSupport, ChemQAWorkspaceSupport):
                     payload.setdefault("cleanup_report", cleanup_report)
 
     def run(self, record: Any, group: Any) -> RunnerResult:
-        from benchmarking.core.datasets import is_retired_benchmark
-        if is_retired_benchmark(dataset=record.dataset, eval_kind=record.eval_kind,
-                                subset=record.grading.subset):
-            raise ValueError("This benchmark has been retired; ChemQA execution is unavailable.")
+        if record.eval_kind != "verifier_grounded":
+            raise ValueError("ChemQA accepts only verifier-grounded records.")
         run_id = f"benchmark-{group.id}-{self._slugify(record.record_id, limit=40)}-{self._now_stamp()}"
         if self._unique_run_suffix:
             run_id = f"{run_id}-{uuid.uuid4().hex[:8]}"

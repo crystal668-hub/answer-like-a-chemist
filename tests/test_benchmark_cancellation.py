@@ -1,7 +1,4 @@
 from __future__ import annotations
-from benchmarking.service.single.orchestration import runner_options as single_runner_options
-from benchmarking.service.single import adapter as single_adapter
-from benchmarking.service.chemdebate import adapter as chemdebate_adapter
 
 import json
 import os
@@ -16,7 +13,7 @@ import pytest
 
 from benchmarking.core.answer_processing import normalize_answer_tracks
 from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.core.reporting import build_error_group_record_result
 from benchmarking.runtime import subprocess_utils
 from benchmarking.runtime.cancellation import (
@@ -27,7 +24,11 @@ from benchmarking.runtime.cancellation import (
 )
 from benchmarking.runtime.judge import JudgeClient
 from benchmarking.scoring.results import build_execution_error_evaluation
-from benchmarking.workflow import runner_adapters
+from benchmarking.service.chemdebate import adapter as chemdebate_adapter
+from benchmarking.service.single import adapter as single_adapter
+from benchmarking.service.single.orchestration import (
+    runner_options as single_runner_options,
+)
 from benchmarking.workflow.cli import (
     install_cancellation_signal_handlers,
     restore_signal_handlers,
@@ -38,7 +39,7 @@ from benchmarking.workflow.orchestration import run_group
 def _record(record_id: str) -> BenchmarkRecord:
     return BenchmarkRecord(
         record_id=record_id,
-        dataset="chembench",
+        track="rdkit",
         source_file="/tmp/demo.jsonl",
         eval_kind="chembench_open_ended",
         prompt="Q",
@@ -50,7 +51,6 @@ def _record(record_id: str) -> BenchmarkRecord:
 def _error_result(**kwargs):
     return build_error_group_record_result(
         **kwargs,
-        classify_subset_fn=lambda _record: "chembench",
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=lambda value: json.loads(json.dumps(value)),
@@ -182,7 +182,6 @@ def test_run_group_stops_scheduling_and_materializes_cancelled_records(tmp_path:
         build_runner_fn=lambda **_kwargs: Runner(),
         evaluate_answer_fn=lambda *_args, **_kwargs: pytest.fail("cancelled record reached evaluator"),
         build_error_group_record_result_fn=_error_result,
-        classify_subset_fn=lambda _record: "chembench",
         save_json_fn=lambda path, payload: (
             path.parent.mkdir(parents=True, exist_ok=True),
             path.write_text(json.dumps(payload), encoding="utf-8"),

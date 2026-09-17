@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import hashlib
 import json
 import re
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from benchmarking.analysis.launcher import analysis_paths
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.core.reporting import GroupRecordResult
+from benchmarking.core.track_identity import resolve_result_track
+from benchmarking.runtime.atomic_io import (
+    atomic_write_json,
+    atomic_write_json_stream,
+    atomic_write_text,
+)
 from benchmarking.runtime.vgb_bridge import (
     ReleaseConfig,
     VerifierGroundedRuntimeError,
@@ -19,7 +25,6 @@ from benchmarking.runtime.vgb_bridge import (
 )
 from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.experiments import EXPERIMENT_GROUPS
-from benchmarking.runtime.atomic_io import atomic_write_json, atomic_write_text, atomic_write_json_stream
 
 
 def now_stamp() -> str:
@@ -162,7 +167,7 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
         payload = {
             **payload,
             # Upconvert schema-v1 per-record payloads so historical outputs remain loadable.
-            "schema_version": 3,
+            "schema_version": 4,
             "run_lifecycle_status": run_lifecycle_status,
             "protocol_completion_status": protocol_completion_status,
             "protocol_acceptance_status": None,
@@ -174,6 +179,14 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
             "degraded_execution": degraded_execution,
             "execution_error_kind": None if scored else "execution_error",
         }
+    if int(payload.get("schema_version") or 0) < 4 or not payload.get("track"):
+        payload = {
+            **payload,
+            "schema_version": 4,
+            "track": resolve_result_track(payload),
+        }
+    payload.pop("dataset", None)
+    payload.pop("subset", None)
     if "skills_enabled" not in payload:
         group = EXPERIMENT_GROUPS.get(str(payload.get("group_id") or ""))
         payload["skills_enabled"] = bool(getattr(group, "skills_enabled", str(payload.get("group_id") or "") == "chemqa_skills_on"))
@@ -247,26 +260,18 @@ def apply_verifier_grounded_reporting_references(
     *,
     release_config: ReleaseConfig | None = None,
 ) -> list[GroupRecordResult]:
-    property_results = [
-        item
-        for item in results
-        if str(getattr(item, "dataset", "")).startswith("verifier_grounded_property_calculation")
-    ]
+    property_results = [item for item in results if item.track.startswith("property_calculation")]
     if not property_results:
         return results
     try:
         config = release_config or load_release_config()
     except VerifierGroundedRuntimeError as exc:
         raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
-    dataset_tracks = {
-        str(track_config.get("dataset") or ""): track
-        for track, track_config in config.tracks.items()
-        if track.startswith("property_calculation") and isinstance(track_config, dict)
+    property_tracks = {
+        track for track in config.tracks if track.startswith("property_calculation")
     }
-    for dataset, track in dataset_tracks.items():
-        track_results = [
-            item for item in property_results if str(getattr(item, "dataset", "")) == dataset
-        ]
+    for track in property_tracks:
+        track_results = [item for item in property_results if item.track == track]
         if not track_results:
             continue
         try:
@@ -302,17 +307,11 @@ def apply_verifier_grounded_reporting_references(
         for item in track_results:
             item.reference_answer = references[str(getattr(item, "record_id", "") or "")]
 
-    unmatched_datasets = sorted(
-        {
-            str(getattr(item, "dataset", "") or "")
-            for item in property_results
-            if str(getattr(item, "dataset", "") or "") not in dataset_tracks
-        }
-    )
-    if unmatched_datasets:
+    unmatched_tracks = sorted({item.track for item in property_results if item.track not in property_tracks})
+    if unmatched_tracks:
         raise BenchmarkError(
-            "Verifier-grounded property-calculation datasets are missing pinned track metadata: "
-            + ", ".join(unmatched_datasets)
+            "Verifier-grounded property-calculation tracks are missing pinned metadata: "
+            + ", ".join(unmatched_tracks)
         )
     return results
 
@@ -324,11 +323,8 @@ def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig |
     except VerifierGroundedRuntimeError as exc:
         raise BenchmarkError(f"Unable to load public property-calculation gold: {exc}") from exc
     mapping: dict[tuple[str, str], str] = {}
-    for track, track_config in config.tracks.items():
-        if not track.startswith("property_calculation") or not isinstance(track_config, dict):
-            continue
-        dataset = str(track_config.get("dataset") or "")
-        if not dataset:
+    for track in config.tracks:
+        if not track.startswith("property_calculation"):
             continue
         try:
             if validation_cache is None:
@@ -341,13 +337,13 @@ def verifier_grounded_reporting_reference_map(*, release_config: ReleaseConfig |
             task_id = str(sample.get("task_id") or "").strip()
             answer = {key: value for key, value in sample.items() if key != "task_id"}
             if task_id and answer:
-                mapping[(dataset, task_id)] = json.dumps(answer, ensure_ascii=False, separators=(",", ":"))
+                mapping[(track, task_id)] = json.dumps(answer, ensure_ascii=False, separators=(",", ":"))
     return mapping
 
 
 def apply_verifier_grounded_reporting_reference(item: GroupRecordResult, references: dict[tuple[str, str], str]) -> GroupRecordResult:
-    if str(getattr(item, "dataset", "")).startswith("verifier_grounded_property_calculation"):
-        key = (str(item.dataset), str(item.record_id))
+    if item.track.startswith("property_calculation"):
+        key = (item.track, str(item.record_id))
         if key not in references:
             raise BenchmarkError(f"Verifier-grounded property-calculation result is missing public gold for: {item.record_id}")
         item.reference_answer = references[key]

@@ -12,6 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from benchmarking.core.track_identity import resolve_result_track
+
 SCHEMA_VERSION = 1
 DEFAULT_CODEX_BIN = "codex"
 CODEX_APP_BUNDLE_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
@@ -242,8 +244,7 @@ def group_results_by_record(results: list[dict[str, Any]]) -> list[dict[str, Any
         records.append(
             {
                 "record_id": record_id,
-                "dataset": first.get("dataset"),
-                "subset": first.get("subset"),
+                "track": resolve_result_track(first),
                 "eval_kind": first.get("eval_kind"),
                 "prompt_preview": truncate_text(first.get("prompt"), max_chars=2500),
                 "reference_answer": truncate_text(first.get("reference_answer"), max_chars=5000),

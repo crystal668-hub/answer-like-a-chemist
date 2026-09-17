@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Any
+
 
 def normalize_run_status_value(status: Any) -> str:
     return str(getattr(status, "value", status) or "").strip()
@@ -26,7 +28,7 @@ def build_result_axes_from_runner(run_result: Any) -> dict[str, Any]:
         protocol_completion_status = "missing"
 
     axes: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "run_lifecycle_status": run_lifecycle_status,
         "protocol_completion_status": protocol_completion_status,
         "protocol_acceptance_status": runner_meta.get("acceptance_status"),

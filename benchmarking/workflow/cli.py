@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import signal
 import sys
 import time
@@ -21,8 +20,7 @@ if str(_SOURCE_ROOT) not in sys.path:
 
 from benchmarking.analysis.launcher import launch_automated_evaluation
 from benchmarking.core.answer_processing import normalize_answer_tracks
-from benchmarking.core.datasets import BenchmarkRecord as _BenchmarkRecord
-from benchmarking.core.datasets import classify_subset
+from benchmarking.core.records import BenchmarkRecord as _BenchmarkRecord
 from benchmarking.core.reporting import GroupRecordResult as _GroupRecordResult
 from benchmarking.core.reporting import (
     aggregate_results,
@@ -33,36 +31,38 @@ from benchmarking.core.reporting import (
 from benchmarking.core.reporting import (
     materialize_group_failure_results as _materialize_group_failure_results,
 )
+from benchmarking.core.track_identity import resolve_result_track
 from benchmarking.dashboard.progress import ProgressWriter
 from benchmarking.runtime import config_pool as runtime_config_pool
 from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime import subprocess_utils
-from benchmarking.runtime.attempt_admission import AttemptAdmissionController
-from benchmarking.runtime.container_runtime import DockerContainerRuntime, ContainerRuntimeError
 from benchmarking.runtime.agent_workspace import (
-    AttemptIdentity,
-    AttemptOutcome,
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
 )
+from benchmarking.runtime.atomic_io import atomic_write_json
+from benchmarking.runtime.attempt_admission import AttemptAdmissionController
 from benchmarking.runtime.cancellation import (
     CancellationReason,
     CancellationToken,
     OwnedProcessRegistry,
 )
-from benchmarking.runtime.openclaw_env import (
-    build_openclaw_subprocess_env,
-    proxy_environment_report,
+from benchmarking.runtime.container_network import resolve_container_network
+from benchmarking.runtime.container_runtime import (
+    ContainerRuntimeError,
+    DockerContainerRuntime,
 )
-from benchmarking.runtime.atomic_io import atomic_write_json
 from benchmarking.runtime.observability import (
     RuntimeMetrics,
     finish_runtime_metrics,
     start_runtime_metrics,
 )
 from benchmarking.runtime.provider_preflight import check_provider_connection
-from benchmarking.runtime.container_network import resolve_container_network
-from benchmarking.runtime.vgb_bridge import load_release_config, InvocationValidationCache, validate_runtime_files
+from benchmarking.runtime.vgb_bridge import (
+    InvocationValidationCache,
+    load_release_config,
+    validate_runtime_files,
+)
 from benchmarking.runtime.vgb_worker import VerifierWorker
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
@@ -73,11 +73,11 @@ from benchmarking.scoring.registry import evaluate_record
 from benchmarking.scoring.results import build_execution_error_evaluation
 from benchmarking.skills.tree import benchmark_skill_routing_inventory
 from benchmarking.workflow import (
-    dataset_selection,
     experiments,
     run_state,
     runner_adapters,
     runtime_config,
+    track_selection,
 )
 from benchmarking.workflow import orchestration as _orchestration
 from benchmarking.workflow.errors import BenchmarkError as _BenchmarkError
@@ -209,12 +209,12 @@ def parse_args(service=None) -> argparse.Namespace:
         help="要运行的实验组，逗号分隔。默认运行当前业务的实验组",
     )
     parser.add_argument(
-        "--datasets",
-        help="仅运行当前 service 支持的数据集，逗号分隔；默认 VGB 使用 pinned release inventory",
+        "--tracks",
+        help="仅运行 pinned release 中指定的 VGB track，逗号分隔；默认运行全部 track",
     )
     parser.add_argument(
         "--files",
-        help="仅运行指定 jsonl 文件，逗号分隔，优先级高于 --datasets",
+        help="仅运行指定 jsonl 文件，逗号分隔，优先级高于 --tracks",
     )
     parser.add_argument("--limit", type=int, help="最多运行多少条题目")
     parser.add_argument("--offset", type=int, default=0, help="跳过前多少条题目")
@@ -265,7 +265,7 @@ def parse_args(service=None) -> argparse.Namespace:
     parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")
     parser.add_argument("--container-pids-limit", type=int, help="PID limit per single-LLM container")
     parser.add_argument("--max-concurrent-attempts", type=int, default=2, help="Maximum admitted single-LLM attempts (default: 2)")
-    parser.add_argument("--list-datasets", action="store_true", help="列出可发现的数据集文件后退出")
+    parser.add_argument("--list-tracks", action="store_true", help="列出可发现的 Track 文件后退出")
     parser.add_argument(
         "--print-selected-records",
         action="store_true",
@@ -346,20 +346,20 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
     timeout_mode = "no_timeout" if bool(getattr(args, "no_timeout", False)) else "bounded"
     convergence_policy_meta = service.convergence_metadata(args)
     group_ids = experiments.select_group_ids(args.groups, groups=catalog.EXPERIMENT_GROUPS)
-    dataset_files = service.select_dataset_files(args)
-    if args.list_datasets:
-        dataset_selection.print_dataset_listing(dataset_files)
+    track_files = service.select_track_files(args)
+    if args.list_tracks:
+        track_selection.print_track_listing(track_files)
         return 0
-    if not dataset_files:
-        raise _BenchmarkError("No benchmark files discovered.")
+    if not track_files:
+        raise _BenchmarkError("No benchmark track files discovered.")
 
-    selected_pool = service.select_records(dataset_files, args)
+    selected_pool = service.select_records(track_files, args)
 
-    records = dataset_selection.apply_offset_limit(selected_pool, offset=args.offset, limit=args.limit)
+    records = track_selection.apply_offset_limit(selected_pool, offset=args.offset, limit=args.limit)
     if not records:
         raise _BenchmarkError("No benchmark records selected.")
     if args.print_selected_records:
-        dataset_selection.print_selected_records(records)
+        track_selection.print_selected_records(records)
         return 0
 
     verifier_release_config = (
@@ -397,9 +397,9 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
     if args.exact_output_dir:
         output_root = Path(args.exact_output_dir).expanduser().resolve()
     else:
-        output_root = dataset_selection.default_run_output_root(
+        output_root = track_selection.default_run_output_root(
             output_dir=args.output_dir,
-            dataset_files=dataset_files,
+            track_files=track_files,
             records=records,
             single_agent_model=args.single_agent_model,
             timestamp=run_state.now_stamp(),
@@ -524,7 +524,6 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
 
     build_error_result = partial(
         _build_error_group_record_result,
-        classify_subset_fn=classify_subset,
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
@@ -533,7 +532,6 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         _materialize_group_failure_results,
         save_json_fn=result_sink.save_json,
         slugify_fn=run_state.slugify,
-        classify_subset_fn=classify_subset,
         normalize_answer_tracks_fn=normalize_answer_tracks,
         build_execution_error_evaluation_fn=build_execution_error_evaluation,
         deep_copy_jsonish_fn=subprocess_utils.deep_copy_jsonish,
@@ -544,7 +542,6 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         build_runner_fn=runner_adapters.build_runner,
         evaluate_answer_fn=evaluate_invocation_record,
         build_error_group_record_result_fn=build_error_result,
-        classify_subset_fn=classify_subset,
         save_json_fn=result_sink.save_json,
         slugify_fn=run_state.slugify,
         retain_results=False,
@@ -749,7 +746,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
             raw_payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if str(raw_payload.get("dataset") or "").startswith("verifier_grounded_property_calculation"):
+        if resolve_result_track(raw_payload).startswith("property_calculation"):
             has_property_results = True
             break
     references = (run_state.verifier_grounded_reporting_reference_map(
@@ -800,7 +797,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
                     "runner": first.runner, "websearch": first.websearch,
                     "skills_enabled": first.skills_enabled})
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": (
             "cancelled_with_errors"
             if cancellation_token.is_cancelled and cancellation_errors
@@ -825,7 +822,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         },
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "benchmark_root": str(Path(args.benchmark_root).expanduser().resolve()),
-        "dataset_files": [str(path) for path in dataset_files],
+        "track_files": [str(path) for path in track_files],
         "verifier_grounded_release": (
             verifier_release_config.identity if verifier_release_config is not None else None
         ),
@@ -850,7 +847,6 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
             "access_policies": [workspace_policies[key] for key in sorted(workspace_policies)],
         },
         "merge_existing_per_record": args.merge_existing_per_record,
-        "random_sampling": service.sampling_metadata(args),
         "records": len(records),
         "execution_plan": {
             "mode": service.SCHEDULING_MODE,

@@ -93,7 +93,7 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 - 完成进度
 - 测试组数量
 - `single_llm_skills_on` / `single_llm_skills_off` 的平均归一化分摘要，例如 `on 0.61 · off 0.54 · Δ +0.07`
-- dataset 信息
+- Track 信息
 
 这个摘要来自 `results.json.summary.groups.<group_id>.avg_normalized_score`，只用于快速比较 skills-on 与 skills-off；它不是 run 的整体平均分。如果只有 on 或 off 一组有可用分数，则只显示该组分数，不显示 `Δ`；如果没有可用分数，则整行不显示。
 
@@ -101,14 +101,15 @@ dashboard 会从 run 目录读取以下 benchmark 产物：
 
 - 搜索 run ID 或题目 ID
 - 按 run 状态筛选
-- 按 dataset 筛选
-- 按 subset 筛选
+- 按 Track 筛选
 - 刷新 run 列表
 - 显示或隐藏已隐藏的 run
 
-verifier-grounded benchmark 的四个 track 在 dashboard 中归为同一个 Dataset：`vgb`；具体 track 通过 Subset 区分，包括 `verifier_grounded_rdkit`、`verifier_grounded_xtb_xyz`、`property_calculation_advanced` 和 `property_calculation_basic`。旧 VGB run 保留其原有可读取的 subset 标识。
-
-Dataset/Subset 筛选选项不再包含 ChemBench、FrontierScience、HLE、SUPERChem 及其子集。筛选选项来自 API 的 `selectable_facets`，与保留历史事实的 `datasets`/`subsets` 展示字段分开。历史 run 和详情仍可在“全部”或搜索结果中查看；混合 run 中的 VGB 筛选项继续保留，不删除任何历史结果文件。
+Track 筛选项固定来自 pinned `release.json`，当前按顺序为 `rdkit`、
+`xtb`、`property_calculation_advanced` 和 `property_calculation_basic`。
+它们不依赖当前扫描到哪些 run；即使没有任何 run，四项仍然可见。
+历史结果由只读适配器映射到 Track，无法映射的非 VGB 结果显示为
+`legacy:<identifier>`，但不会进入筛选下拉框。
 
 常用操作：
 
@@ -128,7 +129,7 @@ Dataset/Subset 筛选选项不再包含 ChemBench、FrontierScience、HLE、SUPE
 题目目录每条记录显示：
 
 - record ID
-- dataset / subset
+- Track
 - eval kind
 - `on` / `off` 并排分数预览，分别对应 `single_llm_skills_on` 和 `single_llm_skills_off`
 - 备注数量
@@ -142,7 +143,7 @@ Dataset/Subset 筛选选项不再包含 ChemBench、FrontierScience、HLE、SUPE
 单题详情包含：
 
 - record ID
-- dataset / subset / eval kind
+- Track / eval kind
 - 题目内容
 - 本地图片预览
 - 标准答案或参考答案

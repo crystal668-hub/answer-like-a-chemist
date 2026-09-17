@@ -15,8 +15,7 @@ class GroupRecordResult:
     runner: str
     websearch: bool
     record_id: str
-    subset: str
-    dataset: str
+    track: str
     source_file: str
     eval_kind: str
     prompt: str
@@ -347,18 +346,18 @@ def aggregate_results(results: Iterable[GroupRecordResult]) -> dict[str, Any]:
                 },
                 "bucket": AggregateAccumulator(),
                 "eval": {},
-                "subset": {},
+                "track": {},
             }
             groups[item.group_id] = group
             group_order.append(item.group_id)
         group["bucket"].add(item)
         eval_acc = group["eval"].setdefault(item.eval_kind, AggregateAccumulator())
         eval_acc.add(item)
-        subset_acc = group["subset"].setdefault(item.subset, AggregateAccumulator())
-        subset_acc.add(item)
+        track_acc = group["track"].setdefault(item.track, AggregateAccumulator())
+        track_acc.add(item)
 
     summary_groups: dict[str, Any] = {}
-    summary_group_subset: dict[str, dict[str, Any]] = {}
+    summary_group_track: dict[str, dict[str, Any]] = {}
     for group_id in group_order:
         group = groups[group_id]
         meta = group["meta"]
@@ -366,20 +365,20 @@ def aggregate_results(results: Iterable[GroupRecordResult]) -> dict[str, Any]:
             **meta,
             **group["bucket"].to_dict(),
             "by_eval_kind": {key: value.to_dict() for key, value in group["eval"].items()},
-            "by_subset": {key: value.to_dict() for key, value in group["subset"].items()},
+            "by_track": {key: value.to_dict() for key, value in group["track"].items()},
         }
-        for subset, accumulator in group["subset"].items():
-            summary_group_subset[f"{group_id}::{subset}"] = {
+        for track, accumulator in group["track"].items():
+            summary_group_track[f"{group_id}::{track}"] = {
                 "group_id": group_id,
                 **meta,
-                "subset": subset,
+                "track": track,
                 **accumulator.to_dict(),
             }
 
     return {
         "group_order": group_order,
         "groups": summary_groups,
-        "group_subset": summary_group_subset,
+        "group_track": summary_group_track,
     }
 
 
@@ -394,7 +393,6 @@ def build_error_group_record_result(
     full_response_text: str = "",
     runner_meta: dict[str, Any] | None = None,
     raw: dict[str, Any] | None = None,
-    classify_subset_fn: Callable[[Any], str],
     normalize_answer_tracks_fn: Callable[..., tuple[str, str]],
     build_execution_error_evaluation_fn: Callable[..., Any],
     deep_copy_jsonish_fn: Callable[[Any], Any],
@@ -416,15 +414,14 @@ def build_error_group_record_result(
     )
     compatible_answer_text = answer_text or full_text or short_text
     return GroupRecordResult(
-        schema_version=3,
+        schema_version=4,
         group_id=str(getattr(group, "id", "") or ""),
         group_label=str(getattr(group, "label", "") or ""),
         runner=str(getattr(group, "runner", "") or ""),
         websearch=bool(getattr(group, "websearch", False)),
         skills_enabled=bool(getattr(group, "skills_enabled", False)),
         record_id=str(getattr(record, "record_id", "") or ""),
-        subset=classify_subset_fn(record),
-        dataset=str(getattr(record, "dataset", "") or ""),
+        track=str(getattr(record, "track", "") or ""),
         source_file=str(getattr(record, "source_file", "") or ""),
         eval_kind=str(getattr(record, "eval_kind", "") or ""),
         prompt=str(getattr(record, "prompt", "") or ""),
@@ -458,7 +455,6 @@ def materialize_group_failure_results(
     error_message: str,
     save_json_fn: Callable[[Path, Any], None],
     slugify_fn: Callable[..., str],
-    classify_subset_fn: Callable[[Any], str],
     normalize_answer_tracks_fn: Callable[..., tuple[str, str]],
     build_execution_error_evaluation_fn: Callable[..., Any],
     deep_copy_jsonish_fn: Callable[[Any], Any],
@@ -470,7 +466,6 @@ def materialize_group_failure_results(
             group=group,
             record=record,
             error_message=error_message,
-            classify_subset_fn=classify_subset_fn,
             normalize_answer_tracks_fn=normalize_answer_tracks_fn,
             build_execution_error_evaluation_fn=build_execution_error_evaluation_fn,
             deep_copy_jsonish_fn=deep_copy_jsonish_fn,

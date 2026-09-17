@@ -2,8 +2,12 @@
 from benchmarking.core.convergence import ConvergencePolicy
 from benchmarking.core.defaults import BENCHMARK_SKILLS_ALLOWLIST
 from benchmarking.scoring.registry import DEFAULT_EVALUATORS
-from benchmarking.workflow.dataset_selection import filter_records_by_ids, load_vgb_records
-from benchmarking.workflow.dataset_selection import select_vgb_dataset_files as select_dataset_files
+from benchmarking.workflow.track_selection import (
+    filter_records_by_ids,
+    load_vgb_records,
+    select_track_files,
+)
+
 from . import experiments
 from .orchestration import runner_options
 
@@ -19,10 +23,6 @@ def evaluator_registry():
 
 def select_records(files, args):
     return filter_records_by_ids(load_vgb_records(files), getattr(args, "record_ids", None))
-
-
-def sampling_metadata(args):
-    return {"enabled": False, "count_per_subset": None, "seed": None}
 
 
 def add_arguments(parser):
@@ -67,7 +67,10 @@ def make_runner_options(*, args, group, output_root, config_path, single_agent, 
         container_network=getattr(args, "container_network", None),
     )
 
-from benchmarking.runtime.agent_workspace import default_workspace_templates as workspace_templates
+from benchmarking.runtime.agent_workspace import (
+    default_workspace_templates as workspace_templates,
+)
+
 from .config import build_runner_config as build_runner_config
 
-__all__ = ["workspace_templates", "build_runner_config"]
+__all__ = ["build_runner_config", "select_track_files", "workspace_templates"]

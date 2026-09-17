@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
@@ -41,8 +41,16 @@ class CompletedProcess:
 
 class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def test_cancellation_after_attempt_returns_its_original_error_before_retry(self):
-        from benchmarking.core.contracts import AnswerPayload, FailureInfo, RunnerResult, RunStatus
-        from benchmarking.runtime.cancellation import CancellationToken, CancellationReason
+        from benchmarking.core.contracts import (
+            AnswerPayload,
+            FailureInfo,
+            RunnerResult,
+            RunStatus,
+        )
+        from benchmarking.runtime.cancellation import (
+            CancellationReason,
+            CancellationToken,
+        )
         from benchmarking.service.single.runner import TimeoutRetryDecision
         token = CancellationToken()
         runner = self._runner(captured_commands=[])
@@ -61,9 +69,13 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(result.runner_meta["timeout_retry"]["retries_used"], 0)
 
     def test_container_remove_failure_preserves_provider_error_and_stops_admission(self):
-        from benchmarking.runtime.container_runtime import ContainerAttemptHandle, ContainerAttemptResult, CleanupReport
-        from benchmarking.runtime.cancellation import CancellationToken
         from benchmarking.runtime.attempt_admission import AttemptAdmissionController
+        from benchmarking.runtime.cancellation import CancellationToken
+        from benchmarking.runtime.container_runtime import (
+            CleanupReport,
+            ContainerAttemptHandle,
+            ContainerAttemptResult,
+        )
         config = Path(self.temporary.name) / "config.json"
         config.write_text(json.dumps({"agents": {"list": [{"id": "benchmark-single-skills-on"}]}}))
         runner = self._runner(captured_commands=[], config_path=config, timeout_once=False)
@@ -128,7 +140,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="record-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded_rdkit.jsonl",
             eval_kind="verifier_grounded",
             prompt="Identify X.",
@@ -139,7 +151,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _vgb_record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="vgb-record-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded_rdkit.jsonl",
             eval_kind="verifier_grounded",
             prompt="Return a molecule.",

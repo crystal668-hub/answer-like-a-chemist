@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import hashlib
 import json
 import resource
 import sys
-import time
 import tempfile
+import time
+from dataclasses import asdict
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,23 +17,25 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results
 from benchmarking.runtime.atomic_io import atomic_write_json
-from benchmarking.workflow.run_state import iter_results_from_output_root, write_results_json_stream
+from benchmarking.workflow.run_state import (
+    iter_results_from_output_root,
+    write_results_json_stream,
+)
 
 
 def build_result(index: int, *, payload_bytes: int) -> GroupRecordResult:
     prefix = f"record-{index}:"
     detail = (prefix + chr(65 + index % 26) * payload_bytes)[:payload_bytes]
     return GroupRecordResult(
-        schema_version=3,
+        schema_version=4,
         group_id="single_llm_skills_on" if index % 2 == 0 else "single_llm_skills_off",
         group_label="fixture",
         runner="single_llm",
         websearch=False,
         record_id=f"record-{index:06d}",
-        subset=f"subset-{index % 4}",
-        dataset="runtime-baseline",
+        track=("rdkit", "xtb", "property_calculation_advanced", "property_calculation_basic")[index % 4],
         source_file="fixture.jsonl",
-        eval_kind="generic_semantic",
+        eval_kind="verifier_grounded",
         prompt=detail,
         reference_answer="expected",
         answer_text=detail,

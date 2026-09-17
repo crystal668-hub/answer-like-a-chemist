@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-from benchmarking.core.datasets import BenchmarkRecord, is_retired_benchmark
 from benchmarking.core.prompt_inputs import RuntimeBundleLike
+from benchmarking.core.records import BenchmarkRecord
 
 
 def resolve_chemqa_answer_kind(record: BenchmarkRecord) -> str:
-    if is_retired_benchmark(dataset=record.dataset, eval_kind=record.eval_kind,
-                            subset=record.grading.subset):
-        raise ValueError("This benchmark has been retired; ChemQA prompts are unavailable.")
-    explicit = str(record.payload.get("answer_kind") or record.grading.config.get("answer_kind") or "").strip()
-    if explicit:
-        return explicit
-    if record.eval_kind == "verifier_grounded":
-        return "verifier_grounded_candidate"
-    return "generic_semantic_answer"
+    if record.eval_kind != "verifier_grounded":
+        raise ValueError("ChemQA accepts only verifier-grounded records.")
+    return "verifier_grounded_candidate"
 
 
 def build_chemqa_goal(

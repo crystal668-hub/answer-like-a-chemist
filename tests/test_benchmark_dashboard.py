@@ -19,9 +19,8 @@ def result_payload(
     *,
     group_id: str,
     record_id: str,
-    dataset: str = "demo",
-    subset: str = "chembench",
-    eval_kind: str = "chembench_open_ended",
+    track: str = "rdkit",
+    eval_kind: str = "verifier_grounded",
     passed: bool | None = True,
     score: float = 1.0,
     primary_metric: str = "judge_accuracy",
@@ -29,16 +28,15 @@ def result_payload(
     runner_meta: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "group_id": group_id,
         "group_label": group_id,
         "runner": "single_llm",
         "websearch": False,
         "skills_enabled": group_id.endswith("skills_on"),
         "record_id": record_id,
-        "subset": subset,
-        "dataset": dataset,
-        "source_file": "/tmp/demo.jsonl",
+        "track": track,
+        "source_file": f"/tmp/{track}/data/{track}.jsonl",
         "eval_kind": eval_kind,
         "prompt": "Question body",
         "reference_answer": "Reference answer",
@@ -78,7 +76,7 @@ def write_demo_run(root: Path, run_id: str = "benchmark-20260604-120000") -> Pat
     write_json(
         run_root / "results.json",
         {
-            "schema_version": 2,
+            "schema_version": 4,
             "generated_at": "2026-06-04T12:00:00+0800",
             "records": 1,
             "groups": [
@@ -108,46 +106,47 @@ def write_demo_run(root: Path, run_id: str = "benchmark-20260604-120000") -> Pat
     return run_root
 
 
-def test_retired_selector_facets_preserve_mixed_vgb_and_historical_details(tmp_path):
+def test_track_options_are_fixed_and_historical_details_remain_readable(tmp_path: Path) -> None:
     run = write_demo_run(tmp_path)
-    records = [result_payload(group_id='chemqa_skills_on', record_id=dataset,
-                              dataset=dataset, subset=subset, eval_kind=kind)
-               for dataset, subset, kind in (
-                   ('chembench', 'chembench', 'chembench_open_ended'),
-                   ('frontierscience', 'frontierscience_Research', 'frontierscience_research'),
-                   ('hle', 'hle_chemistry', 'hle'),
-                   ('superchem', 'superchem_multimodal', 'superchem_multiple_choice_rpf'))]
     from benchmarking.runtime.vgb_bridge import load_release_config
+
+    records = []
     for track, spec in load_release_config().tracks.items():
-        row = result_payload(group_id='single_llm_skills_on', record_id=spec['task_ids'][0],
-                             dataset=spec['dataset'], subset=spec['dataset'], eval_kind='verifier_grounded')
-        records.append(row)
-    records.append(result_payload(group_id='custom', record_id='other', dataset='custom_hle_study',
-                                  subset='custom-subset', eval_kind='generic_semantic'))
-    write_json(run / 'results.json', {'records': len(records), 'results': records})
-    before = (run / 'results.json').read_bytes()
-    store = dashboard_annotations.AnnotationStore(tmp_path / 'annotations.sqlite')
+        records.append(result_payload(
+            group_id="single_llm_skills_on",
+            record_id=spec["task_ids"][0],
+            track=track,
+        ))
+    legacy = result_payload(group_id="custom", record_id="hle")
+    legacy.pop("track")
+    legacy.update(dataset="hle", subset="hle_chemistry", eval_kind="hle")
+    records.append(legacy)
+    write_json(run / "results.json", {"records": len(records), "results": records})
+    before = (run / "results.json").read_bytes()
+    store = dashboard_annotations.AnnotationStore(tmp_path / "annotations.sqlite")
     dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store)
     summary = dashboard.list_runs()[0]
-    assert summary['selectable_facets'] == [
-        {'dataset': 'custom_hle_study', 'subset': 'custom-subset'},
-        {'dataset': 'vgb', 'subset': 'property_calculation_advanced'},
-        {'dataset': 'vgb', 'subset': 'property_calculation_basic'},
-        {'dataset': 'vgb', 'subset': 'verifier_grounded_rdkit'},
-        {'dataset': 'vgb', 'subset': 'verifier_grounded_xtb_xyz'},
+    assert dashboard.track_options() == [
+        "rdkit",
+        "xtb",
+        "property_calculation_advanced",
+        "property_calculation_basic",
     ]
-    assert 'hle' in summary['datasets']
-    assert dashboard.get_record(run.name, 'hle')['dataset'] == 'hle'
-    assert (run / 'results.json').read_bytes() == before
+    assert "legacy:hle_chemistry" in summary["tracks"]
+    assert dashboard.get_record(run.name, "hle")["track"] == "legacy:hle_chemistry"
+    assert (run / "results.json").read_bytes() == before
 
 
-def test_retired_selector_detection_handles_aliases_and_source_dataset():
-    assert dashboard_service._selectable_facets([
-        {'dataset': 'old-run-id', 'subset': 'unknown', 'eval_kind': 'generic_semantic',
-         'source_file': '/input/chembench/data/records.jsonl'},
-        {'dataset': 'unknown', 'subset': 'frontierscience_Olympiad'},
-        {'dataset': 'unknown', 'eval_kind': 'superchem_multiple_choice_rpf'},
-    ]) == []
+def test_track_options_do_not_depend_on_scanned_runs(tmp_path: Path) -> None:
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
+    assert dashboard.list_runs() == []
+    assert dashboard.track_options() == list(load_release_tracks())
+
+
+def load_release_tracks() -> tuple[str, ...]:
+    from benchmarking.runtime.vgb_bridge import load_release_config
+
+    return tuple(load_release_config().tracks)
 
 
 def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> None:
@@ -165,8 +164,7 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert runs[0]["status"] == "completed"
     assert runs[0]["record_count"] == 1
     assert runs[0]["group_count"] == 1
-    assert runs[0]["datasets"] == ["demo"]
-    assert runs[0]["subsets"] == ["chembench"]
+    assert runs[0]["tracks"] == ["rdkit"]
     assert "average_normalized_score" not in runs[0]
     assert runs[0]["progress"]["completed"] == 1
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
@@ -234,15 +232,18 @@ def test_list_runs_pins_favorited_runs_and_preserves_newest_first_order(tmp_path
     ]
 
 
-def test_dashboard_uses_source_dataset_when_persisted_result_dataset_is_run_id(tmp_path: Path) -> None:
+def test_dashboard_maps_historical_source_identity_to_track(tmp_path: Path) -> None:
     run_id = "temp-benchmark-20260513-141355"
     run_root = tmp_path / run_id
     result = result_payload(
         group_id="single_llm_skills_on",
         record_id="r1",
-        dataset=run_id,
     )
-    result["source_file"] = str(tmp_path / "temp-benchmarks" / "frontierscience" / "data" / "pool.jsonl")
+    result.pop("track")
+    result["dataset"] = run_id
+    result["source_file"] = str(
+        tmp_path / "temp-benchmarks" / "verifier_grounded_rdkit" / "data" / "pool.jsonl"
+    )
     write_json(
         run_root / "results.json",
         {
@@ -257,9 +258,9 @@ def test_dashboard_uses_source_dataset_when_persisted_result_dataset_is_run_id(t
 
     dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
 
-    assert dashboard.list_runs()[0]["datasets"] == ["frontierscience"]
-    assert dashboard.list_records(run_id)[0]["dataset"] == "frontierscience"
-    assert dashboard.get_record(run_id, "r1")["dataset"] == "frontierscience"
+    assert dashboard.list_runs()[0]["tracks"] == ["rdkit"]
+    assert dashboard.list_records(run_id)[0]["track"] == "rdkit"
+    assert dashboard.get_record(run_id, "r1")["track"] == "rdkit"
 
 
 def test_list_runs_discovers_classified_run_without_descending_into_run_artifacts(tmp_path: Path) -> None:
@@ -295,31 +296,16 @@ def test_run_lookup_rejects_duplicate_ids_across_categories(tmp_path: Path) -> N
         dashboard.get_run("duplicate-run")
 
 
-def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> None:
+def test_dashboard_exposes_track_only_record_identity(tmp_path: Path) -> None:
+    from benchmarking.runtime.vgb_bridge import load_release_config
+
     run_root = tmp_path / "vgb-run"
-    payloads = [
-        result_payload(
-            group_id="single_llm_skills_on",
-            record_id="rdkit-qed-max-001",
-            dataset="verifier_grounded_rdkit",
-            subset="verifier_grounded_rdkit",
-            eval_kind="verifier_grounded",
-        ),
-        result_payload(
-            group_id="single_llm_skills_on",
-            record_id="xtb-gap-min-001",
-            dataset="verifier_grounded_xtb_xyz",
-            subset="verifier_grounded_xtb_xyz",
-            eval_kind="verifier_grounded",
-        ),
-        result_payload(
-            group_id="single_llm_skills_on",
-            record_id="property_calculation_advanced_001",
-            dataset="verifier_grounded_property_calculation",
-            subset="verifier_grounded_property_calculation",
-            eval_kind="verifier_grounded",
-        ),
-    ]
+    release = load_release_config()
+    payloads = [result_payload(
+        group_id="single_llm_skills_on",
+        record_id=release.tracks[track]["task_ids"][0],
+        track=track,
+    ) for track in ("rdkit", "xtb", "property_calculation_advanced")]
     write_json(
         run_root / "results.json",
         {
@@ -335,22 +321,18 @@ def test_vgb_tracks_are_grouped_under_one_dashboard_dataset(tmp_path: Path) -> N
 
     runs = dashboard.list_runs()
     records = dashboard.list_records("vgb-run")
-    record = dashboard.get_record("vgb-run", "rdkit-qed-max-001")
+    record = dashboard.get_record("vgb-run", release.tracks["rdkit"]["task_ids"][0])
 
-    assert runs[0]["datasets"] == ["vgb"]
-    assert runs[0]["subsets"] == [
+    assert runs[0]["tracks"] == [
         "property_calculation_advanced",
-        "verifier_grounded_rdkit",
-        "verifier_grounded_xtb_xyz",
+        "rdkit",
+        "xtb",
     ]
-    assert {item["dataset"] for item in records} == {"vgb"}
-    assert {item["subset"] for item in records} == {
-        "property_calculation_advanced",
-        "verifier_grounded_rdkit",
-        "verifier_grounded_xtb_xyz",
+    assert {item["track"] for item in records} == {
+        "property_calculation_advanced", "rdkit", "xtb"
     }
-    assert record["dataset"] == "vgb"
-    assert record["subset"] == "verifier_grounded_rdkit"
+    assert record["track"] == "rdkit"
+    assert "dataset" not in record and "subset" not in record
 
 
 def test_record_detail_exposes_workspace_adjudication_and_findings(tmp_path: Path) -> None:
@@ -396,8 +378,7 @@ def test_list_runs_reconciles_stale_progress_state_with_per_record_outputs(tmp_p
         result_payload(
             group_id=group_id,
             record_id=record_id,
-            dataset="verifier_grounded_property_calculation",
-            subset="verifier_grounded_property_calculation",
+            track="property_calculation_advanced",
             eval_kind="verifier_grounded",
         )
         for group_id in ("single_llm_skills_on", "single_llm_skills_off")
@@ -498,7 +479,7 @@ def test_dashboard_uses_verifier_gold_when_reporting_reference_is_placeholder(tm
     payload = result_payload(
         group_id="single_llm_skills_on",
         record_id="property-calc-easy-1",
-        dataset="verifier_grounded_property_calculation_easy",
+        track="property_calculation_basic",
         eval_kind="verifier_grounded",
         primary_metric="verifier_score",
         details={

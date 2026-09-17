@@ -1,22 +1,29 @@
-from dataclasses import asdict, replace
 import json
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import pytest
 
-from benchmarking.core.reporting import GroupRecordResult, aggregate_bucket, aggregate_results
+from benchmarking.core.reporting import (
+    GroupRecordResult,
+    aggregate_bucket,
+    aggregate_results,
+)
 from benchmarking.runtime import atomic_io
 from benchmarking.workflow import cli
 from benchmarking.workflow.orchestration import PersistedResultRef
-from benchmarking.workflow.run_state import load_group_record_result, write_results_json_stream
+from benchmarking.workflow.run_state import (
+    load_group_record_result,
+    write_results_json_stream,
+)
 
 
 def _item(index: int, *, failed: bool = False, cancelled: bool = False) -> GroupRecordResult:
     status = "cancelled" if cancelled else "failed" if failed else "completed"
     return GroupRecordResult(
-        schema_version=3, group_id="g1" if index < 2 else "g2", group_label="G", runner="r",
-        websearch=False, record_id=f"r{index}", subset="s1" if index % 2 == 0 else "s2",
-        dataset="d", source_file="source", eval_kind="hle" if index == 2 else "generic",
+        schema_version=4, group_id="g1" if index < 2 else "g2", group_label="G", runner="r",
+        websearch=False, record_id=f"r{index}", track="s1" if index % 2 == 0 else "s2",
+        source_file="source", eval_kind="hle" if index == 2 else "generic",
         prompt="p", reference_answer="a", answer_text="full answer with evidence",
         evaluation={"passed": not failed and not cancelled, "score": 0.0 if failed else 1.0,
                     "normalized_score": 0.0 if failed else 1.0, "details": {"confidence": 80} if index == 2 else {}},
@@ -33,7 +40,7 @@ def test_aggregate_results_accepts_single_pass_iterable_with_order_and_failures(
     items = [_item(0), _item(1, failed=True), _item(2, cancelled=True)]
     summary = aggregate_results((item for item in items))
     assert summary["group_order"] == ["g1", "g2"]
-    assert list(summary["groups"]["g1"]["by_subset"]) == ["s1", "s2"]
+    assert list(summary["groups"]["g1"]["by_track"]) == ["s1", "s2"]
     assert summary["groups"]["g1"]["run_failed_count"] == 1
     assert summary["groups"]["g2"]["non_evaluable_count"] == 1
 
@@ -43,13 +50,13 @@ def _legacy_aggregate_results(items):
     for item in items:
         grouped.setdefault(item.group_id, []).append(item)
     groups = {}
-    group_subset = {}
+    group_track = {}
     for group_id, group_items in grouped.items():
         by_eval_kind = {}
-        by_subset = {}
+        by_track = {}
         for item in group_items:
             by_eval_kind.setdefault(item.eval_kind, []).append(item)
-            by_subset.setdefault(item.subset, []).append(item)
+            by_track.setdefault(item.track, []).append(item)
         meta = {
             "group_label": group_items[0].group_label,
             "runner": group_items[0].runner,
@@ -60,16 +67,16 @@ def _legacy_aggregate_results(items):
             **meta,
             **aggregate_bucket(group_items),
             "by_eval_kind": {key: aggregate_bucket(value) for key, value in by_eval_kind.items()},
-            "by_subset": {key: aggregate_bucket(value) for key, value in by_subset.items()},
+            "by_track": {key: aggregate_bucket(value) for key, value in by_track.items()},
         }
-        for subset, subset_items in by_subset.items():
-            group_subset[f"{group_id}::{subset}"] = {
+        for track, track_items in by_track.items():
+            group_track[f"{group_id}::{track}"] = {
                 "group_id": group_id,
                 **meta,
-                "subset": subset,
-                **aggregate_bucket(subset_items),
+                "track": track,
+                **aggregate_bucket(track_items),
             }
-    return {"group_order": list(grouped), "groups": groups, "group_subset": group_subset}
+    return {"group_order": list(grouped), "groups": groups, "group_track": group_track}
 
 
 def test_streaming_aggregate_matches_legacy_summary_in_full():
@@ -91,7 +98,7 @@ def test_streaming_aggregate_matches_legacy_summary_in_full():
     assert actual == expected
     assert list(actual["groups"]) == ["g2", "g1"]
     assert list(actual["groups"]["g1"]["by_eval_kind"]) == ["generic"]
-    assert list(actual["groups"]["g1"]["by_subset"]) == ["s1", "s2"]
+    assert list(actual["groups"]["g1"]["by_track"]) == ["s1", "s2"]
 
 
 def test_stream_writer_upconverts_and_preserves_full_payload(tmp_path):
@@ -108,15 +115,15 @@ def test_stream_writer_upconverts_and_preserves_full_payload(tmp_path):
     path = tmp_path / "r.json"
     path.write_text(json.dumps(historical), encoding="utf-8")
     out = tmp_path / "results.json"
-    write_results_json_stream(out, {"schema_version": 3, "summary": {"count": 1}, "errors": []}, [path])
+    write_results_json_stream(out, {"schema_version": 4, "summary": {"count": 1}, "errors": []}, [path])
     payload = json.loads(out.read_text(encoding="utf-8"))
     loaded = load_group_record_result(path)
     assert payload["results"][0] == asdict(loaded)
-    assert payload["results"][0]["schema_version"] == 3
+    assert payload["results"][0]["schema_version"] == 4
     assert payload["results"][0]["raw"] == {"raw": "preserved"}
     assert payload["results"][0]["full_response_text"] == "full answer with evidence"
     assert out.read_text(encoding="utf-8") == json.dumps(
-        {"schema_version": 3, "summary": {"count": 1}, "errors": [], "results": [asdict(loaded)]},
+        {"schema_version": 4, "summary": {"count": 1}, "errors": [], "results": [asdict(loaded)]},
         indent=2,
         ensure_ascii=False,
     ) + "\n"
@@ -203,10 +210,10 @@ def test_stream_writer_read_failure_keeps_old_results_and_can_rebuild(tmp_path):
     out.write_text("old results\n", encoding="utf-8")
     record = tmp_path / "record.json"
     with pytest.raises(FileNotFoundError):
-        write_results_json_stream(out, {"schema_version": 3}, [record])
+        write_results_json_stream(out, {"schema_version": 4}, [record])
     _assert_old_results_survive(out, tmp_path)
     record.write_text(json.dumps(asdict(_item(0))), encoding="utf-8")
-    write_results_json_stream(out, {"schema_version": 3}, [record])
+    write_results_json_stream(out, {"schema_version": 4}, [record])
     assert json.loads(out.read_text(encoding="utf-8"))["results"][0]["record_id"] == "r0"
 
 
@@ -224,7 +231,7 @@ def test_stream_writer_encoding_failure_keeps_old_results(monkeypatch, tmp_path)
 
     monkeypatch.setattr("benchmarking.workflow.run_state.json.dumps", fail_record)
     with pytest.raises(TypeError, match="injected encoding failure"):
-        write_results_json_stream(out, {"schema_version": 3}, [record])
+        write_results_json_stream(out, {"schema_version": 4}, [record])
     _assert_old_results_survive(out, tmp_path)
 
 
@@ -239,5 +246,5 @@ def test_stream_writer_replace_failure_keeps_old_results(monkeypatch, tmp_path):
 
     monkeypatch.setattr(atomic_io.os, "replace", fail_replace)
     with pytest.raises(OSError, match="injected replace failure"):
-        write_results_json_stream(out, {"schema_version": 3}, [record])
+        write_results_json_stream(out, {"schema_version": 4}, [record])
     _assert_old_results_survive(out, tmp_path)

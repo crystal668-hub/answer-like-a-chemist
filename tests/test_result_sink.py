@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.runtime import atomic_io
 from benchmarking.workflow.run_state import ResultSink, pending_records_for_group
 
@@ -45,9 +45,9 @@ def test_per_record_commit_is_resume_source_before_results_aggregate(tmp_path: P
     sink.save_json(path, {"record_id": "r1", "status": "completed"})
     record = BenchmarkRecord(
         record_id="r1",
-        dataset="demo",
+        track="rdkit",
         source_file="demo.jsonl",
-        eval_kind="generic_semantic",
+        eval_kind="verifier_grounded",
         prompt="Q",
         reference_answer="A",
     )

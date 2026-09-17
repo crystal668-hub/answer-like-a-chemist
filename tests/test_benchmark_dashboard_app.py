@@ -24,15 +24,15 @@ def test_dashboard_static_frontend_contains_dashboard_shell() -> None:
     assert "Benchmark Dashboard" in index
     assert "run-list" in index
     assert "record-list" in index
-    assert "/static/app.js?v=20260917-retired-facets" in index
+    assert "/static/app.js?v=20260917-track-only" in index
     assert "setInterval(refreshProgress" in script
     assert "function renderInlineMarkdown" in script
     assert "asset-image" in script
-    assert "dataset-filter" in index
-    assert "subset-filter" in index
-    assert "function renderRunFacets" in script
-    assert 'Subset: ${escapeHtml(subsets)}' in script
-    assert "scopedFacets" in script
+    assert "track-filter" in index
+    assert "dataset-filter" not in index
+    assert "subset-filter" not in index
+    assert "function renderRunTracks" in script
+    assert 'Track: ${escapeHtml(tracks)}' in script
     assert "hide-run" in index
     assert 'class="refresh-icon"' in index
     assert 'button.classList.add("is-refreshing")' in script
@@ -66,6 +66,13 @@ def test_dashboard_static_assets_disable_browser_cache(tmp_path: Path) -> None:
     app = create_app(run_roots=[tmp_path], annotation_db=tmp_path / "dashboard.sqlite")
     client = testclient.TestClient(app)
 
+    assert client.get("/api/tracks").json() == [
+        "rdkit",
+        "xtb",
+        "property_calculation_advanced",
+        "property_calculation_basic",
+    ]
+
     index = client.get("/")
     script = client.get("/static/app.js")
 
@@ -89,6 +96,8 @@ def test_dashboard_api_supports_run_metadata_and_annotation_crud(tmp_path: Path)
     visible = client.get("/api/runs?include_hidden=true").json()
     assert visible[0]["alias"] == "Smoke"
     assert visible[0]["hidden"] is True
+    assert visible[0]["tracks"] == ["rdkit"]
+    assert "datasets" not in visible[0] and "subsets" not in visible[0]
 
     created = client.post(
         "/api/annotations",

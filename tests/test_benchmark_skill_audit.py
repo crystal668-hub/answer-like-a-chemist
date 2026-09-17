@@ -6,16 +6,15 @@ from benchmarking.skills.audit import build_skill_use_audit
 
 def _group_result(*, skills_enabled: bool, audit: dict[str, object]) -> GroupRecordResult:
     return GroupRecordResult(
-        schema_version=2,
+        schema_version=4,
         group_id="g",
         group_label="g",
         runner="single_llm",
         websearch=False,
         record_id="r",
-        subset="s",
-        dataset="d",
+        track="rdkit",
         source_file="/tmp/d.jsonl",
-        eval_kind="chembench_open_ended",
+        eval_kind="verifier_grounded",
         prompt="Q",
         reference_answer="A",
         answer_text="A",

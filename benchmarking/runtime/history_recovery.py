@@ -17,8 +17,10 @@ from benchmarking.core.answer_processing import (
     extract_candidate_short_answer,
     normalize_answer_tracks,
 )
-from benchmarking.core.datasets import load_records
+from benchmarking.core.records import load_records
 from benchmarking.core.reporting import GroupRecordResult, aggregate_results
+from benchmarking.core.track_identity import resolve_result_track
+from benchmarking.runtime import paths as runtime_paths
 from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceTemplate,
@@ -51,6 +53,15 @@ def _atomic_json(path: Path, payload: Any) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _track_only_result(payload: dict[str, Any]) -> dict[str, Any]:
+    current = dict(payload)
+    current["schema_version"] = 4
+    current["track"] = resolve_result_track(payload)
+    current.pop("dataset", None)
+    current.pop("subset", None)
+    return current
 
 
 def _git_commit(project_root: Path) -> str:
@@ -236,6 +247,9 @@ def _score_record(
         evaluation = evaluator(payload)
         return evaluation, {"kind": "injected_test_evaluator"}
     source_file = Path(str(payload.get("source_file") or "")).expanduser()
+    if not source_file.is_file():
+        track = resolve_result_track(payload)
+        source_file = runtime_paths.benchmarks_root / track / "data" / f"{track}.jsonl"
     records = {record.record_id: record for record in load_records([source_file])}
     record_id = str(payload.get("record_id") or "")
     record = records[record_id]
@@ -305,7 +319,7 @@ def replay_workspace_adjudication(
     results_payload = (
         json.loads(results_path.read_text(encoding="utf-8"))
         if results_path.is_file()
-        else {"schema_version": 3, "results": _all_per_record_payloads(run_root), "summary": {}}
+        else {"schema_version": 4, "results": _all_per_record_payloads(run_root), "summary": {}}
     )
     isolation_manifest = runtime_manifest.get("workspace_isolation") or {}
     protected_roots = _protected_roots(runtime_manifest)
@@ -441,8 +455,7 @@ def replay_workspace_adjudication(
                 raise RuntimeError(
                     f"Record `{record_id}` requires explicit historical ownership approval before apply."
                 )
-            updated = dict(payload)
-            updated["schema_version"] = 3
+            updated = _track_only_result(payload)
             if recovered_short_text or recovered_full_text:
                 updated["answer_text"] = recovered_full_text
                 updated["short_answer_text"] = recovered_short_text
@@ -518,7 +531,11 @@ def replay_workspace_adjudication(
             result_key = (group_id, record_id)
             if result_key not in existing_result_keys:
                 result_entries.append(replacement)
-        results_payload["schema_version"] = 3
+        result_entries = [
+            _track_only_result(item) if isinstance(item, dict) else item
+            for item in result_entries
+        ]
+        results_payload["schema_version"] = 4
         results_payload["results"] = result_entries
         results_payload["errors"] = [
             item
@@ -528,10 +545,11 @@ def replay_workspace_adjudication(
             or item.get("record_id") not in record_ids
         ]
         field_names = {item.name for item in fields(GroupRecordResult)}
-        normalized_results = [
-            GroupRecordResult(**{key: value for key, value in item.items() if key in field_names})
-            for item in result_entries
-        ]
+        normalized_results = []
+        for item in result_entries:
+            normalized = {key: value for key, value in item.items() if key in field_names}
+            normalized.update(schema_version=4, track=resolve_result_track(item))
+            normalized_results.append(GroupRecordResult(**normalized))
         results_payload["summary"] = aggregate_results(normalized_results)
         results_payload["workspace_adjudication_recovery"] = {
             "report": str(report_path.relative_to(run_root)),

@@ -5,10 +5,9 @@ from benchmarking.core.answer_processing import (
     extract_candidate_short_answer,
     parse_agent_json_response,
 )
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.runtime.vgb_bridge import load_release_config
 from benchmarking.scoring.errors import EvaluationError
-from benchmarking.scoring.evaluators.generic import evaluate_generic_semantic
 from benchmarking.scoring.evaluators.verifier_grounded import (
     evaluate_verifier_grounded,
     run_verifier_grounded_evaluation,
@@ -16,50 +15,15 @@ from benchmarking.scoring.evaluators.verifier_grounded import (
 )
 
 
-class JudgeStub:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.payload = payload
-        self.prompts: list[str] = []
-
-    def evaluate_json(self, prompt: str) -> dict[str, object]:
-        self.prompts.append(prompt)
-        return dict(self.payload)
-
-
 class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_extract_candidate_short_answer_strips_markdown_final_answer_marker(self) -> None:
         self.assertEqual("B", extract_candidate_short_answer("Visible reasoning.\n**FINAL ANSWER:** B"))
         self.assertEqual("B", extract_candidate_short_answer("Visible reasoning.\n**FINAL ANSWER: B**"))
 
-    def test_generic_semantic_uses_judge_full_answer_text(self) -> None:
-        judge = JudgeStub({"correct": True, "score": 1.0, "rationale": "full answer contains the match"})
-        record = BenchmarkRecord(
-            record_id="generic-demo",
-            dataset="custom",
-            source_file="/tmp/custom.jsonl",
-            eval_kind="generic_semantic",
-            prompt="Name the molecule.",
-            reference_answer="benzene",
-            payload={},
-        )
-
-        result = evaluate_generic_semantic(
-            record,
-            short_answer_text="wrong-short-answer",
-            full_response_text="The relevant final answer is benzene.",
-            answer_text="The relevant final answer is benzene.",
-            judge=judge,
-        )
-
-        self.assertTrue(result.passed)
-        self.assertEqual("judge", result.details["method"])
-        self.assertIn("The relevant final answer is benzene.", judge.prompts[0])
-        self.assertNotIn("wrong-short-answer", judge.prompts[0])
-
     def test_verifier_grounded_returns_continuous_score_without_pass_threshold(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -115,7 +79,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_parse_error_is_scored_zero_but_not_threshold_passed(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -162,7 +126,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_infrastructure_error_is_not_converted_to_zero(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit_logp_window_003",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -205,7 +169,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_rejects_record_task_mismatch_before_runtime(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit_qed_max_001",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -229,7 +193,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_rejects_release_mismatch_at_invocation_start(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit_qed_max_001",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",

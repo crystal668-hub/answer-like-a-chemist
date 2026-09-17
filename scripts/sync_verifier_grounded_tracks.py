@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from benchmarking.runtime import paths as runtime_paths
-from benchmarking.runtime.vgb_bridge import (
+from benchmarking.runtime import paths as runtime_paths  # noqa: E402
+from benchmarking.runtime.vgb_bridge import (  # noqa: E402
     ReleaseConfig,
     VerifierGroundedRuntimeError,
     describe_installed_release,
@@ -33,11 +35,17 @@ PUBLIC_ANSWER_SCHEMA_KEYS = {
     "format",
     "value_type",
 }
-RESOURCE_DATASET_ROOT = (
-    ROOT / "benchmarking" / "resources" / "verifier_grounded" / "datasets"
+RESOURCE_TRACK_ROOT = (
+    ROOT / "benchmarking" / "resources" / "verifier_grounded" / "tracks"
 )
 VERIFIER_RUNTIME_ROOT = runtime_paths.project_state_root / "verifier-grounded-runtimes"
 RUNTIME_HISTORY_VERSIONS = 2
+LEGACY_TRACK_DIRECTORIES = {
+    "rdkit": "verifier_grounded_rdkit",
+    "xtb": "verifier_grounded_xtb_xyz",
+    "property_calculation_advanced": "verifier_grounded_property_calculation",
+    "property_calculation_basic": "verifier_grounded_property_calculation_easy",
+}
 
 
 def install_runtime(*, config: ReleaseConfig, source_wheel: Path) -> dict[str, Any]:
@@ -172,7 +180,7 @@ def prune_runtime_history(
     }
 
 
-def build_dataset_records(
+def build_track_records(
     *,
     config: ReleaseConfig,
     description: dict[str, Any],
@@ -211,17 +219,16 @@ def build_dataset_records(
     return records
 
 
-def sync_datasets(
+def sync_tracks(
     *,
     config: ReleaseConfig,
     description: dict[str, Any],
-    resource_root: Path = RESOURCE_DATASET_ROOT,
+    resource_root: Path = RESOURCE_TRACK_ROOT,
     benchmarks_root: Path = runtime_paths.benchmarks_root,
 ) -> list[Path]:
     written: list[Path] = []
-    for track_name, track_config in config.tracks.items():
-        dataset = str(track_config["dataset"])
-        records = build_dataset_records(
+    for track_name in config.tracks:
+        records = build_track_records(
             config=config,
             description=description,
             track_name=track_name,
@@ -230,13 +237,88 @@ def sync_datasets(
             json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
             for record in records
         )
-        resource_path = resource_root / f"{dataset}.jsonl"
-        runtime_path = benchmarks_root / dataset / "data" / f"{dataset}.jsonl"
+        resource_path = resource_root / f"{track_name}.jsonl"
+        runtime_path = benchmarks_root / track_name / "data" / f"{track_name}.jsonl"
         for path in (resource_path, runtime_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             written.append(path)
     return written
+
+
+def _validate_track_snapshot(path: Path, *, config: ReleaseConfig, track: str) -> None:
+    from benchmarking.core.records import load_records
+    from benchmarking.scoring.evaluators.verifier_grounded import (
+        validate_verifier_grounded_release,
+    )
+
+    records = load_records([path])
+    expected = list(config.tracks[track]["task_ids"])
+    if [record.record_id for record in records] != expected:
+        raise VerifierGroundedRuntimeError(
+            f"Track snapshot task inventory does not match pinned release: {track}"
+        )
+    for record in records:
+        validate_verifier_grounded_release(record, release_config=config)
+
+
+def migrate_legacy_track_layout(
+    *,
+    config: ReleaseConfig,
+    benchmarks_root: Path = runtime_paths.benchmarks_root,
+    delete_legacy: bool = True,
+) -> dict[str, list[str]]:
+    """Stage and validate all canonical track directories before legacy cleanup."""
+    root = benchmarks_root.expanduser().resolve()
+    staging_root = root / f".track-layout-migration-{uuid.uuid4().hex}"
+    staged: list[tuple[Path, Path]] = []
+    promoted: list[str] = []
+    removed: list[str] = []
+    try:
+        for track in config.tracks:
+            target_dir = root / track
+            target_file = target_dir / "data" / f"{track}.jsonl"
+            if target_file.is_file():
+                _validate_track_snapshot(target_file, config=config, track=track)
+                continue
+            if target_dir.exists():
+                raise VerifierGroundedRuntimeError(
+                    f"Canonical track destination exists but is incomplete: {target_dir}"
+                )
+            legacy_name = LEGACY_TRACK_DIRECTORIES.get(track)
+            if not legacy_name:
+                raise VerifierGroundedRuntimeError(f"No legacy layout mapping for track: {track}")
+            source = root / legacy_name / "data" / f"{legacy_name}.jsonl"
+            if not source.is_file():
+                raise VerifierGroundedRuntimeError(f"Legacy track snapshot does not exist: {source}")
+            staged_dir = staging_root / track
+            staged_file = staged_dir / "data" / f"{track}.jsonl"
+            staged_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, staged_file)
+            _validate_track_snapshot(staged_file, config=config, track=track)
+            staged.append((staged_dir, target_dir))
+
+        for staged_dir, target_dir in staged:
+            os.replace(staged_dir, target_dir)
+            promoted.append(str(target_dir))
+
+        for track in config.tracks:
+            _validate_track_snapshot(
+                root / track / "data" / f"{track}.jsonl",
+                config=config,
+                track=track,
+            )
+
+        if delete_legacy:
+            for legacy_name in LEGACY_TRACK_DIRECTORIES.values():
+                legacy_dir = root / legacy_name
+                if legacy_dir.is_dir():
+                    shutil.rmtree(legacy_dir)
+                    removed.append(str(legacy_dir))
+        return {"promoted": promoted, "removed": removed}
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root)
 
 
 def _validate_description(config: ReleaseConfig, description: dict[str, Any]) -> None:
@@ -259,11 +341,13 @@ def _validate_description(config: ReleaseConfig, description: dict[str, Any]) ->
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Install a pinned verifier wheel and sync sanitized OpenClaw datasets."
+        description="Install a pinned verifier wheel and sync sanitized OpenClaw tracks."
     )
-    parser.add_argument("--wheel", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--wheel", type=Path)
+    mode.add_argument("--migrate-layout-only", action="store_true")
     parser.add_argument("--release-config", type=Path)
-    parser.add_argument("--resource-root", type=Path, default=RESOURCE_DATASET_ROOT)
+    parser.add_argument("--resource-root", type=Path, default=RESOURCE_TRACK_ROOT)
     parser.add_argument("--benchmarks-root", type=Path, default=runtime_paths.benchmarks_root)
     return parser.parse_args()
 
@@ -271,8 +355,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = load_release_config(args.release_config) if args.release_config else load_release_config()
+    if args.migrate_layout_only:
+        print(json.dumps(migrate_legacy_track_layout(
+            config=config,
+            benchmarks_root=args.benchmarks_root,
+        )))
+        return
     description = install_runtime(config=config, source_wheel=args.wheel)
-    paths = sync_datasets(
+    paths = sync_tracks(
         config=config,
         description=description,
         resource_root=args.resource_root.expanduser().resolve(),
@@ -284,6 +374,10 @@ def main() -> None:
             {
                 "runtime": str(config.runtime_root),
                 "written": [str(path) for path in paths],
+                "layout_migration": migrate_legacy_track_layout(
+                    config=config,
+                    benchmarks_root=args.benchmarks_root,
+                ),
                 "runtime_cleanup": cleanup,
             }
         )

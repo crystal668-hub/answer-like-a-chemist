@@ -1,6 +1,8 @@
 from __future__ import annotations
-from benchmarking.core.datasets import BenchmarkRecord
+
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.skills.tree import render_top_level_skill_tree
+
 
 def build_single_llm_prompt(
     record: BenchmarkRecord,

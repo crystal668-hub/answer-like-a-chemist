@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from benchmarking.core.track_identity import (
+    canonical_track_options,
+    resolve_result_track,
+)
 from benchmarking.dashboard.annotations import AnnotationStore
 from benchmarking.dashboard.progress import load_progress
 from benchmarking.runtime import paths as runtime_paths
@@ -47,49 +51,44 @@ def _slug_variants(value: str) -> set[str]:
     return {stripped, stripped.replace("_", "-"), stripped.replace("-", "_")}
 
 
-def _dataset_from_source_file(result: dict[str, Any]) -> str:
-    source_file = str(result.get("source_file") or "").strip()
-    if not source_file:
-        return ""
-    source_path = Path(source_file)
-    if source_path.parent.name != "data":
-        return ""
-    return source_path.parent.parent.name
-
-
 def _format_number(value: Any) -> str:
     if not isinstance(value, (int, float)):
         return ""
     return f"{float(value):.4g}"
 
 
-def _dashboard_dataset_subset(result: dict[str, Any]) -> tuple[str, str]:
-    dataset = str(result.get("dataset") or "")
-    source_dataset = _dataset_from_source_file(result)
-    if source_dataset and source_dataset != dataset:
-        dataset = source_dataset
-    subset = str(result.get("subset") or "")
-    if dataset.startswith("verifier_grounded_"):
-        # Keep historical dataset files readable while exposing the current
-        # release track names in dashboard facets.
-        record_id = str(result.get("record_id") or "")
-        if record_id.startswith("property_calculation_advanced_"):
-            subset = "property_calculation_advanced"
-        elif record_id.startswith("property_calculation_basic_"):
-            subset = "property_calculation_basic"
-        return "vgb", subset or dataset
-    return dataset, subset
+def _current_result_payload(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result)
+    payload["track"] = resolve_result_track(result)
+    payload.pop("dataset", None)
+    payload.pop("subset", None)
+    return payload
 
 
-def _selectable_facets(results: list[dict[str, Any]]) -> list[dict[str, str]]:
-    from benchmarking.core.datasets import is_retired_benchmark
-    pairs = set()
-    for result in results:
-        dataset, subset = _dashboard_dataset_subset(result)
-        if not is_retired_benchmark(dataset=dataset, subset=subset,
-                                    eval_kind=str(result.get("eval_kind") or "")):
-            pairs.add((dataset, subset))
-    return [{"dataset": dataset, "subset": subset} for dataset, subset in sorted(pairs)]
+def _current_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    current = dict(payload)
+    current["schema_version"] = max(4, int(current.get("schema_version") or 0))
+    current["track_files"] = list(current.get("track_files") or current.get("dataset_files") or [])
+    for legacy_key in ("dataset_files", "datasets", "subsets", "selectable_facets"):
+        current.pop(legacy_key, None)
+    if isinstance(current.get("results"), list):
+        current["results"] = [
+            _current_result_payload(item) for item in current["results"] if isinstance(item, dict)
+        ]
+    summary = current.get("summary")
+    if isinstance(summary, dict):
+        summary = dict(summary)
+        summary.pop("group_subset", None)
+        groups = summary.get("groups")
+        if isinstance(groups, dict):
+            summary["groups"] = {
+                group_id: {key: value for key, value in group.items() if key != "by_subset"}
+                if isinstance(group, dict)
+                else group
+                for group_id, group in groups.items()
+            }
+        current["summary"] = summary
+    return current
 
 
 def _score_label(result: dict[str, Any]) -> str:
@@ -282,6 +281,10 @@ class BenchmarkDashboard:
         ]
         self.annotation_store = annotation_store or AnnotationStore(runtime_paths.project_state_root / "benchmark-dashboard" / "dashboard.sqlite")
 
+    @staticmethod
+    def track_options() -> list[str]:
+        return canonical_track_options()
+
     def _candidate_run_dirs(self) -> list[Path]:
         candidates: list[Path] = []
         for root in self.run_roots:
@@ -378,9 +381,7 @@ class BenchmarkDashboard:
             results = self._load_results(run_root)
             group_ids = self._group_ids(payload, results, run_root)
             record_ids = sorted({str(result.get("record_id") or "") for result in results if result.get("record_id")})
-            display_pairs = [_dashboard_dataset_subset(result) for result in results]
-            datasets = sorted({dataset for dataset, _subset in display_pairs if dataset})
-            subsets = sorted({subset for _dataset, subset in display_pairs if subset})
+            tracks = sorted({resolve_result_track(result) for result in results})
             total = int(payload.get("records") or len(record_ids)) * max(1, len(group_ids))
             progress = load_progress(run_root, expected_total=total, group_ids=group_ids)
             summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
@@ -396,10 +397,8 @@ class BenchmarkDashboard:
                     "status": progress.get("status") or ("completed" if (run_root / "results.json").is_file() else "pending"),
                     "record_count": int(payload.get("records") or len(record_ids)),
                     "group_count": len(group_ids),
-                    "dataset_files": payload.get("dataset_files") or [],
-                    "datasets": datasets,
-                    "subsets": subsets,
-                    "selectable_facets": _selectable_facets(results),
+                    "track_files": payload.get("track_files") or payload.get("dataset_files") or [],
+                    "tracks": tracks,
                     "progress": progress,
                     "summary": summary,
                 }
@@ -423,7 +422,7 @@ class BenchmarkDashboard:
             "favorite": bool(meta.get("favorite", False)),
             "hidden": bool(meta.get("hidden", False)),
             "path": str(run_root),
-            "payload": payload,
+            "payload": _current_run_payload(payload),
             "progress": load_progress(run_root, expected_total=total, group_ids=group_ids),
             "annotations": self.annotation_store.list_annotations(run_id=run_id),
         }
@@ -441,12 +440,10 @@ class BenchmarkDashboard:
         records: list[dict[str, Any]] = []
         for record_id, items in sorted(by_record.items()):
             first = items[0]
-            dataset, subset = _dashboard_dataset_subset(first)
             records.append(
                 {
                     "record_id": record_id,
-                    "dataset": dataset,
-                    "subset": subset,
+                    "track": resolve_result_track(first),
                     "eval_kind": first.get("eval_kind", ""),
                     "prompt_preview": str(first.get("prompt") or "")[:320],
                     "group_results": [
@@ -526,7 +523,6 @@ class BenchmarkDashboard:
         results = sorted(results, key=_group_sort_key)
         first = results[0]
         reference_answer = _resolved_reference_answer(results)
-        dataset, subset = _dashboard_dataset_subset(first)
         question_markdown, question_source = self._question_markdown(run_root, results)
         groups: list[dict[str, Any]] = []
         for result in results:
@@ -569,8 +565,7 @@ class BenchmarkDashboard:
         return {
             "run_id": run_id,
             "record_id": first.get("record_id") or record_id,
-            "dataset": dataset,
-            "subset": subset,
+            "track": resolve_result_track(first),
             "eval_kind": first.get("eval_kind", ""),
             "prompt": first.get("prompt", ""),
             "question_markdown": question_markdown,

@@ -5,6 +5,10 @@
 - 适用项目：OpenClaw chemistry benchmark orchestration
 - 适用 package：`verifier-grounded-benchmark==0.2.0`
 
+> 身份字段、CLI 选择参数、输入文件布局和结果 schema 已由
+> [VGB Track-Only Identity Specification](2026-09-17-vgb-track-only-identity-spec.md)
+> 取代。本文件其余 package API 与隔离评分决策仍保留为历史设计依据。
+
 ## 1. 目的
 
 本规格定义如何使用 `verifier-grounded-benchmark` 的标准公共 API，将 OpenClaw

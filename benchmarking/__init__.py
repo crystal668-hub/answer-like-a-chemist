@@ -6,8 +6,8 @@ from .core.contracts import (
     RunStatus,
 )
 from .core.convergence import ConvergencePolicy
-from .core.datasets import BenchmarkRecord, GradingSpec
 from .core.experiments import ExperimentSpec
+from .core.records import BenchmarkRecord, GradingSpec
 from .scoring.errors import EvaluationRegistryError
 from .scoring.registry import (
     EVALUATORS,

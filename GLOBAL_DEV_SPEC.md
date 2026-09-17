@@ -43,7 +43,7 @@ runbooks.
 - `benchmarking.runtime.paths` owns default path resolution.
   `OPENCLAW_PROJECT_ROOT`, `OPENCLAW_DATA_ROOT`, `OPENCLAW_SKILLS_ROOT`, and
   `OPENCLAW_BENCHMARKS_ROOT` provide supported overrides.
-- Formal benchmark datasets default to
+- Formal benchmark inputs default to
   `/Users/xutao/.openclaw/data/formal-benchmarks`; temporary datasets default to
   `/Users/xutao/.openclaw/data/temp-benchmarks`.
 - Legacy ChemBench, FrontierScience, HLE, and SUPERChem inputs are not installed
@@ -55,14 +55,11 @@ runbooks.
   Formal and temporary inputs determine the top-level category; benchmark and
   single-LLM model slugs provide the next two levels. Verifier-grounded isolated
   runtimes and dashboard metadata also live under `workspace/state/`.
-- Default single-dataset benchmark directory names use the canonical mapping
-  owned by `benchmarking.workflow.dataset_selection`: `verifier_grounded_rdkit`
-  maps to `vgb-rdkit`, `verifier_grounded_xtb_xyz` maps to `vgb-xtb`,
-  `verifier_grounded_property_calculation` maps to
-  `vgb-property-calculation-advanced`, and
-  `verifier_grounded_property_calculation_easy` maps to
-  `vgb-property-calculation-basic`. Other single datasets use their slug and
-  multi-dataset runs use `mixed-datasets`.
+- Default single-Track benchmark directory names use the canonical mapping
+  owned by `benchmarking.workflow.track_selection`: `rdkit` maps to
+  `vgb-rdkit`, `xtb` maps to `vgb-xtb`, `property_calculation_advanced` maps to
+  `vgb-property-calculation-advanced`, and `property_calculation_basic` maps to
+  `vgb-property-calculation-basic`. Multi-Track runs use `mixed-tracks`.
 - Explicitly retained fixed-workspace evidence lives under
   `workspace/state/benchmark-runs/legacy-workspace-archives/<workspace>-<timestamp>`.
   These snapshots are maintenance artifacts, not classified benchmark runs or
@@ -76,13 +73,13 @@ runbooks.
 
 | Module | Ownership |
 | --- | --- |
-| `benchmarking/core/` | Dataset normalization, runner/result dataclasses, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
-| `benchmarking/scoring/` | VGB evaluator, generic semantic scoring for supported frozen-service inputs, explicit retired-benchmark rejection, and result/error contracts. |
+| `benchmarking/core/` | Track-only record normalization, runner/result dataclasses, historical identity projection, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
+| `benchmarking/scoring/` | Pinned VGB evaluator and result/error contracts. |
 | `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, invocation observability, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
-| `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, dataset selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
+| `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, Track selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
-| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and synchronized dataset/subset facets across filters, run summaries, and record details. |
+| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and pinned Track filtering across run summaries and record details. |
 
 `benchmarking.runtime.paths` is the shared path authority used by the package
 and scripts. The benchmark CLI is owned directly by `benchmarking.workflow.cli`;
@@ -96,7 +93,7 @@ templates, leases, recovery, sealing, quarantine, and audit orchestration.
 
 Benchmark workflow responsibilities follow the same ownership rule:
 `benchmarking.workflow.experiments` owns group definitions and effective specs,
-`benchmarking.workflow.dataset_selection` owns release-validated VGB discovery,
+`benchmarking.workflow.track_selection` owns release-validated VGB discovery,
 shared record loaders and filters, and output-root classification;
 each service selects its own loading and filtering entrypoints.
 `benchmarking.workflow.run_state` owns persisted
@@ -222,15 +219,15 @@ printed in the report.
   unrelated installed package with the same name.
 - `scripts/run_skill.py` is the fixed entrypoint for benchmark-agent execution
   of local skill scripts through the workspace `uv` environment.
-- `scripts/sync_verifier_grounded_datasets.py` validates a pinned release,
-  synchronizes public prompt datasets and isolated scoring runtime metadata, and
+- `scripts/sync_verifier_grounded_tracks.py` validates a pinned release,
+  synchronizes public Track snapshots and isolated scoring runtime metadata, and
   after a successful sync retains all runtime instances for the newest two
   distinct semantic versions while removing older managed runtimes. Cleanup
   failures make provisioning fail and identify the paths that could not be
   removed; unrecognized runtime directories are preserved.
 
 Verifier runtime provisioning completes installation, runtime validation, and
-dataset synchronization before applying this retention policy. Same-version
+Track synchronization before applying this retention policy. Same-version
 runtime directories with different wheel hashes are all retained; only managed
 directories older than the two newest distinct versions are removed. The wheel
 cache under `data/verifier-grounded-releases` is not part of this cleanup.
@@ -279,7 +276,7 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
-  identity and sanitized public dataset snapshots. The current pinned VGB
+  identity and sanitized public Track snapshots. The current pinned VGB
   runtime is v0.9.2.
 Run-scoped and materialized container OpenClaw configs force `agents.defaults.skipBootstrap=true` while preserving other defaults. Container path projection uses boundary-aware prefix matching.
 Finalization rescue can consume only a frozen primary transcript through the
@@ -310,16 +307,15 @@ OpenClaw compatibility updates are planned for this business.
 Both active group definitions disable generic web search and web fetch.
 For each invocation, the CLI:
 
-1. Uses service-owned selection backed by `benchmarking.workflow.dataset_selection`.
-   The default service discovers only the four datasets declared in the pinned
-   release. It rejects unsupported dataset arguments and validates every loaded
-   record's eval kind, dataset/track, task ID, and release identity before ID,
-   offset, or limit filtering, including explicit `--files` inputs. Explicit
-   files retain the shared `<dataset>/data/<file>.jsonl` layout contract. The
-   frozen service keeps shared loading and subset filtering but rejects the four
-   retired benchmarks before filtering or execution. Its entrypoint exposes
-   subset and judge options; retired-dataset subset sampling is removed. Output
-   classification uses the canonical single-dataset benchmark directory mapping.
+1. Uses service-owned selection backed by `benchmarking.workflow.track_selection`.
+   Both active single-LLM and frozen ChemQA execution accept only the ordered
+   Track table declared in the pinned release: `rdkit`, `xtb`,
+   `property_calculation_advanced`, and `property_calculation_basic`. The CLI
+   exposes `--tracks` and `--list-tracks`; dataset/subset flags have no aliases.
+   Every loaded record must use `eval_kind=verifier_grounded`, match its
+   `<track>/data/<track>.jsonl` path, release identity, Track, and task inventory
+   before ID, offset, or limit filtering. Output classification uses the
+   canonical single-Track mapping and `mixed-tracks` for multi-Track runs.
 2. Projects the complete benchmark skill routing inventory without startup
    dependency/API health filtering, prepares a unique invocation identity, captures the verifier-grounded release identity for the
    lifetime of the invocation, recovers sentinel-proven stale active workspaces,
@@ -529,11 +525,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   archival; general workspace symlink validation remains unchanged.
 - Container transcript path projections are applied in memory during host
   audit, including recovery, while raw transcripts remain unchanged.
-- The VGB adapter never materializes dataset input bundles and has no input mount.
+- The VGB adapter never materializes input bundles and has no input mount.
   `RuntimePathProjection` still supplies config policy projection and persisted
-  audit mappings. Shared visual bundle materialization and localized question
-  Markdown helpers remain available to historical tooling; ChemQA admission
-  rejects retired visual benchmarks. Historical replay
+  audit mappings. Retired visual bundle materialization is absent; the dashboard
+  can still read bundle metadata already persisted by historical runs. Historical replay
   consumes persisted path mappings when present and preserves legacy reads.
   The image tool's `image` and `images` arguments, including every array member,
   are checked by the guard and parsed by transcript audit.
@@ -558,11 +553,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 
 ### ChemQA runner (legacy, frozen)
 
-- ChemBench, FrontierScience, HLE, and SUPERChem are rejected before workspace
-  allocation. Generic supported tasks and VGB retain their prompt and artifact
-  contracts; retired benchmark-specific prompt branches and answer-kind
-  inference are absent from this execution path. Historical artifact parsing
-  remains available independently of execution admission.
+- ChemBench, FrontierScience, HLE, SUPERChem, and generic semantic records are
+  rejected before workspace allocation. Only the four pinned VGB Tracks retain
+  prompt and artifact contracts; retired prompt branches, visual input bundles,
+  subset filters, answer-kind inference, and judge scoring are absent.
+  Historical artifact parsing remains available independently of execution admission.
 - Each attempt prepares one coordinator workspace and five role workspaces as an
   all-or-fail lease set.
 - The runner compiles and materializes a `chemqa-review@1` launch, then the role
@@ -581,20 +576,14 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
 ### Evaluation, reporting, and review
 
 - `benchmarking.scoring.registry` dispatches by `record.grading.kind` using an
-  invocation-owned evaluator table. The active service registers only
-  `verifier_grounded`, with no semantic fallback; importing its CLI does not load
-  the judge runtime. Frozen ChemQA explicitly registers VGB and
-  `generic_semantic` for supported inputs. The four retired evaluator modules and
-  their judge prompts are removed. `benchmarking.core.datasets.is_retired_benchmark`
-  identifies exact dataset, subset and eval-kind labels; registry dispatch rejects
-  them before overrides or generic fallback. The public
-  `register_default_evaluators` API registers only the remaining shared evaluators
-  without influencing active invocation scoring. Frozen LLM-judge
-  calls use a fresh isolated judge session and attempt workspace; pure answer
-  and agent-response parsing lives in `benchmarking.core.answer_processing`.
+  invocation-owned evaluator table. Both services register only
+  `verifier_grounded`; there is no generic semantic fallback or benchmark judge
+  scoring path. Non-VGB records fail admission before workspace allocation.
+  Pure answer and agent-response parsing lives in
+  `benchmarking.core.answer_processing`.
 - Verifier-grounded tasks use `benchmarking.runtime.vgb_bridge` to call the
   pinned package through a hash-addressed, non-agent virtual environment and
-  `python -I`; agent-visible datasets contain public prompts and answer schemas,
+  `python -I`; agent-visible Track snapshots contain public prompts and answer schemas,
   not hidden verifier material. Final reporting references for every
   release-declared property-calculation track come from that pinned release's
   public `task(..., include_gold=True)` view; scoring-profile identifiers are
@@ -604,7 +593,7 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   change benchmark scoring or the CLI exit outcome. VGB-only analysis reports
   verifier averages over scored records, including partial failures, or an
   unscored state; it does not produce legacy correctness/RPF metrics. Historical
-  ChemQA and other dataset analysis and dashboard readers remain supported.
+  ChemQA and historical analysis/dashboard readers remain supported.
 - The dashboard recursively discovers classified run directories and stops
   scanning below each detected run. It skips the reserved
   `legacy-workspace-archives` maintenance tree rather than traversing retained
@@ -618,14 +607,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   cannot replace an aggregate reporting reference. For active verifier-grounded
   property-calculation runs, the detail view derives the standard answer from
   the scored result's release-specific `properties.gold_answers` when the
-  per-record reporting reference is still the public-data placeholder. Dataset
-  facets use the canonical
-  `source_file` dataset segment when it follows the standard
-  `<dataset>/data/<file>.jsonl` layout, correcting inconsistent persisted result
-  labels without rewriting run artifacts. Verifier-grounded property-calculation
-  records are displayed under the release track names
-  `property_calculation_advanced` and `property_calculation_basic`, derived from
-  their record IDs while retaining historical dataset file names. Manual dashboard refreshes expose
+  per-record reporting reference is still the public-data placeholder. Current
+  dashboard APIs expose only Track identity. The historical read adapter maps old
+  VGB identifiers by explicit Track, pinned task ID, known dataset/subset alias,
+  or legacy source path without rewriting run artifacts; other old identities
+  become non-executable `legacy:<identifier>` values. Manual dashboard refreshes expose
   their pending state through the refresh control and restore the control after
   either success or failure. Favorited runs are pinned to the top of the run
   list; within favorited and non-favorited groups, discovery keeps the existing
@@ -633,13 +619,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   duration from `runner_meta.durationMs`, converted from milliseconds to
   seconds, and falls back to persisted `elapsed_seconds` for legacy results
   without that metadata.
-- Dashboard run-list responses retain historical `datasets` and `subsets` for
-  display and add `selectable_facets` for the filter controls. These pairs exclude
-  the four retired benchmark families using exact labels, canonical source-file
-  dataset identity and eval kind. The browser builds Dataset/Subset options from
-  these pairs, scopes subsets to the selected dataset and clears stale selections.
-  Mixed historical/VGB runs retain their VGB choices. Historical records, scores,
-  run summaries and detail views remain readable and are not deleted or rewritten.
+- Dashboard Track choices come directly from the ordered pinned release table and
+  do not depend on scanned run contents. The browser exposes one Track selector;
+  `legacy:*` values remain visible in historical run/detail views but never become
+  selectable options. Current run, record, search, and detail responses omit
+  dataset/subset identity fields. Historical records, scores, and source files
+  remain immutable.
 
 ### Paper pipeline
 
@@ -664,7 +649,9 @@ service is required.
 - `RunnerResult.should_score()` is the gate into evaluator execution. Completed
   results score; recovered results score only when their recovery metadata marks
   them both evaluable and scoreable.
-- Current per-record and top-level result writers use schema version `3`.
+- Current per-record and top-level result writers use schema version `4` and
+  carry one canonical `track` identity. Aggregate projections use `by_track`
+  and `group_track`; run metadata uses `track_files`.
 - Stable result axes are `run_lifecycle_status`,
   `protocol_completion_status`, `answer_availability`, `answer_reliability`,
   `evaluable`, `scored`, `recovery_mode`, `degraded_execution`, and
@@ -694,8 +681,8 @@ The final run artifact set includes:
 - `results.json`, `runtime-manifest.json`, and `runtime-metrics.json`;
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
-- `runtime-config/*.json` and archived attempt workspaces; frozen visual tasks
-  can additionally produce `input-bundles/`;
+- `runtime-config/*.json` and archived attempt workspaces; historical runs may
+  already contain retained `input-bundles/`;
 - `skill-routing-inventory.json` and (when the
   Docker backend is selected) per-attempt container manifests, logs, stats, and
   cleanup spools;
@@ -889,7 +876,10 @@ boundary. Processes still run as the same local user.
   typed audit recovery, EOF heredoc handling, owned-process cancellation, and
   persistent cancellation terminal states.
 - `docs/design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md`:
-  verifier-grounded dataset exposure and isolated scoring contract.
+  original verifier-grounded exposure and isolated scoring decisions; its
+  identity, CLI, layout, and result-schema sections are superseded below.
+- `docs/design/2026-09-17-vgb-track-only-identity-spec.md`: current Track-only
+  input identity, CLI, storage, schema-v4, dashboard, and historical-read contract.
 - `benchmarking/resources/verifier_grounded/release.json`: current pinned
   verifier-grounded release identity.
 

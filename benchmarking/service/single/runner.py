@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -72,13 +71,13 @@ from benchmarking.runtime.error_capture import (
     ExecutionErrorClassification,
     capture_execution_error,
 )
-from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.observability import observed_duration
-from benchmarking.runtime.transcript_index import TranscriptIndex
+from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
     inspect_postflight_session,
 )
+from benchmarking.runtime.transcript_index import TranscriptIndex
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     WorkspaceAccessPolicy,
@@ -346,7 +345,7 @@ def _candidate_contract_meta(
     meta: dict[str, Any] = {
         "valid": valid,
         "eval_kind": str(getattr(record, "eval_kind", "") or ""),
-        "dataset": str(getattr(record, "dataset", "") or ""),
+        "track": str(getattr(record, "track", "") or ""),
         "short_answer_text_present": bool(str(short_answer_text or "").strip()),
         "full_response_text_present": bool(str(full_response_text or "").strip()),
         "has_final_answer_marker": has_final_answer_marker(str(full_response_text or "")),

@@ -12,8 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from benchmarking.runtime import vgb_bridge as bridge, vgb_worker as workers
-from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationReason, CancellationToken, OwnedProcessRegistry
+from benchmarking.runtime import vgb_bridge as bridge
+from benchmarking.runtime import vgb_worker as workers
+from benchmarking.runtime.cancellation import (
+    BenchmarkCancelledError,
+    CancellationReason,
+    CancellationToken,
+    OwnedProcessRegistry,
+)
 
 
 @pytest.fixture
@@ -210,11 +216,15 @@ def test_new_invocation_has_new_process(config, worker, tmp_path):
 
 @pytest.mark.parametrize("answer", ["FINAL ANSWER: CCO", "invalid", "infrastructure"])
 def test_evaluator_scores_and_failure_messages_are_equal(config, worker, answer):
-    from benchmarking.core.datasets import BenchmarkRecord
-    from benchmarking.scoring.evaluators.verifier_grounded import evaluate_verifier_grounded, run_verifier_grounded_evaluation
-    from benchmarking.scoring.errors import EvaluationError
     from functools import partial
-    record = BenchmarkRecord(record_id="task-a", dataset="fixture", source_file="fixture", prompt="fixture",
+
+    from benchmarking.core.records import BenchmarkRecord
+    from benchmarking.scoring.errors import EvaluationError
+    from benchmarking.scoring.evaluators.verifier_grounded import (
+        evaluate_verifier_grounded,
+        run_verifier_grounded_evaluation,
+    )
+    record = BenchmarkRecord(record_id="task-a", track="rdkit", source_file="fixture", prompt="fixture",
         eval_kind="verifier_grounded", payload={"verifier_grounded": {
             "release": config.identity, "track": "rdkit", "task_id": "task-a"}})
     outcomes = []
@@ -230,19 +240,18 @@ def test_evaluator_scores_and_failure_messages_are_equal(config, worker, answer)
 @pytest.mark.parametrize("mode", ["isolated", "worker"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, cancel):
-    from benchmarking.workflow import cli, dataset_selection, runner_adapters, experiments
-    from benchmarking.core.datasets import BenchmarkRecord
     from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
+    from benchmarking.core.records import BenchmarkRecord
     from benchmarking.service.single import execution
-    config.tracks["rdkit"]["dataset"] = "verifier_grounded_rdkit"
-    record = BenchmarkRecord(record_id="task-a", dataset="verifier_grounded_rdkit", source_file="fixture",
+    from benchmarking.workflow import cli, experiments, runner_adapters
+    record = BenchmarkRecord(record_id="task-a", track="rdkit", source_file="fixture",
         prompt="fixture", eval_kind="verifier_grounded", payload={"verifier_grounded": {
             "release": config.identity, "track": "rdkit", "task_id": "task-a"}})
     monkeypatch.setattr(sys, "argv", ["benchmark", "--execution-backend", "host", "--no-analysis",
         "--groups", "single_llm_skills_off", "--exact-output-dir", str(tmp_path / "out"),
         *(["--verifier-mode", mode] if mode == "worker" else [])])
     monkeypatch.setattr(cli, "load_release_config", lambda: config)
-    monkeypatch.setattr(execution, "select_dataset_files", lambda args: [tmp_path / "fixture.jsonl"])
+    monkeypatch.setattr(execution, "select_track_files", lambda args: [tmp_path / "fixture.jsonl"])
     monkeypatch.setattr(execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(cli.runtime_paths, "benchmark_runtime_root", tmp_path / "benchmark")
 

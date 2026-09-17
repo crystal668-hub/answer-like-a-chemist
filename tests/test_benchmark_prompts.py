@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from benchmarking.core.datasets import BenchmarkRecord
+from benchmarking.core.records import BenchmarkRecord
 from benchmarking.service.single.prompts import build_single_llm_prompt
 from benchmarking.service.single.runner import validate_candidate_answer_contract
 
@@ -18,7 +18,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_verifier_grounded_prompt_uses_official_prompt_without_schema_repetition(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -46,7 +46,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_verifier_grounded_xyz_prompt_does_not_inject_fenced_block_schema(self) -> None:
         record = BenchmarkRecord(
             record_id="xtb-gap",
-            dataset="verifier_grounded_xtb_xyz",
+            track="xtb",
             source_file="/tmp/verifier_grounded_xtb_xyz.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one neutral closed-shell small molecule as an XYZ geometry.",
@@ -71,7 +71,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_verifier_grounded_bounded_prompt_only_prepends_common_time_budget(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-qed",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Official task prompt.\nFINAL ANSWER: <SMILES>",
@@ -101,7 +101,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_verifier_grounded_candidate_contract_requires_final_answer_marker(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -123,7 +123,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_verifier_grounded_xyz_block_candidate_contract_uses_answer_schema(self) -> None:
         record = BenchmarkRecord(
             record_id="xtb-gap",
-            dataset="verifier_grounded_xtb_xyz",
+            track="xtb",
             source_file="/tmp/verifier_grounded_xtb_xyz.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -155,7 +155,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_complete_rescue_answer_survives_prior_idle_timeout(self) -> None:
         record = BenchmarkRecord(
             record_id="property_calc_free_energy_001",
-            dataset="verifier_grounded_property_calculation",
+            track="property_calculation_advanced",
             source_file="/tmp/verifier_grounded_property_calculation.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -191,7 +191,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
@@ -218,7 +218,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_omits_websearch_guidance(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
@@ -239,7 +239,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_single_llm_prompt_adds_only_time_budget_not_coverage_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH.",
@@ -259,7 +259,7 @@ class BenchmarkPromptsTests(unittest.TestCase):
     def test_vgb_uses_official_prompt_without_repetition(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-olympiad",
-            dataset="verifier_grounded_rdkit",
+            track="rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH.\n\nEnd with FINAL ANSWER: <answer>.",
