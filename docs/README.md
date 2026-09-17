@@ -72,7 +72,7 @@ Observed results, validation, and supporting evidence.
 - [Benchmark Runtime Phase 5 Docker Wait Validation](report/2026-09-16-benchmark-runtime-phase-5-docker-wait.md): managed Docker wait client, cancellation/finalization contracts, and real no-model Docker evidence.
 - [Benchmark Runtime Phase 5 Archive Inventory Validation](report/2026-09-16-benchmark-runtime-phase-5-archive-inventory.md): consolidated workspace inventory, archive safety contracts, traversal evidence, and cross-device simulation limits.
 - [VGB Runtime Legacy Dataset Cleanup Report](report/2026-09-17-vgb-runtime-legacy-facility-cleanup-report.md): pending-approval plan for removing obsolete default dataset paths while preserving the frozen ChemQA/DebateClaw surface.
-- [VGB Runtime Cleanup Implementation](report/2026-09-17-vgb-runtime-cleanup-implementation-report.md): active/frozen composition changes, preflight inventory, validation evidence, and retained local inputs awaiting a separate deletion decision.
+- [VGB Runtime Cleanup Implementation](report/2026-09-17-vgb-runtime-cleanup-implementation-report.md): completed active/frozen composition cleanup, validation evidence, and user-approved removal of eight legacy input directories to Trash.
 
 ## guide (1)
 

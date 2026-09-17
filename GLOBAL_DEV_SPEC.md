@@ -46,6 +46,10 @@ runbooks.
 - Formal benchmark datasets default to
   `/Users/xutao/.openclaw/data/formal-benchmarks`; temporary datasets default to
   `/Users/xutao/.openclaw/data/temp-benchmarks`.
+- Legacy ChemBench, FrontierScience, HLE, and SUPERChem inputs are not installed
+  in these local roots. Frozen ChemQA replay requires independently supplied
+  input through `--benchmark-root` or `--files`; its source and historical
+  result readers remain available.
 - Benchmark run records are generated under
   `workspace/state/benchmark-runs/<formal|temporary>/<benchmark>/<model>/<run-id>`.
   Formal and temporary inputs determine the top-level category; benchmark and

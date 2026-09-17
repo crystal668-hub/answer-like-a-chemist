@@ -4,8 +4,8 @@ Date: 2026-09-17
 
 Scope: active VGB runtime composition and frozen ChemQA preservation.
 
-Status: source cleanup and validation complete (Phases 0-2 and 4). Phase 3 local
-input deletion is pending a separate user decision.
+Status: Phases 0-4 complete. Following separate user approval, all eight legacy
+input directories were removed from their source roots to macOS Trash.
 
 Evidence baseline: clean Git HEAD `271368429cdb897ecdb54593e353fcf17cbbb394`.
 Initial full suite: 1001 passed, 11 skipped, 164 subtests passed.
@@ -78,18 +78,21 @@ cannot change the active invocation's scoring table.
 - `git diff --check` passed. All 48 documentation catalog targets resolve, with
   no unlisted maintained document. The production name scan has no legacy
   dataset, subset-sampling, or judge-option hits in `service/single` or the CLI.
-- All 1824 retained legacy input file hashes match the preflight inventory.
+- Before removal, all 1824 legacy input file hashes matched the preflight inventory.
 
 No real model calls or new Docker model attempts were launched. Docker behavior
 is covered by the existing runtime regression suite; this is not fresh real-model
 Docker acceptance. Existing skips are retained, with no new skip added.
 
-## Retained Inputs
+## Local Input Removal
 
-No dataset directories or historical runtime state were deleted. The exact
-deletion candidates remain the four names `chembench`, `frontierscience`, `hle`,
-and `superchem` under each of `/Users/xutao/.openclaw/data/formal-benchmarks` and
-`/Users/xutao/.openclaw/data/temp-benchmarks`.
+On 2026-09-17, after source commit `a52fb8f`, the user explicitly authorized
+continuing deletion. The four names `chembench`, `frontierscience`, `hle`, and
+`superchem` were removed from each of
+`/Users/xutao/.openclaw/data/formal-benchmarks` and
+`/Users/xutao/.openclaw/data/temp-benchmarks` using
+`/usr/bin/trash --stopOnError --verbose`. Removal is recoverable through Trash;
+Trash was not emptied, so these byte totals do not represent reclaimed disk space.
 
 | Root | Files | Bytes |
 | --- | ---: | ---: |
@@ -97,9 +100,24 @@ and `superchem` under each of `/Users/xutao/.openclaw/data/formal-benchmarks` an
 | temp-benchmarks | 4 | 983632 |
 | Total | 1824 | 98528185 |
 
-Before any later deletion, recheck the inventory and runtime activity. Removing
-these inputs removes default local replay data for frozen ChemQA; preserving or
-archiving them keeps that replay option. Active VGB discovery already excludes
-them. External callers and all historical agent/log/database references were not
-exhaustively audited; no runtime evidence or dashboard database is a deletion
-candidate in this change.
+The removal revalidated complete file inventories and SHA-256 hashes before any
+mutation and again before each directory move. Fresh checks found no active
+benchmark entrypoint/wrapper processes, active progress records, cleanroom
+leases, or containers carrying the runtime's `benchmark.*` ownership labels.
+The independent review-system container was retained. All four retained VGB
+input directories were hashed before and after removal and matched exactly.
+
+`deletion-preflight.json` and `deletion-receipt.json` in the raw evidence directory
+record the exact targets, counts, checks, command results, and completed removal.
+Post-removal validation found no remaining target directories. All four tracks
+still select successfully, with 20 advanced, 51 basic, 14 RDKit, and 20 xTB
+records (105 total). Focused CLI, VGB boundary, shared evaluator, and frozen
+service tests passed: 62 passed, 2 existing skips; see `post-deletion-tests.xml`.
+Production code did not change during this removal; the full-suite result above
+is from the source cleanup, not a new full-suite run after removal.
+
+Frozen ChemQA has no default local legacy replay inputs; replay requires
+restoring those inputs or supplying external JSONL files. VGB release caches,
+runtimes, resources, run evidence, frozen source/skills, historical runtime state,
+and dashboard databases were retained. External callers and every historical
+agent/log/database reference were not exhaustively audited.
