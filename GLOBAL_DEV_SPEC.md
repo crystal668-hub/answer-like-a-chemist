@@ -804,6 +804,14 @@ boundary. Processes still run as the same local user.
 
 ### Current risks
 
+- Shared answer completeness helpers currently accept the HLE
+  `Explanation`/`Answer`/`Confidence` format before checking the requested eval
+  kind. VGB runner and rescue paths call these helpers, so HLE-shaped text can
+  pass completeness checks without the VGB final marker or XYZ block. The
+  exposed `act-like-a-chemist` skill also retains an HLE-specific checklist.
+  These are active residual behaviors, distinct from deliberately frozen
+  evaluator and historical dashboard support.
+
 - Experimental verifier workers retain Python/native module state within each
   generation despite reloading track objects per request. Pinned-release shadow
   acceptance covers selected RDKit, xTB, and property tasks, repeated/reordered

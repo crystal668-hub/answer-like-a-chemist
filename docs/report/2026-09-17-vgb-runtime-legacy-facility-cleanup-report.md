@@ -4,7 +4,9 @@
 
 范围：`/Users/xutao/.openclaw/workspace` 项目库、其 benchmark runtime 代码与本地 benchmark 数据根
 
-状态：DRAFT，待用户审批；本报告只提供清理依据和执行顺序，不执行删除
+状态：close（2026-09-17，按用户要求关闭本次交付）。代码清理及旧输入目录移除的结果见[实施报告](2026-09-17-vgb-runtime-cleanup-implementation-report.md)。
+
+关闭说明：以下正文保留原始清点、建议和审批边界，历史“待审批”描述不再代表当前待办。`close` 不表示仓库内旧名称或共享能力零残留；本次补充扫描发现的 HLE 活跃路径残留、冻结模块及 dashboard 历史选项见[残留扫描报告](2026-09-17-vgb-legacy-residual-scan-report.md)，其中新发现尚未修复。
 
 证据基线：Git `7006711`（`fix: canonicalize benchmark output directories`）；本轮对 production imports、dataset payload、formal/temp 数据目录、formal run metadata、skill inventory 和测试引用进行了只读检查。该提交最近一次全量测试结果为 `1001 passed, 11 skipped, 164 subtests passed`。本轮没有运行删除模拟、真实模型调用或 Docker acceptance，也没有检查仓库外部调用者，因此删除会话仍须执行 Phase 0 preflight。
 

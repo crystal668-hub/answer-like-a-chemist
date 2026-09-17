@@ -7,6 +7,12 @@ Scope: active VGB runtime composition and frozen ChemQA preservation.
 Status: Phases 0-4 complete. Following separate user approval, all eight legacy
 input directories were removed from their source roots to macOS Trash.
 
+Closure note (2026-09-17): the original delivery document is marked `close` at the
+user's request. A subsequent [residual scan](2026-09-17-vgb-legacy-residual-scan-report.md)
+identified two active HLE residues in shared answer recognition and an exposed
+skill document. They remain open follow-up findings; the completed cleanup and
+passing suite below do not establish complete isolation from HLE answer formats.
+
 Evidence baseline: clean Git HEAD `271368429cdb897ecdb54593e353fcf17cbbb394`.
 Initial full suite: 1001 passed, 11 skipped, 164 subtests passed.
 
@@ -121,3 +127,11 @@ restoring those inputs or supplying external JSONL files. VGB release caches,
 runtimes, resources, run evidence, frozen source/skills, historical runtime state,
 and dashboard databases were retained. External callers and every historical
 agent/log/database reference were not exhaustively audited.
+
+The later read-only closure check found zero task rows in the migrated tasks
+database, four succeeded flows with no legacy dataset references, and no legacy
+references in dashboard metadata or annotations. A bounded scan of agent,
+benchmark, and log files found retained transcript/session-index references and
+five gateway log references dated 2026-05-21. This was not a requirement to delete
+history. The subsequent live dashboard scan confirms that all 20 runs exposing
+legacy Dataset/Subset values have `completed` status.
