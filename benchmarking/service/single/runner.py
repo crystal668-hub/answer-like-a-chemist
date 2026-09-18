@@ -42,6 +42,7 @@ from benchmarking.runtime.agent_workspace import (
 from benchmarking.runtime.attempt_environment import (
     AttemptPythonEnvironment,
     collect_dependency_manifest,
+    collect_distribution_inventory,
     create_attempt_environment,
     dependency_install_events,
     remediate_forbidden_distributions,
@@ -51,6 +52,17 @@ from benchmarking.runtime.attempt_finalization import (
     read_evidence,
     register_environment,
     write_evidence,
+)
+from benchmarking.runtime.attempt_observability import (
+    RESOURCE_WINDOW_SECONDS,
+    aggregate_attempt_observability,
+    attempt_artifact_paths,
+    build_attempt_observability,
+    clear_active_attempt,
+    package_delta,
+    publish_active_attempt,
+    relative_artifact_path,
+    unavailable_attempt_observability,
 )
 from benchmarking.runtime.bundles import RuntimePathProjection
 from benchmarking.runtime.cancellation import CancellationReason
@@ -939,6 +951,7 @@ class SingleLLMRunner:
             )
 
         attempt_environment: AttemptPythonEnvironment | None = None
+        baseline_distributions: list[dict[str, Any]] | None = None
         result: RunnerResult | None = None
         attempt_env = dict(environment)
         if self.execution_backend == "host":
@@ -955,6 +968,18 @@ class SingleLLMRunner:
                     attempt_python=attempt_environment.python,
                 )
                 attempt_env.update(attempt_environment.to_env())
+                try:
+                    baseline = collect_distribution_inventory(
+                        attempt_environment,
+                        base_env=attempt_env,
+                    )
+                    baseline_distributions = baseline.get("distributions")
+                    write_evidence(
+                        lease.notes_dir / "dependency-baseline.json",
+                        {"schema_version": 1, **baseline},
+                    )
+                except (AttributeError, OSError, TypeError, ValueError):
+                    baseline_distributions = None
             except Exception as exc:
                 cleanup_report = cleanup_owned_environment(lease.scratch_dir)
                 result = self._unexpected_attempt_failure_result(
@@ -1074,12 +1099,30 @@ class SingleLLMRunner:
                         session_isolation.get("postflight_entry_session_file"),
                         transcript_index=transcript_index,
                     ),
+                    baseline_distributions=baseline_distributions,
                 )
                 dependency_audit = remediate_forbidden_distributions(
                     attempt_environment,
                     manifest,
                 )
                 manifest["dependency_audit"] = dependency_audit
+                try:
+                    effective = collect_distribution_inventory(
+                        attempt_environment,
+                        base_env=attempt_env,
+                    )
+                except (AttributeError, OSError, TypeError, ValueError) as exc:
+                    effective = {
+                        "distributions": None,
+                        "collection": {"returncode": 1, "stderr": str(exc)},
+                    }
+                manifest["effective_distributions"] = effective.get("distributions")
+                manifest["effective_inventory_collection"] = effective.get("collection") or {}
+                manifest["distribution_delta"] = package_delta(
+                    manifest.get("baseline_distributions"),
+                    manifest.get("distributions"),
+                    manifest.get("effective_distributions"),
+                )
                 manifest_path = lease.notes_dir / "dependency-manifest.json"
                 manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
                 result.runner_meta["attempt_environment"] = manifest
@@ -1166,6 +1209,27 @@ class SingleLLMRunner:
                 result.runner_meta["degraded_execution"] = True
             result.runner_meta["workspace_isolation"] = isolation_meta
         try:
+            result.runner_meta["attempt_observability"] = build_attempt_observability(
+                identity=identity.sentinel_fields(),
+                status=result.status.value,
+                runner_meta=result.runner_meta,
+                transcript_index=transcript_index,
+                path_replacements={
+                    str(lease.scratch_dir): "$BENCHMARK_SKILL_SCRATCH_DIR",
+                    str(lease.active_workspace): "$BENCHMARK_WORKSPACE_DIR",
+                    "/benchmark/workspace/scratch": "$BENCHMARK_SKILL_SCRATCH_DIR",
+                    "/benchmark/workspace": "$BENCHMARK_WORKSPACE_DIR",
+                    str(self.workspace_manager.output_root): "<run-root>",
+                    str(Path.home()): "<home>",
+                },
+            )
+        except Exception as exc:
+            result.runner_meta["attempt_observability"] = unavailable_attempt_observability(
+                identity.sentinel_fields(),
+                status=result.status.value,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        try:
             archive = self.workspace_manager.seal(
                 lease,
                 AttemptOutcome(
@@ -1187,7 +1251,7 @@ class SingleLLMRunner:
                 original_result=result,
             )
         isolation_meta.update(archive.to_meta())
-        for key in ("container", "session_lifecycle"):
+        for key in ("container", "session_lifecycle", "attempt_observability"):
             evidence = result.runner_meta.get(key)
             if isinstance(evidence, dict):
                 result.runner_meta[key] = self._translate_path_prefix(
@@ -1290,6 +1354,7 @@ class SingleLLMRunner:
         exhausted: bool,
         retry_reason: str,
         attempt_history: list[dict[str, Any]],
+        attempt_observations: list[dict[str, Any]],
     ) -> RunnerResult:
         result.runner_meta["timeout_retry"] = {
             "triggered": triggered,
@@ -1301,12 +1366,98 @@ class SingleLLMRunner:
             "retry_reason": retry_reason,
             "attempt_history": attempt_history,
         }
+        result.runner_meta["observability"] = aggregate_attempt_observability(
+            attempt_observations,
+            retry_backoff_seconds=sum(
+                float(value)
+                for value in self.timeout_retry_backoff_seconds[:retries_used]
+            ),
+        )
         return result
 
     @observed_duration("attempt")
     def _execute_attempt(self, **kwargs):
-        with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
-            return self._run_isolated_attempt(**kwargs)
+        record = kwargs["record"]
+        group = kwargs["group"]
+        identity = {
+            "run_id": self.workspace_manager.run_id,
+            "invocation_id": self.workspace_manager.invocation_id,
+            "group_id": str(group.id),
+            "runner_kind": "single_llm",
+            "agent_id": self.agent_id,
+            "record_id": str(record.record_id),
+            "attempt_index": int(kwargs.get("attempt_index") or 0),
+            "session_id": str(kwargs.get("session_id") or ""),
+            "template_id": (
+                "single-llm-skills-on-v1"
+                if bool(getattr(group, "skills_enabled", True))
+                else "single-llm-skills-off-v1"
+            ),
+        }
+        paths = attempt_artifact_paths(self.workspace_manager.output_root, identity)
+        started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        started = time.monotonic()
+        active_path = None
+        try:
+            active_path = publish_active_attempt(
+                self.workspace_manager.output_root,
+                identity,
+                started_at=started_at,
+                resources_path=paths["resources"],
+            )
+        except OSError:
+            active_path = None
+        try:
+            with self.admission_controller.attempt() if self.admission_controller is not None else nullcontext():
+                result = self._run_isolated_attempt(**kwargs)
+            duration = max(0.0, time.monotonic() - started)
+            observability = result.runner_meta.get("attempt_observability")
+            if not isinstance(observability, dict):
+                try:
+                    observability = build_attempt_observability(
+                        identity=identity,
+                        status=result.status.value,
+                        runner_meta=result.runner_meta,
+                        transcript_index=None,
+                    )
+                except Exception as exc:
+                    observability = unavailable_attempt_observability(
+                        identity,
+                        status=result.status.value,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+            agent_duration_ms = result.runner_meta.get("durationMs")
+            agent_seconds = (
+                max(0.0, float(agent_duration_ms) / 1000.0)
+                if isinstance(agent_duration_ms, (int, float)) and not isinstance(agent_duration_ms, bool)
+                else 0.0
+            )
+            observability["status"] = result.status.value
+            observability["timing"] = {
+                "started_at": started_at,
+                "ended_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "attempt_wall_seconds": duration,
+                "agent_seconds": agent_seconds,
+                "overhead_seconds": max(0.0, duration - agent_seconds),
+            }
+            observability["summary_path"] = relative_artifact_path(
+                self.workspace_manager.output_root,
+                paths["summary"],
+            )
+            observability["resources_path"] = relative_artifact_path(
+                self.workspace_manager.output_root,
+                paths["resources"],
+            )
+            try:
+                write_evidence(paths["summary"], observability)
+            except OSError as exc:
+                observability["persistence_error"] = str(exc)
+                observability["coverage"]["timing"] = "partial"
+            result.runner_meta["attempt_observability"] = observability
+            return result
+        finally:
+            if active_path is not None:
+                clear_active_attempt(active_path)
 
     @staged
     def run(self, record: Any, group: Any) -> RunnerResult:
@@ -1326,6 +1477,7 @@ class SingleLLMRunner:
         env = os.environ.copy()
         env["OPENCLAW_CONFIG_PATH"] = str(self.config_path)
         attempt_history: list[dict[str, Any]] = []
+        attempt_observations: list[dict[str, Any]] = []
         triggered = False
         retry_reason = ""
         total_attempts = self.timeout_retries + 1
@@ -1339,17 +1491,23 @@ class SingleLLMRunner:
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
             session_id = initial_session_id if attempt_index == 0 else f"{initial_session_id}-retry{attempt_index}"
-            result = yield WorkStep(lambda: self._execute_attempt(
-                    record=record,
-                    group=group,
+            result = yield WorkStep(
+                lambda selected_record=record, selected_group=group,
+                selected_session_id=session_id, selected_attempt_index=attempt_index: self._execute_attempt(
+                    record=selected_record,
+                    group=selected_group,
                     input_bundle=input_bundle,
                     prompt=prompt,
-                    session_id=session_id,
-                    attempt_index=attempt_index,
+                    session_id=selected_session_id,
+                    attempt_index=selected_attempt_index,
                     wrapper_path=wrapper_path,
                     environment=env,
-                ))
+                )
+            )
             last_result = result
+            attempt_observation = result.runner_meta.get("attempt_observability")
+            if isinstance(attempt_observation, dict):
+                attempt_observations.append(attempt_observation)
             if self.workspace_manager is not None:
                 write_evidence(self.workspace_manager.output_root / "attempt-results" / str(group.id) /
                                self._slugify(record.record_id) / f"{session_id}.json", {
@@ -1380,6 +1538,7 @@ class SingleLLMRunner:
                     exhausted=decision.retryable and triggered and attempt_index >= self.timeout_retries,
                     retry_reason=retry_reason,
                     attempt_history=attempt_history,
+                    attempt_observations=attempt_observations,
                 )
             backoff = self.timeout_retry_backoff_seconds[attempt_index]
             yield RetryDelay(backoff, cancellation_token.wait if cancellation_token is not None else self._sleep)
@@ -1394,6 +1553,7 @@ class SingleLLMRunner:
             exhausted=triggered,
             retry_reason=retry_reason,
             attempt_history=attempt_history,
+            attempt_observations=attempt_observations,
         )
 
     def _configure_record_skills(self, record: Any, group: Any) -> None:
@@ -1566,8 +1726,30 @@ class SingleLLMRunner:
         result = None
         outcome = None
         cleanup_errors = []
+        resource_sampler = None
+        resource_summary: dict[str, Any] = {
+            "coverage": "unavailable",
+            "window_seconds": RESOURCE_WINDOW_SECONDS,
+            "sample_count": 0,
+            "errors": [],
+        }
+        observability_paths = attempt_artifact_paths(
+            self.workspace_manager.output_root,
+            identity.sentinel_fields(),
+        )
         try:
             self.container_runtime.start(handle)
+            start_sampler = getattr(self.container_runtime, "start_resource_sampler", None)
+            if callable(start_sampler):
+                try:
+                    resource_sampler = start_sampler(
+                        handle,
+                        output_path=observability_paths["resources"],
+                        window_seconds=RESOURCE_WINDOW_SECONDS,
+                        heartbeat_path=observability_paths["active"],
+                    )
+                except ContainerRuntimeError as exc:
+                    resource_summary["errors"] = [str(exc)]
             outcome = self.container_runtime.collect(handle, timeout_seconds=spec.timeout_seconds, cancellation_token=getattr(self, "_cancellation_token", None))
             (spool / "stdout.log").write_text(outcome.stdout, encoding="utf-8")
             (spool / "stderr.log").write_text(outcome.stderr, encoding="utf-8")
@@ -1596,6 +1778,16 @@ class SingleLLMRunner:
                     self.container_runtime.kill(handle)
                 except Exception as exc:
                     cleanup_errors.append({"stage": "kill", "error": str(exc)})
+            if resource_sampler is not None:
+                try:
+                    resource_summary = resource_sampler.stop()
+                except Exception as exc:
+                    resource_summary = {
+                        "coverage": "partial",
+                        "window_seconds": RESOURCE_WINDOW_SECONDS,
+                        "sample_count": 0,
+                        "errors": [f"{type(exc).__name__}: {exc}"],
+                    }
             cleanup = self.container_runtime.remove(handle, force=True)
             report = {**cleanup.__dict__, "identity": identity.sentinel_fields(), "operations": cleanup_errors}
             if outcome is not None:
@@ -1608,12 +1800,16 @@ class SingleLLMRunner:
                 write_evidence(spool / "cleanup.json", report)
             except OSError as exc:
                 cleanup_errors.append({"stage": "cleanup_evidence", "error": str(exc)})
-            if not cleanup.removed:
-                if token is not None:
-                    token.record_cleanup_error({"stage": "container_remove", "container_id": handle.container_id,
-                                                "identity": identity.sentinel_fields(), "error": cleanup.error})
-                    token.cancel(CancellationReason(source="container_cleanup", message="Container removal failed; scheduling stopped"))
+            if not cleanup.removed and token is not None:
+                token.record_cleanup_error({"stage": "container_remove", "container_id": handle.container_id,
+                                            "identity": identity.sentinel_fields(), "error": cleanup.error})
+                token.cancel(CancellationReason(source="container_cleanup", message="Container removal failed; scheduling stopped"))
         assert result is not None
+        resource_summary["resources_path"] = relative_artifact_path(
+            self.workspace_manager.output_root,
+            observability_paths["resources"],
+        )
+        result.runner_meta["container_resources"] = resource_summary
         lifecycle_path = workspace / "scratch" / "notes" / "session-lifecycle.json"
         lifecycle = read_evidence(lifecycle_path)
         if lifecycle:

@@ -797,7 +797,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
                     "runner": first.runner, "websearch": first.websearch,
                     "skills_enabled": first.skills_enabled})
     payload = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": (
             "cancelled_with_errors"
             if cancellation_token.is_cancelled and cancellation_errors
@@ -868,6 +868,12 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         "runtime_metrics": {
             "schema_version": 1,
             "path": str(output_root / "runtime-metrics.json"),
+        },
+        "observability": {
+            "schema_version": 1,
+            "enabled": True,
+            "root": str(output_root / "observability"),
+            "container_resource_window_seconds": 5.0,
         },
         "result_sink": result_sink.to_meta(),
         "verifier_transport": (verifier_worker.to_meta() if verifier_worker is not None

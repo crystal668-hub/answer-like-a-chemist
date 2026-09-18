@@ -151,14 +151,14 @@ def test_history_replay_is_dry_run_first_and_apply_snapshots_atomically(tmp_path
     updated = json.loads(record_path.read_text(encoding="utf-8"))
     assert applied["mode"] == "apply"
     assert Path(applied["snapshot"]).is_dir()
-    assert updated["schema_version"] == 4
+    assert updated["schema_version"] == 5
     assert updated["track"] == "legacy:demo"
     assert "dataset" not in updated and "subset" not in updated
     assert updated["scored"] is True
     assert updated["evaluation"]["score"] == 0.75
     assert updated["runner_meta"]["workspace_isolation"]["adjudication"] == "scoreable_degraded"
     aggregate = json.loads((run_root / "results.json").read_text(encoding="utf-8"))
-    assert aggregate["schema_version"] == 4
+    assert aggregate["schema_version"] == 5
     assert all("dataset" not in item and "subset" not in item for item in aggregate["results"])
     assert {item["track"] for item in aggregate["results"]} == {"legacy:demo"}
     progress = json.loads((run_root / "progress" / "state.json").read_text(encoding="utf-8"))

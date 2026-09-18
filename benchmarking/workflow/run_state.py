@@ -17,6 +17,7 @@ from benchmarking.runtime.atomic_io import (
     atomic_write_json_stream,
     atomic_write_text,
 )
+from benchmarking.runtime.attempt_observability import legacy_observability
 from benchmarking.runtime.vgb_bridge import (
     ReleaseConfig,
     VerifierGroundedRuntimeError,
@@ -167,7 +168,7 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
         payload = {
             **payload,
             # Upconvert schema-v1 per-record payloads so historical outputs remain loadable.
-            "schema_version": 4,
+            "schema_version": 5,
             "run_lifecycle_status": run_lifecycle_status,
             "protocol_completion_status": protocol_completion_status,
             "protocol_acceptance_status": None,
@@ -182,7 +183,6 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
     if int(payload.get("schema_version") or 0) < 4 or not payload.get("track"):
         payload = {
             **payload,
-            "schema_version": 4,
             "track": resolve_result_track(payload),
         }
     payload.pop("dataset", None)
@@ -190,6 +190,13 @@ def load_group_record_result(path: Path) -> GroupRecordResult:
     if "skills_enabled" not in payload:
         group = EXPERIMENT_GROUPS.get(str(payload.get("group_id") or ""))
         payload["skills_enabled"] = bool(getattr(group, "skills_enabled", str(payload.get("group_id") or "") == "chemqa_skills_on"))
+    if (
+        int(payload.get("schema_version") or 0) < 5
+        or not isinstance(payload.get("observability"), dict)
+        or not payload.get("observability")
+    ):
+        payload["observability"] = legacy_observability(payload)
+    payload["schema_version"] = 5
     return GroupRecordResult(**payload)
 
 

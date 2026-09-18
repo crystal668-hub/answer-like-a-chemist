@@ -31,7 +31,12 @@ from benchmarking.runtime.agent_workspace import (
 from benchmarking.runtime.bundles import RuntimePathProjection
 from benchmarking.runtime.cancellation import CancellationToken
 from benchmarking.runtime.container_network import ContainerNetworkConfig
-from benchmarking.runtime.observability import active_runtime_metrics, increment, measure
+from benchmarking.runtime.container_resources import DockerStatsSampler
+from benchmarking.runtime.observability import (
+    active_runtime_metrics,
+    increment,
+    measure,
+)
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -341,6 +346,38 @@ class DockerContainerRuntime:
 
     def start(self, handle: ContainerAttemptHandle) -> None:
         self._command(["start", handle.container_id])
+
+    def start_resource_sampler(
+        self,
+        handle: ContainerAttemptHandle,
+        *,
+        output_path: Path,
+        window_seconds: float = 5.0,
+        heartbeat_path: Path | None = None,
+    ) -> DockerStatsSampler:
+        increment("docker_command_count")
+        increment("docker_command_count.stats_stream")
+        try:
+            return DockerStatsSampler(
+                command=[
+                    self._require_docker(),
+                    "stats",
+                    "--format",
+                    "{{json .}}",
+                    handle.container_id,
+                ],
+                output_path=output_path,
+                popen=self._popen,
+                window_seconds=window_seconds,
+                heartbeat_path=heartbeat_path,
+            )
+        except OSError as exc:
+            increment("container_resource_sampler_failure_count")
+            raise ContainerRuntimeError(
+                f"unable to start docker stats sampler: {exc}",
+                code="container_stats_start_failed",
+                details={"container_id": handle.container_id},
+            ) from exc
 
     def inspect(self, container: str) -> dict[str, Any]:
         result = self._command(["inspect", container])

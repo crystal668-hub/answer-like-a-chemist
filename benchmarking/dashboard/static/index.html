@@ -3,104 +3,53 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Benchmark Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <title>OpenClaw Benchmark Monitor</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/styles.css?v=20260918-observability-v1" />
   </head>
   <body>
-    <main class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">OpenClaw</p>
-          <h1>Benchmark Dashboard</h1>
-        </div>
-        <div class="toolbar" aria-label="Dashboard tools">
-          <label class="search">
-            <span aria-hidden="true">⌕</span>
-            <input id="search-input" placeholder="搜索 run 或题目" />
-          </label>
-          <button id="refresh-button" class="icon-button" title="刷新" aria-label="刷新">
-            <span class="refresh-icon" aria-hidden="true">↻</span>
-          </button>
-        </div>
-      </header>
+    <header class="topbar">
+      <div class="brand-lockup"><span class="brand-mark" aria-hidden="true">OC</span><div><h1>Benchmark Monitor</h1><p>Runtime observability console</p></div></div>
+      <div class="topbar-actions"><label class="search-field"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search runs or records" autocomplete="off" /></label><button id="refresh-button" class="icon-button" title="刷新数据" aria-label="刷新数据"><span class="refresh-icon" aria-hidden="true">↻</span></button></div>
+    </header>
 
-      <section class="filter-strip" aria-label="Run filters">
-        <label>Track <select id="track-filter" aria-label="Track 筛选"><option value="">全部</option></select></label>
-        <button id="show-hidden-button" class="icon-button" title="显示隐藏 run" aria-label="显示隐藏 run">◌</button>
-      </section>
+    <div class="app-layout">
+      <aside class="run-rail" aria-label="Benchmark runs">
+        <div class="rail-controls"><label>Track<select id="track-filter"><option value="">All tracks</option></select></label><label>Status<select id="status-filter"><option value="">All states</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label><button id="show-hidden-button" class="icon-button" title="显示隐藏 run" aria-label="显示隐藏 run">◌</button></div>
+        <div class="rail-heading"><span>Runs</span><span id="run-count">0</span></div>
+        <nav id="run-list" class="run-list" aria-live="polite"></nav>
+      </aside>
 
-      <section class="dashboard-grid">
-        <aside class="runs-pane">
-          <div class="pane-header">
-            <h2>Runs</h2>
-            <select id="status-filter" aria-label="状态筛选">
-              <option value="">全部状态</option>
-              <option value="running">Running</option>
-              <option value="cancelling">Cancelling</option>
-              <option value="cancelled">Cancelled</option>
-              <option value="cancelled_with_errors">Cancelled with errors</option>
-              <option value="completed">Completed</option>
-              <option value="completed_with_errors">Completed with errors</option>
-              <option value="failed">Failed</option>
-              <option value="pending">Pending</option>
-            </select>
+      <main class="workspace">
+        <section id="empty-view" class="empty-view"><span class="empty-index">00</span><h2>No run selected</h2></section>
+        <section id="run-view" class="view" hidden>
+          <header class="view-header">
+            <div><button id="record-back-button" class="text-button back-button" hidden>← Run overview</button><div class="title-row"><h2 id="run-title"></h2><span id="run-status" class="status-badge"></span></div><p id="run-subtitle" class="muted"></p></div>
+            <div class="view-actions"><button id="favorite-run" class="icon-button" title="收藏 run" aria-label="收藏 run">☆</button><button id="hide-run" class="icon-button" title="隐藏 run" aria-label="隐藏 run">⌫</button></div>
+          </header>
+
+          <div id="run-overview">
+            <section id="progress-strip" class="progress-strip"></section>
+            <section class="section-block"><div class="section-heading"><h3>Group comparison</h3><span>Exact observations only</span></div><div class="table-scroll"><table class="data-table comparison-table"><thead><tr><th>Group</th><th>Score</th><th>Mean / P95</th><th>Tokens</th><th>Tool failures</th><th>Packages</th><th>Peak memory</th><th>Coverage</th></tr></thead><tbody id="comparison-body"></tbody></table></div></section>
+            <section class="section-block"><div class="section-heading"><h3>Active attempts</h3><span id="active-count">0 active</span></div><div id="active-attempts" class="active-grid"></div></section>
+            <section class="section-block records-block">
+              <div class="section-heading records-heading"><div><h3>Records</h3><span id="record-count">0 records</span></div><label class="compact-select">Sort<select id="record-sort"><option value="record">Record ID</option><option value="time-desc">Slowest</option><option value="tokens-desc">Most tokens</option><option value="failures-desc">Most failures</option><option value="score-asc">Lowest score</option></select></label></div>
+              <div class="table-scroll"><table class="data-table record-table"><thead><tr><th>Record</th><th>Track</th><th>Group outcomes</th><th>Wall time</th><th>Tokens</th><th>Tool failures</th><th>Packages</th><th>Coverage</th></tr></thead><tbody id="record-list"></tbody></table></div>
+            </section>
           </div>
-          <div id="run-list" class="run-list" aria-live="polite"></div>
-        </aside>
 
-        <section class="records-pane">
-          <div class="pane-header">
-            <div>
-              <h2 id="run-title">选择一个 run</h2>
-              <p id="run-subtitle" class="muted">查看逐题结果与实时进度</p>
-            </div>
-            <button id="favorite-run" class="icon-button" title="收藏 run" aria-label="收藏 run">☆</button>
-            <button id="hide-run" class="icon-button" title="隐藏 run" aria-label="隐藏 run">⌫</button>
-          </div>
-          <div id="progress-strip" class="progress-strip"></div>
-          <div id="record-list" class="record-list"></div>
+          <section id="record-detail" hidden>
+            <header class="record-header"><div><h3 id="record-title"></h3><p id="record-subtitle" class="muted"></p></div><button id="note-button" class="icon-button" title="添加复核备注" aria-label="添加复核备注">✎</button></header>
+            <div id="group-selector" class="segmented-control" role="tablist" aria-label="Result group"></div>
+            <div id="record-kpis" class="kpi-strip"></div>
+            <nav id="detail-tabs" class="detail-tabs" aria-label="Record observability views"><button data-tab="overview" class="active">Overview</button><button data-tab="timeline">Timeline</button><button data-tab="exec">Exec</button><button data-tab="packages">Packages</button><button data-tab="tokens">Tokens</button><button data-tab="resources">Resources</button><button data-tab="evidence">Evidence</button></nav>
+            <div id="detail-panel" class="detail-panel"></div>
+          </section>
         </section>
+      </main>
+    </div>
 
-        <section class="detail-pane">
-          <div class="pane-header">
-            <div>
-              <h2 id="record-title">题目详情</h2>
-              <p id="record-subtitle" class="muted">选择左侧题目后显示内容</p>
-            </div>
-            <button id="note-button" class="icon-button" title="添加复核备注" aria-label="添加复核备注">✎</button>
-          </div>
-          <div class="detail-columns">
-            <article class="question-panel">
-              <h3>题目</h3>
-              <div id="question-content" class="markdown"></div>
-              <h3>标准答案 / 参考依据</h3>
-              <div id="reference-content" class="reference-block"></div>
-              <h3>复核备注</h3>
-              <div id="annotation-list" class="annotation-list"></div>
-            </article>
-            <article class="groups-panel">
-              <h3>测试组对比</h3>
-              <div id="group-results" class="group-results"></div>
-            </article>
-          </div>
-        </section>
-      </section>
-    </main>
-
-    <dialog id="annotation-dialog">
-      <form id="annotation-form" method="dialog">
-        <h2>复核备注</h2>
-        <label>状态 <input id="annotation-status" placeholder="reviewed / needs_review" /></label>
-        <label>标签 <input id="annotation-tags" placeholder="逗号分隔" /></label>
-        <label>人工结论 <input id="annotation-verdict" placeholder="correct / incorrect / uncertain" /></label>
-        <label>备注 <textarea id="annotation-note" rows="5"></textarea></label>
-        <menu>
-          <button value="cancel">取消</button>
-          <button id="save-annotation" value="default">保存</button>
-        </menu>
-      </form>
-    </dialog>
-
-    <script src="/static/app.js?v=20260917-track-only"></script>
+    <dialog id="annotation-dialog"><form id="annotation-form" method="dialog"><header><h2>Review note</h2><button value="cancel" class="icon-button" aria-label="关闭">×</button></header><label>Status<input id="annotation-status" placeholder="reviewed / needs_review" /></label><label>Tags<input id="annotation-tags" placeholder="comma separated" /></label><label>Verdict<input id="annotation-verdict" placeholder="correct / incorrect / uncertain" /></label><label>Note<textarea id="annotation-note" rows="5"></textarea></label><menu><button value="cancel" class="text-button">Cancel</button><button id="save-annotation" value="default" class="primary-button">Save</button></menu></form></dialog>
+    <script type="module" src="/static/app.js?v=20260918-observability-v1"></script>
   </body>
 </html>

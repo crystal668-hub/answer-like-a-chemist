@@ -25,6 +25,7 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceTemplate,
 )
+from benchmarking.runtime.attempt_observability import legacy_observability
 from benchmarking.runtime.workspace_policy import ProtectedRoot
 from benchmarking.scoring.registry import evaluate_record, register_default_evaluators
 
@@ -57,8 +58,10 @@ def _atomic_json(path: Path, payload: Any) -> None:
 
 def _track_only_result(payload: dict[str, Any]) -> dict[str, Any]:
     current = dict(payload)
-    current["schema_version"] = 4
+    current["schema_version"] = 5
     current["track"] = resolve_result_track(payload)
+    if not isinstance(current.get("observability"), dict):
+        current["observability"] = legacy_observability(current)
     current.pop("dataset", None)
     current.pop("subset", None)
     return current
@@ -319,7 +322,7 @@ def replay_workspace_adjudication(
     results_payload = (
         json.loads(results_path.read_text(encoding="utf-8"))
         if results_path.is_file()
-        else {"schema_version": 4, "results": _all_per_record_payloads(run_root), "summary": {}}
+        else {"schema_version": 5, "results": _all_per_record_payloads(run_root), "summary": {}}
     )
     isolation_manifest = runtime_manifest.get("workspace_isolation") or {}
     protected_roots = _protected_roots(runtime_manifest)
@@ -535,7 +538,7 @@ def replay_workspace_adjudication(
             _track_only_result(item) if isinstance(item, dict) else item
             for item in result_entries
         ]
-        results_payload["schema_version"] = 4
+        results_payload["schema_version"] = 5
         results_payload["results"] = result_entries
         results_payload["errors"] = [
             item
@@ -548,7 +551,15 @@ def replay_workspace_adjudication(
         normalized_results = []
         for item in result_entries:
             normalized = {key: value for key, value in item.items() if key in field_names}
-            normalized.update(schema_version=4, track=resolve_result_track(item))
+            normalized.update(
+                schema_version=5,
+                track=resolve_result_track(item),
+                observability=(
+                    item.get("observability")
+                    if isinstance(item.get("observability"), dict)
+                    else legacy_observability(item)
+                ),
+            )
             normalized_results.append(GroupRecordResult(**normalized))
         results_payload["summary"] = aggregate_results(normalized_results)
         results_payload["workspace_adjudication_recovery"] = {

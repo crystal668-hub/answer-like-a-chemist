@@ -68,6 +68,36 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertEqual(result.raw, original.raw)
         self.assertEqual(result.runner_meta["timeout_retry"]["retries_used"], 0)
 
+    def test_attempt_observability_failure_does_not_replace_runner_result(self):
+        from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
+
+        runner = self._runner(captured_commands=[])
+        original = RunnerResult(
+            RunStatus.COMPLETED,
+            AnswerPayload(short_answer_text="X", full_response_text="FINAL ANSWER: X"),
+            {},
+            {},
+        )
+        runner._run_isolated_attempt = lambda **kwargs: original
+        with mock.patch(
+            "benchmarking.service.single.runner.build_attempt_observability",
+            side_effect=RuntimeError("telemetry unavailable"),
+        ):
+            result = runner._execute_attempt(
+                record=self._record(),
+                group=Group("single_llm_skills_on", True),
+                input_bundle=None,
+                prompt="Q",
+                session_id="session",
+                attempt_index=0,
+                wrapper_path=Path("wrapper.py"),
+                environment={},
+            )
+
+        self.assertEqual(RunStatus.COMPLETED, result.status)
+        self.assertEqual("unavailable", result.runner_meta["attempt_observability"]["coverage"]["tools"])
+        self.assertIn("telemetry unavailable", result.runner_meta["attempt_observability"]["collection_error"])
+
     def test_container_remove_failure_preserves_provider_error_and_stops_admission(self):
         from benchmarking.runtime.attempt_admission import AttemptAdmissionController
         from benchmarking.runtime.cancellation import CancellationToken

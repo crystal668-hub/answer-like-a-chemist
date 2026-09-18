@@ -27,7 +27,7 @@ def build_result(index: int, *, payload_bytes: int) -> GroupRecordResult:
     prefix = f"record-{index}:"
     detail = (prefix + chr(65 + index % 26) * payload_bytes)[:payload_bytes]
     return GroupRecordResult(
-        schema_version=4,
+        schema_version=5,
         group_id="single_llm_skills_on" if index % 2 == 0 else "single_llm_skills_off",
         group_label="fixture",
         runner="single_llm",

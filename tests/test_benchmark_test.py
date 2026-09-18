@@ -463,7 +463,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             self.assertEqual(1, len(loaded))
             entry = loaded[0]
             self.assertEqual("legacy-record", entry.record_id)
-            self.assertEqual(4, entry.schema_version)
+            self.assertEqual(5, entry.schema_version)
             self.assertEqual("legacy:chembench", entry.track)
             self.assertEqual("completed", entry.run_lifecycle_status)
             self.assertEqual("completed", entry.protocol_completion_status)
@@ -1613,7 +1613,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
 
     def test_group_record_result_includes_evaluability_axes(self) -> None:
         result = GroupRecordResult(
-            schema_version=4,
+            schema_version=5,
             group_id="g1",
             group_label="Group 1",
             runner="single_llm",
@@ -1650,7 +1650,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             execution_error_kind=None,
             error=None,
         )
-        self.assertEqual(4, result.schema_version)
+        self.assertEqual(5, result.schema_version)
         self.assertTrue(result.evaluable)
         self.assertTrue(result.scored)
 

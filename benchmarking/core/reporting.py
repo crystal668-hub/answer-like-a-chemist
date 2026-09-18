@@ -2,9 +2,36 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
+
+
+def unavailable_observability(*, record_wall_seconds: float | None = None) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "coverage": {
+            "timing": "exact" if record_wall_seconds is not None else "unavailable",
+            "tokens": "unavailable",
+            "tools": "unavailable",
+            "packages": "unavailable",
+            "resources": "unavailable",
+        },
+        "totals": {
+            "timing": (
+                {"record_wall_seconds": max(0.0, float(record_wall_seconds))}
+                if record_wall_seconds is not None
+                else {}
+            ),
+            "tokens": {},
+            "tools": {},
+            "packages": {},
+            "resources": {},
+        },
+        "attempt_count": 0,
+        "attempts": [],
+        "final_attempt": None,
+    }
 
 
 @dataclass
@@ -39,6 +66,7 @@ class GroupRecordResult:
     error: str | None = None
     short_answer_text: str = ""
     full_response_text: str = ""
+    observability: dict[str, Any] = field(default_factory=unavailable_observability)
 
 
 class AggregateAccumulator:
@@ -57,6 +85,29 @@ class AggregateAccumulator:
         self._optional: dict[str, tuple[float, int]] = {"answer_accuracy": (0.0, 0), "rpf": (0.0, 0)}
         self._hle_sse = 0.0
         self._hle_count = 0
+        self._observation_coverage = {
+            key: 0 for key in ("timing", "tokens", "tools", "packages", "resources")
+        }
+        self._observation_totals: dict[str, float] = {
+            "record_wall_seconds": 0.0,
+            "record_wall_max_seconds": 0.0,
+            "input_tokens": 0.0,
+            "output_tokens": 0.0,
+            "cache_read_tokens": 0.0,
+            "cache_write_tokens": 0.0,
+            "reasoning_tokens": 0.0,
+            "total_tokens": 0.0,
+            "tool_calls": 0.0,
+            "tool_failures": 0.0,
+            "exec_calls": 0.0,
+            "exec_failures": 0.0,
+            "package_install_events": 0.0,
+            "package_install_failures": 0.0,
+            "cpu_peak_percent": 0.0,
+            "memory_peak_bytes": 0.0,
+            "pids_peak": 0.0,
+        }
+        self._observed_packages: set[str] = set()
         self._counters = {
             key: 0
             for key in (
@@ -171,6 +222,53 @@ class AggregateAccumulator:
             confidence = max(0.0, min(100.0, float(details["confidence"]))) / 100.0
             self._hle_sse += (confidence - (1.0 if evaluation.get("passed") else 0.0)) ** 2
             self._hle_count += 1
+        observability = item.observability if isinstance(item.observability, dict) else {}
+        coverage = observability.get("coverage") if isinstance(observability.get("coverage"), dict) else {}
+        totals = observability.get("totals") if isinstance(observability.get("totals"), dict) else {}
+        for key in self._observation_coverage:
+            self._observation_coverage[key] += int(coverage.get(key) == "exact")
+        if coverage.get("timing") == "exact":
+            timing = totals.get("timing") if isinstance(totals.get("timing"), dict) else {}
+            wall = float(timing.get("record_wall_seconds") or 0.0)
+            self._observation_totals["record_wall_seconds"] += wall
+            self._observation_totals["record_wall_max_seconds"] = max(
+                self._observation_totals["record_wall_max_seconds"], wall
+            )
+        if coverage.get("tokens") == "exact":
+            tokens = totals.get("tokens") if isinstance(totals.get("tokens"), dict) else {}
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "reasoning_tokens",
+                "total_tokens",
+            ):
+                self._observation_totals[key] += float(tokens.get(key) or 0)
+        if coverage.get("tools") == "exact":
+            tools = totals.get("tools") if isinstance(totals.get("tools"), dict) else {}
+            for source, target in (
+                ("call_count", "tool_calls"),
+                ("failure_count", "tool_failures"),
+                ("exec_call_count", "exec_calls"),
+                ("exec_failure_count", "exec_failures"),
+            ):
+                self._observation_totals[target] += float(tools.get(source) or 0)
+        if coverage.get("packages") == "exact":
+            packages = totals.get("packages") if isinstance(totals.get("packages"), dict) else {}
+            self._observation_totals["package_install_events"] += float(packages.get("install_event_count") or 0)
+            self._observation_totals["package_install_failures"] += float(packages.get("failed_install_event_count") or 0)
+            self._observed_packages.update(str(name) for name in packages.get("added_packages", []) if str(name))
+        if coverage.get("resources") == "exact":
+            resources = totals.get("resources") if isinstance(totals.get("resources"), dict) else {}
+            for source, target in (
+                ("cpu_peak_percent", "cpu_peak_percent"),
+                ("memory_peak_bytes", "memory_peak_bytes"),
+                ("pids_peak", "pids_peak"),
+            ):
+                self._observation_totals[target] = max(
+                    self._observation_totals[target], float(resources.get(source) or 0)
+                )
 
     def to_dict(self) -> dict[str, Any]:
         result = {"count": self.count, **self._counters}
@@ -178,6 +276,53 @@ class AggregateAccumulator:
         for key, (total, count) in self._optional.items():
             result[f"avg_{key}"] = total / count if count else None
         result["hle_calibration_rmse"] = math.sqrt(self._hle_sse / self._hle_count) if self._hle_count else None
+        exact_timing = self._observation_coverage["timing"]
+        tool_calls = self._observation_totals["tool_calls"]
+        exec_calls = self._observation_totals["exec_calls"]
+        result["observability"] = {
+            "coverage": {
+                key: {"exact": value, "total": self.count}
+                for key, value in self._observation_coverage.items()
+            },
+            "timing": {
+                "avg_record_wall_seconds": (
+                    self._observation_totals["record_wall_seconds"] / exact_timing
+                    if exact_timing
+                    else None
+                ),
+                "max_record_wall_seconds": self._observation_totals["record_wall_max_seconds"] if exact_timing else None,
+            },
+            "tokens": {
+                key: int(self._observation_totals[key])
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "reasoning_tokens",
+                    "total_tokens",
+                )
+            },
+            "tools": {
+                "call_count": int(tool_calls),
+                "failure_count": int(self._observation_totals["tool_failures"]),
+                "failure_rate": self._observation_totals["tool_failures"] / tool_calls if tool_calls else 0.0,
+                "exec_call_count": int(exec_calls),
+                "exec_failure_count": int(self._observation_totals["exec_failures"]),
+                "exec_failure_rate": self._observation_totals["exec_failures"] / exec_calls if exec_calls else 0.0,
+            },
+            "packages": {
+                "install_event_count": int(self._observation_totals["package_install_events"]),
+                "failed_install_event_count": int(self._observation_totals["package_install_failures"]),
+                "unique_added_package_count": len(self._observed_packages),
+                "added_packages": sorted(self._observed_packages),
+            },
+            "resources": {
+                "cpu_peak_percent": self._observation_totals["cpu_peak_percent"],
+                "memory_peak_bytes": int(self._observation_totals["memory_peak_bytes"]),
+                "pids_peak": int(self._observation_totals["pids_peak"]),
+            },
+        }
         return result
 
 
@@ -414,7 +559,7 @@ def build_error_group_record_result(
     )
     compatible_answer_text = answer_text or full_text or short_text
     return GroupRecordResult(
-        schema_version=4,
+        schema_version=5,
         group_id=str(getattr(group, "id", "") or ""),
         group_label=str(getattr(group, "label", "") or ""),
         runner=str(getattr(group, "runner", "") or ""),
@@ -444,6 +589,11 @@ def build_error_group_record_result(
         error=error_message,
         short_answer_text=short_text,
         full_response_text=full_text,
+        observability=(
+            meta.get("observability")
+            if isinstance(meta.get("observability"), dict) and meta.get("observability")
+            else unavailable_observability(record_wall_seconds=elapsed_seconds)
+        ),
     )
 
 

@@ -28,7 +28,7 @@ def build_result_axes_from_runner(run_result: Any) -> dict[str, Any]:
         protocol_completion_status = "missing"
 
     axes: dict[str, Any] = {
-        "schema_version": 4,
+        "schema_version": 5,
         "run_lifecycle_status": run_lifecycle_status,
         "protocol_completion_status": protocol_completion_status,
         "protocol_acceptance_status": runner_meta.get("acceptance_status"),

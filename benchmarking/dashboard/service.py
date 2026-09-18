@@ -4,8 +4,10 @@ import json
 import math
 import mimetypes
 import os
+import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from benchmarking.core.track_identity import (
     canonical_track_options,
@@ -14,6 +16,10 @@ from benchmarking.core.track_identity import (
 from benchmarking.dashboard.annotations import AnnotationStore
 from benchmarking.dashboard.progress import load_progress
 from benchmarking.runtime import paths as runtime_paths
+from benchmarking.runtime.attempt_observability import (
+    legacy_observability,
+    load_jsonl,
+)
 
 RUN_DISCOVERY_IGNORED_DIRECTORIES = {"legacy-workspace-archives"}
 REFERENCE_PLACEHOLDER_PREFIX = "No reference answer is exposed"
@@ -59,7 +65,10 @@ def _format_number(value: Any) -> str:
 
 def _current_result_payload(result: dict[str, Any]) -> dict[str, Any]:
     payload = dict(result)
+    payload["schema_version"] = max(5, int(payload.get("schema_version") or 0))
     payload["track"] = resolve_result_track(result)
+    if not isinstance(payload.get("observability"), dict) or not payload.get("observability"):
+        payload["observability"] = legacy_observability(payload)
     payload.pop("dataset", None)
     payload.pop("subset", None)
     return payload
@@ -67,7 +76,7 @@ def _current_result_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 def _current_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
     current = dict(payload)
-    current["schema_version"] = max(4, int(current.get("schema_version") or 0))
+    current["schema_version"] = max(5, int(current.get("schema_version") or 0))
     current["track_files"] = list(current.get("track_files") or current.get("dataset_files") or [])
     for legacy_key in ("dataset_files", "datasets", "subsets", "selectable_facets"):
         current.pop(legacy_key, None)
@@ -210,6 +219,41 @@ def _agent_duration_seconds(result: dict[str, Any]) -> float | None:
     return None
 
 
+def _observability_payload(result: dict[str, Any]) -> dict[str, Any]:
+    payload = result.get("observability")
+    return dict(payload) if isinstance(payload, dict) else legacy_observability(result)
+
+
+def _compact_observability(result: dict[str, Any]) -> dict[str, Any]:
+    observability = _observability_payload(result)
+    totals = observability.get("totals") if isinstance(observability.get("totals"), dict) else {}
+    timing = totals.get("timing") if isinstance(totals.get("timing"), dict) else {}
+    tokens = totals.get("tokens") if isinstance(totals.get("tokens"), dict) else {}
+    tools = totals.get("tools") if isinstance(totals.get("tools"), dict) else {}
+    packages = totals.get("packages") if isinstance(totals.get("packages"), dict) else {}
+    resources = totals.get("resources") if isinstance(totals.get("resources"), dict) else {}
+    return {
+        "coverage": observability.get("coverage") or {},
+        "attempt_count": observability.get("attempt_count", 0),
+        "record_wall_seconds": timing.get("record_wall_seconds", result.get("elapsed_seconds")),
+        "total_tokens": tokens.get("total_tokens"),
+        "input_tokens": tokens.get("input_tokens"),
+        "output_tokens": tokens.get("output_tokens"),
+        "cache_read_tokens": tokens.get("cache_read_tokens"),
+        "reasoning_tokens": tokens.get("reasoning_tokens"),
+        "tool_call_count": tools.get("call_count"),
+        "tool_failure_count": tools.get("failure_count"),
+        "tool_failure_rate": tools.get("failure_rate"),
+        "exec_call_count": tools.get("exec_call_count"),
+        "exec_failure_count": tools.get("exec_failure_count"),
+        "added_package_count": packages.get("added_package_count"),
+        "failed_install_event_count": packages.get("failed_install_event_count"),
+        "cpu_peak_percent": resources.get("cpu_peak_percent"),
+        "memory_peak_bytes": resources.get("memory_peak_bytes"),
+        "pids_peak": resources.get("pids_peak"),
+    }
+
+
 def _diagnostics_payload(result: dict[str, Any], skill_audit: dict[str, Any]) -> dict[str, Any]:
     skills_enabled = bool(result.get("skills_enabled", False))
     runner_meta = result.get("runner_meta") if isinstance(result.get("runner_meta"), dict) else {}
@@ -268,6 +312,110 @@ def _workspace_isolation_payload(runner_meta: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percentile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def _pid_is_alive(value: Any) -> bool:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError):
+        return False
+    return True
+
+
+def _run_observability_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[str, dict[str, Any]] = {}
+    for result in results:
+        group_id = str(result.get("group_id") or "")
+        group = groups.setdefault(
+            group_id,
+            {
+                "records": 0,
+                "exact": {key: 0 for key in ("timing", "tokens", "tools", "packages", "resources")},
+                "wall": [],
+                "tokens": 0,
+                "tool_calls": 0,
+                "tool_failures": 0,
+                "exec_calls": 0,
+                "exec_failures": 0,
+                "packages": set(),
+                "failed_installs": 0,
+                "cpu_peak": 0.0,
+                "memory_peak": 0,
+                "pids_peak": 0,
+            },
+        )
+        group["records"] += 1
+        observability = _observability_payload(result)
+        coverage = observability.get("coverage") if isinstance(observability.get("coverage"), dict) else {}
+        totals = observability.get("totals") if isinstance(observability.get("totals"), dict) else {}
+        for key in group["exact"]:
+            group["exact"][key] += int(coverage.get(key) == "exact")
+        if coverage.get("timing") == "exact":
+            timing = totals.get("timing") if isinstance(totals.get("timing"), dict) else {}
+            wall = timing.get("record_wall_seconds")
+            if isinstance(wall, (int, float)) and not isinstance(wall, bool):
+                group["wall"].append(float(wall))
+        if coverage.get("tokens") == "exact":
+            tokens = totals.get("tokens") if isinstance(totals.get("tokens"), dict) else {}
+            group["tokens"] += int(tokens.get("total_tokens") or 0)
+        if coverage.get("tools") == "exact":
+            tools = totals.get("tools") if isinstance(totals.get("tools"), dict) else {}
+            group["tool_calls"] += int(tools.get("call_count") or 0)
+            group["tool_failures"] += int(tools.get("failure_count") or 0)
+            group["exec_calls"] += int(tools.get("exec_call_count") or 0)
+            group["exec_failures"] += int(tools.get("exec_failure_count") or 0)
+        if coverage.get("packages") == "exact":
+            packages = totals.get("packages") if isinstance(totals.get("packages"), dict) else {}
+            group["packages"].update(str(name) for name in packages.get("added_packages", []) if str(name))
+            group["failed_installs"] += int(packages.get("failed_install_event_count") or 0)
+        if coverage.get("resources") == "exact":
+            resources = totals.get("resources") if isinstance(totals.get("resources"), dict) else {}
+            group["cpu_peak"] = max(group["cpu_peak"], float(resources.get("cpu_peak_percent") or 0.0))
+            group["memory_peak"] = max(group["memory_peak"], int(resources.get("memory_peak_bytes") or 0))
+            group["pids_peak"] = max(group["pids_peak"], int(resources.get("pids_peak") or 0))
+    rendered = {}
+    for group_id, group in groups.items():
+        wall = group.pop("wall")
+        packages = sorted(group.pop("packages"))
+        exact = group.pop("exact")
+        tool_calls = group["tool_calls"]
+        exec_calls = group["exec_calls"]
+        rendered[group_id] = {
+            **group,
+            "coverage": {
+                key: {"exact": value, "total": group["records"]}
+                for key, value in exact.items()
+            },
+            "timing": {
+                "mean_seconds": sum(wall) / len(wall) if wall else None,
+                "p50_seconds": _percentile(wall, 0.5),
+                "p95_seconds": _percentile(wall, 0.95),
+            },
+            "tool_failure_rate": group["tool_failures"] / tool_calls if tool_calls else 0.0,
+            "exec_failure_rate": group["exec_failures"] / exec_calls if exec_calls else 0.0,
+            "added_packages": packages,
+            "unique_added_package_count": len(packages),
+        }
+    return {"groups": rendered}
+
+
 class BenchmarkDashboard:
     def __init__(
         self,
@@ -321,6 +469,7 @@ class BenchmarkDashboard:
         unkeyed_results: list[dict[str, Any]] = []
 
         def merge_result(result: dict[str, Any], *, fallback_group_id: str = "") -> None:
+            result = _current_result_payload(result)
             group_id = str(result.get("group_id") or fallback_group_id)
             record_id = str(result.get("record_id") or "")
             if group_id and record_id:
@@ -381,7 +530,7 @@ class BenchmarkDashboard:
             results = self._load_results(run_root)
             group_ids = self._group_ids(payload, results, run_root)
             record_ids = sorted({str(result.get("record_id") or "") for result in results if result.get("record_id")})
-            tracks = sorted({resolve_result_track(result) for result in results})
+            tracks = sorted({str(result.get("track") or resolve_result_track(result)) for result in results})
             total = int(payload.get("records") or len(record_ids)) * max(1, len(group_ids))
             progress = load_progress(run_root, expected_total=total, group_ids=group_ids)
             summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
@@ -401,6 +550,7 @@ class BenchmarkDashboard:
                     "tracks": tracks,
                     "progress": progress,
                     "summary": summary,
+                    "observability": _run_observability_summary(results),
                 }
             )
         # Keep discovery's newest-first order within each group while pinning
@@ -424,6 +574,7 @@ class BenchmarkDashboard:
             "path": str(run_root),
             "payload": _current_run_payload(payload),
             "progress": load_progress(run_root, expected_total=total, group_ids=group_ids),
+            "observability": _run_observability_summary(results),
             "annotations": self.annotation_store.list_annotations(run_id=run_id),
         }
 
@@ -443,7 +594,7 @@ class BenchmarkDashboard:
             records.append(
                 {
                     "record_id": record_id,
-                    "track": resolve_result_track(first),
+                    "track": str(first.get("track") or resolve_result_track(first)),
                     "eval_kind": first.get("eval_kind", ""),
                     "prompt_preview": str(first.get("prompt") or "")[:320],
                     "group_results": [
@@ -453,6 +604,7 @@ class BenchmarkDashboard:
                             "outcome": _outcome(item),
                             "agent_duration_seconds": _agent_duration_seconds(item),
                             "elapsed_seconds": item.get("elapsed_seconds"),
+                            "observability": _compact_observability(item),
                         }
                         for item in sorted(items, key=_group_sort_key)
                     ],
@@ -515,6 +667,33 @@ class BenchmarkDashboard:
             )
         return assets
 
+    def _hydrate_observability(
+        self,
+        run_root: Path,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        observability = _observability_payload(result)
+        hydrated_attempts: list[dict[str, Any]] = []
+        for reference in observability.get("attempts", []) if isinstance(observability.get("attempts"), list) else []:
+            if not isinstance(reference, dict):
+                continue
+            summary_path = self._contained_artifact_path(
+                run_root,
+                str(reference.get("summary_path") or ""),
+            )
+            summary = _safe_load_json(summary_path) if summary_path is not None else {}
+            hydrated_attempts.append(
+                {
+                    **reference,
+                    **(summary if isinstance(summary, dict) else {}),
+                    "resources_url": (
+                        f"/api/runs/{quote(run_root.name, safe='')}/records/{quote(str(result.get('record_id') or ''), safe='')}/groups/"
+                        f"{quote(str(result.get('group_id') or ''), safe='')}/attempts/{int(reference.get('attempt_index') or 0)}/resources"
+                    ),
+                }
+            )
+        return {**observability, "attempts": hydrated_attempts}
+
     def get_record(self, run_id: str, record_id: str) -> dict[str, Any]:
         run_root = self._run_dir(run_id)
         results = self._find_record_results(run_root, record_id)
@@ -554,6 +733,7 @@ class BenchmarkDashboard:
                         "error": result.get("error"),
                     },
                     "diagnostics": _diagnostics_payload(result, skill_audit),
+                    "observability": self._hydrate_observability(run_root, result),
                     "workspace_isolation": _workspace_isolation_payload(runner_meta),
                     "annotations": self.annotation_store.list_annotations(
                         run_id=run_id,
@@ -565,7 +745,7 @@ class BenchmarkDashboard:
         return {
             "run_id": run_id,
             "record_id": first.get("record_id") or record_id,
-            "track": resolve_result_track(first),
+            "track": str(first.get("track") or resolve_result_track(first)),
             "eval_kind": first.get("eval_kind", ""),
             "prompt": first.get("prompt", ""),
             "question_markdown": question_markdown,
@@ -576,6 +756,114 @@ class BenchmarkDashboard:
             "groups": groups,
             "annotations": self.annotation_store.list_annotations(run_id=run_id, record_id=str(first.get("record_id") or record_id)),
         }
+
+    def monitor(self, run_id: str) -> dict[str, Any]:
+        run_root = self._run_dir(run_id)
+        run = self.get_run(run_id)
+        now = time.time()
+        active_attempts: list[dict[str, Any]] = []
+        active_root = run_root / "observability" / "active"
+        if active_root.is_dir() and not active_root.is_symlink():
+            for path in sorted(active_root.glob("*.json")):
+                payload = _safe_load_json(path)
+                if not isinstance(payload, dict):
+                    continue
+                resource_path = self._contained_artifact_path(
+                    run_root,
+                    str(payload.get("resources_path") or ""),
+                )
+                resource_rows = load_jsonl(resource_path) if resource_path is not None else []
+                heartbeat_mtime = max(
+                    path.stat().st_mtime,
+                    resource_path.stat().st_mtime if resource_path is not None and resource_path.is_file() else 0,
+                )
+                owner_alive = _pid_is_alive(payload.get("owner_pid"))
+                active_attempts.append(
+                    {
+                        **payload,
+                        "stale": now - heartbeat_mtime > 30.0 and not owner_alive,
+                        "owner_alive": owner_alive,
+                        "heartbeat_age_seconds": max(0.0, now - heartbeat_mtime),
+                        "latest_resource_window": resource_rows[-1] if resource_rows else None,
+                    }
+                )
+        return {
+            "run_id": run_id,
+            "status": run["progress"].get("status"),
+            "progress": run["progress"],
+            "active_attempts": active_attempts,
+            "observability": run["observability"],
+        }
+
+    def attempt_resources(
+        self,
+        run_id: str,
+        record_id: str,
+        group_id: str,
+        attempt_index: int,
+        *,
+        max_points: int = 2000,
+    ) -> dict[str, Any]:
+        run_root = self._run_dir(run_id)
+        results = self._find_record_results(run_root, record_id)
+        result = next(
+            (item for item in results if str(item.get("group_id") or "") == group_id),
+            None,
+        )
+        if result is None:
+            raise RecordNotFoundError(
+                f"Unknown group `{group_id}` for record `{record_id}` in run `{run_id}`"
+            )
+        observability = _observability_payload(result)
+        attempts = observability.get("attempts") if isinstance(observability.get("attempts"), list) else []
+        attempt = next(
+            (
+                item
+                for item in attempts
+                if isinstance(item, dict) and int(item.get("attempt_index") or 0) == attempt_index
+            ),
+            None,
+        )
+        if attempt is None:
+            raise RecordNotFoundError(
+                f"Unknown attempt `{attempt_index}` for `{group_id}/{record_id}`"
+            )
+        path = self._contained_artifact_path(run_root, str(attempt.get("resources_path") or ""))
+        rows = load_jsonl(path) if path is not None else []
+        limit = max(4, min(2000, int(max_points)))
+        return {
+            "coverage": (attempt.get("coverage") or {}).get("resources", "unavailable"),
+            "attempt_index": attempt_index,
+            "source_count": len(rows),
+            "points": self._downsample_resource_rows(rows, limit=limit),
+        }
+
+    @staticmethod
+    def _downsample_resource_rows(rows: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+        if len(rows) <= limit:
+            return rows
+        required = {
+            0,
+            len(rows) - 1,
+            max(range(len(rows)), key=lambda index: float(rows[index].get("cpu_peak_percent") or 0.0)),
+            max(range(len(rows)), key=lambda index: float(rows[index].get("memory_peak_bytes") or 0.0)),
+        }
+        remaining = max(0, limit - len(required))
+        if remaining:
+            step = (len(rows) - 1) / (remaining + 1)
+            required.update(round(step * position) for position in range(1, remaining + 1))
+        return [rows[index] for index in sorted(required)[:limit]]
+
+    def _contained_artifact_path(self, run_root: Path, relative: str) -> Path | None:
+        if not relative:
+            return None
+        raw_candidate = run_root / relative
+        if self._path_has_symlink(run_root, raw_candidate):
+            return None
+        candidate = raw_candidate.resolve(strict=False)
+        if not self._is_within_run(run_root, candidate):
+            return None
+        return candidate
 
     @staticmethod
     def _reference_payload(
@@ -604,9 +892,25 @@ class BenchmarkDashboard:
         except ValueError:
             return False
 
+    @staticmethod
+    def _path_has_symlink(run_root: Path, candidate: Path) -> bool:
+        try:
+            relative = candidate.relative_to(run_root)
+        except ValueError:
+            return True
+        current = run_root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+        return False
+
     def resolve_asset(self, run_id: str, asset_path: str) -> Path:
         run_root = self._run_dir(run_id)
-        candidate = (run_root / asset_path).resolve()
+        raw_candidate = run_root / asset_path
+        if self._path_has_symlink(run_root, raw_candidate):
+            raise AssetAccessError("Asset symlinks are not served")
+        candidate = raw_candidate.resolve()
         if not self._is_within_run(run_root, candidate):
             raise AssetAccessError("Asset path escapes benchmark run directory")
         if not candidate.is_file():

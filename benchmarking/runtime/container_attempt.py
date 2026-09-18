@@ -7,10 +7,12 @@ import os
 import signal
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 from benchmarking.runtime.attempt_environment import (
     collect_dependency_manifest,
+    collect_distribution_inventory,
     create_attempt_environment,
     dependency_install_events,
     remediate_forbidden_distributions,
@@ -20,6 +22,7 @@ from benchmarking.runtime.attempt_finalization import (
     register_environment,
     write_evidence,
 )
+from benchmarking.runtime.attempt_observability import package_delta
 from benchmarking.runtime.dependency_evidence import validate_dependency_evidence
 
 
@@ -53,6 +56,7 @@ def main() -> int:
     child = None
     manifest = {"status": "initialization_failed"}
     cleanup = {}
+    baseline_distributions = None
 
     def terminate(signum, _frame):
         if child is not None and child.poll() is None:
@@ -70,6 +74,16 @@ def main() -> int:
             cache_dir=scratch / "tmp/cache/uv",
         )
         env = {**os.environ, **environment.to_env()}
+        try:
+            baseline = collect_distribution_inventory(environment, base_env=env)
+            baseline_distributions = baseline.get("distributions")
+            write_evidence(
+                notes / "dependency-baseline.json",
+                {"schema_version": 1, **baseline},
+            )
+        except Exception as exc:
+            baseline_distributions = None
+            print(f"dependency-baseline: {type(exc).__name__}: {exc}", file=sys.stderr)
         child = subprocess.Popen([str(environment.python), *sys.argv[1:]], env=env, start_new_session=True)
         return child.wait()
     except Exception as exc:
@@ -86,10 +100,8 @@ def main() -> int:
                 os.killpg(child.pid, signal.SIGKILL)
                 child.wait()
         if child is not None:
-            try:
+            with suppress(ProcessLookupError):
                 os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
         lifecycle_path = notes / "session-lifecycle.json"
         if not lifecycle_path.is_file():
             try:
@@ -122,8 +134,17 @@ def main() -> int:
                     environment,
                     identity=json.loads(os.environ["BENCHMARK_ATTEMPT_IDENTITY"]),
                     install_events=events,
+                    baseline_distributions=baseline_distributions,
                 )
                 manifest["dependency_audit"] = remediate_forbidden_distributions(environment, manifest)
+                effective = collect_distribution_inventory(environment)
+                manifest["effective_distributions"] = effective.get("distributions")
+                manifest["effective_inventory_collection"] = effective.get("collection") or {}
+                manifest["distribution_delta"] = package_delta(
+                    manifest.get("baseline_distributions"),
+                    manifest.get("distributions"),
+                    manifest.get("effective_distributions"),
+                )
                 manifest["validation"] = validate_dependency_evidence(
                     manifest, identity=json.loads(os.environ["BENCHMARK_ATTEMPT_IDENTITY"]), scratch=scratch,
                     expected_venv=str(environment.venv_dir), pypi_cutoff=environment.pypi_cutoff)

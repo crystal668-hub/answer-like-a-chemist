@@ -26,23 +26,45 @@ def build_skill_use_audit(
     exec_tool_call_count = len(exec_tool_names)
     exec_tool_failure_count = _int_meta(convergence.get("exec_tool_result_error_count"))
     skill_tools_available = bool(skills_enabled and configured)
-    skill_tool_names = exec_tool_names if skill_tools_available else []
-    skill_tool_call_count = exec_tool_call_count if skill_tools_available else 0
-    skill_tool_failure_count = exec_tool_failure_count if skill_tools_available else 0
+    has_precise_skill_metrics = "skill_runner_call_count" in convergence
+    skill_tool_call_count = (
+        _int_meta(convergence.get("skill_runner_call_count"))
+        if skill_tools_available and has_precise_skill_metrics
+        else exec_tool_call_count if skill_tools_available else 0
+    )
+    skill_tool_failure_count = (
+        _int_meta(convergence.get("skill_runner_failure_count"))
+        if skill_tools_available and has_precise_skill_metrics
+        else exec_tool_failure_count if skill_tools_available else 0
+    )
+    skill_tool_names = (
+        ["run_skill"] * skill_tool_call_count
+        if has_precise_skill_metrics
+        else exec_tool_names if skill_tools_available else []
+    )
     openclaw_tool_call_count = _int_meta(convergence.get("tool_call_count"))
     if openclaw_tool_call_count == 0 and convergence_tool_names:
         openclaw_tool_call_count = len(convergence_tool_names)
     if openclaw_tool_call_count == 0:
         openclaw_tool_call_count = calls
+    upstream_failure_count = (
+        int(tool_summary.get("failures") or 0) if isinstance(tool_summary, dict) else 0
+    )
+    openclaw_tool_failure_count = (
+        _int_meta(convergence.get("tool_result_error_count"))
+        if "tool_result_error_count" in convergence
+        else upstream_failure_count
+    )
     return {
         "skills_enabled": bool(skills_enabled),
         "configured_skill_count": len(configured),
         "configured_skills": configured,
         "openclaw_tool_call_count": openclaw_tool_call_count,
+        "openclaw_tool_failure_count": openclaw_tool_failure_count,
         "openclaw_tool_names": convergence_tool_names or tool_names,
         "tool_call_count": calls,
         "tool_names": tool_names,
-        "tool_failure_count": int(tool_summary.get("failures") or 0) if isinstance(tool_summary, dict) else 0,
+        "tool_failure_count": upstream_failure_count,
         "exec_tool_call_count": exec_tool_call_count,
         "exec_tool_names": exec_tool_names,
         "exec_tool_failure_count": exec_tool_failure_count,

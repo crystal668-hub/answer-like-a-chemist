@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import platform
-import re
 import shlex
 import shutil
 import subprocess
@@ -15,12 +14,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from benchmarking.runtime.workspace_audit import (
-    _operation_outcome,
-    _tool_events_from_transcript,
-    _tool_result_text,
+from benchmarking.runtime.attempt_observability import (
+    DEPENDENCY_MANIFEST_SCHEMA_VERSION,
+    package_delta,
 )
 from benchmarking.runtime.transcript_index import TranscriptIndex
+from benchmarking.runtime.transcript_tools import (
+    background_session_id,
+    is_terminal_process_event,
+    operation_outcome,
+    tool_events_from_transcript,
+)
 
 RunSubprocess = Callable[..., subprocess.CompletedProcess[str]]
 FORBIDDEN_DISTRIBUTIONS = frozenset({"verifier-grounded-benchmark"})
@@ -159,9 +163,11 @@ def collect_dependency_manifest(
     base_env: dict[str, str] | None = None,
     run_subprocess: RunSubprocess = subprocess.run,
     install_events: list[dict[str, Any]] | None = None,
+    baseline_distributions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     env = dict(base_env or os.environ)
     env.update(environment.to_env())
+
     def collect(command, **kwargs):
         try:
             return run_subprocess(command, **kwargs)
@@ -182,39 +188,15 @@ def collect_dependency_manifest(
         replay = _build_replay_lock(environment, packages, env=env, run_subprocess=run_subprocess)
     except (OSError, subprocess.TimeoutExpired) as exc:
         replay = {"status": "unavailable", "error": str(exc)}
-    probe = collect(
-        [
-            str(environment.python),
-            "-c",
-            "import hashlib, importlib.metadata as m, json, sys, platform; "
-            "rows=[]; "
-            "[(rows.append({'name':d.metadata['Name'],'version':d.version,'direct_url':d.read_text('direct_url.json') or '',"
-            "'record_present':d.read_text('RECORD') is not None, "
-            "'record_sha256':hashlib.sha256((d.read_text('RECORD') or '').encode()).hexdigest()})) "
-            "for d in m.distributions() if d.metadata.get('Name')]; "
-            "print(json.dumps({'distributions':sorted(rows,key=lambda x:x['name'].lower()),"
-            "'python':{'executable':sys.executable,'prefix':sys.prefix,'base_prefix':sys.base_prefix,"
-            "'version':platform.python_version(),'implementation':platform.python_implementation(),"
-            "'platform':platform.platform(),'machine':platform.machine()}}))",
-        ],
-        cwd=str(environment.venv_dir.parent),
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=60,
+    inventory = collect_distribution_inventory(
+        environment,
+        base_env=env,
+        run_subprocess=run_subprocess,
     )
-    distributions = None
-    python_info = {}
-    if probe.returncode == 0:
-        try:
-            payload = json.loads(probe.stdout)
-            distributions = payload["distributions"]
-            python_info = payload["python"]
-        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
-            distributions = None
+    distributions = inventory.get("distributions")
+    python_info = inventory.get("python") if isinstance(inventory.get("python"), dict) else {}
     return {
-        "schema_version": 2,
+        "schema_version": DEPENDENCY_MANIFEST_SCHEMA_VERSION,
         "identity": dict(identity or {}),
         "python": {
             "bootstrap": environment.bootstrap_python,
@@ -238,9 +220,18 @@ def collect_dependency_manifest(
             "freeze": packages,
             "replay_lock": replay,
         },
+        "baseline_distributions": baseline_distributions,
         "distributions": distributions,
-        "collection": {"freeze": {"returncode": freeze.returncode, "stderr": freeze.stderr},
-                       "inventory": {"returncode": probe.returncode, "stderr": probe.stderr}},
+        "effective_distributions": distributions,
+        "distribution_delta": package_delta(
+            baseline_distributions,
+            distributions,
+            distributions,
+        ),
+        "collection": {
+            "freeze": {"returncode": freeze.returncode, "stderr": freeze.stderr},
+            "inventory": inventory.get("collection") or {},
+        },
         "install_events": list(install_events or []),
         "native_tools": _native_tool_fingerprints(native_tools or environment.native_tools),
         "credentials": {
@@ -248,6 +239,59 @@ def collect_dependency_manifest(
                 key for key in env if key.endswith("_API_KEY") or key.endswith("_TOKEN")
             )
         },
+    }
+
+
+def collect_distribution_inventory(
+    environment: AttemptPythonEnvironment,
+    *,
+    base_env: dict[str, str] | None = None,
+    run_subprocess: RunSubprocess = subprocess.run,
+) -> dict[str, Any]:
+    env = dict(base_env or os.environ)
+    env.update(environment.to_env())
+    try:
+        probe = run_subprocess(
+            [
+                str(environment.python),
+                "-c",
+                "import hashlib, importlib.metadata as m, json, sys, platform; "
+                "rows=[]; "
+                "[(rows.append({'name':d.metadata['Name'],'version':d.version,'direct_url':d.read_text('direct_url.json') or '',"
+                "'record_present':d.read_text('RECORD') is not None, "
+                "'record_sha256':hashlib.sha256((d.read_text('RECORD') or '').encode()).hexdigest()})) "
+                "for d in m.distributions() if d.metadata.get('Name')]; "
+                "print(json.dumps({'distributions':sorted(rows,key=lambda x:x['name'].lower()),"
+                "'python':{'executable':sys.executable,'prefix':sys.prefix,'base_prefix':sys.base_prefix,"
+                "'version':platform.python_version(),'implementation':platform.python_implementation(),"
+                "'platform':platform.platform(),'machine':platform.machine()}}))",
+            ],
+            cwd=str(environment.venv_dir.parent),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "distributions": None,
+            "python": {},
+            "collection": {"returncode": 1, "stderr": f"{type(exc).__name__}: {exc}"},
+        }
+    distributions = None
+    python_info = {}
+    if probe.returncode == 0:
+        try:
+            payload = json.loads(probe.stdout)
+            distributions = payload["distributions"]
+            python_info = payload["python"]
+        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+            distributions = None
+    return {
+        "distributions": distributions,
+        "python": python_info,
+        "collection": {"returncode": probe.returncode, "stderr": probe.stderr},
     }
 
 
@@ -309,7 +353,7 @@ def dependency_install_events(
         raise ValueError("transcript index path does not match dependency transcript")
     index = transcript_index or TranscriptIndex.from_path(path)
     payloads = [(entry.line_number, entry.payload) for entry in index.entries]
-    events, _ = _tool_events_from_transcript(payloads)
+    events, _ = tool_events_from_transcript(payloads)
     process_results: dict[str, list[Any]] = {}
     for event in events:
         if event.tool_name.strip().lower() != "process" or not isinstance(event.arguments, dict):
@@ -317,18 +361,6 @@ def dependency_install_events(
         session_id = str(event.arguments.get("sessionId") or event.arguments.get("session_id") or "").strip()
         if session_id and event.result is not None:
             process_results.setdefault(session_id, []).append(event)
-
-    def terminal_process_event(event: Any) -> bool:
-        action = str(event.arguments.get("action") or "").strip().lower()
-        if action in {"kill", "remove"}:
-            return True
-        result = event.result if isinstance(event.result, dict) else {}
-        if result.get("isError") is True:
-            return True
-        details = result.get("details") if isinstance(result.get("details"), dict) else {}
-        if isinstance(details.get("exitCode", details.get("exit_code")), int):
-            return True
-        return re.search(r"Process exited with code\s+-?\d+", _tool_result_text(result)) is not None
 
     captured: list[dict[str, Any]] = []
     for event in events:
@@ -338,21 +370,23 @@ def dependency_install_events(
             continue
         result = event.result
         result_line = event.result_line
-        outcome = _operation_outcome(result)
-        if re.search(r"Command still running \(session [^,)]+", _tool_result_text(result)):
-            match = re.search(r"Command still running \(session ([^,)]+)", _tool_result_text(result))
-            followups = process_results.get(match.group(1), []) if match else []
+        outcome = operation_outcome(result)
+        session_id = background_session_id(event)
+        if session_id:
+            followups = process_results.get(session_id, [])
             completed = [
                 item
                 for item in followups
-                if item.call_line > event.call_line and terminal_process_event(item)
+                if item.call_line > event.call_line and is_terminal_process_event(item)
             ]
             if completed:
                 terminal = completed[-1]
                 result = terminal.result
                 result_line = terminal.result_line
                 action = str(terminal.arguments.get("action") or "").strip().lower()
-                outcome = "failed" if action in {"kill", "remove"} else _operation_outcome(result)
+                if action in {"kill", "remove"}:
+                    outcome = "failed"
+                outcome = "failed" if action in {"kill", "remove"} else operation_outcome(result)
             else:
                 outcome = "pending"
         captured.append(

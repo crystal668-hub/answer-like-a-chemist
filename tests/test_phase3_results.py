@@ -119,7 +119,7 @@ def test_stream_writer_upconverts_and_preserves_full_payload(tmp_path):
     payload = json.loads(out.read_text(encoding="utf-8"))
     loaded = load_group_record_result(path)
     assert payload["results"][0] == asdict(loaded)
-    assert payload["results"][0]["schema_version"] == 4
+    assert payload["results"][0]["schema_version"] == 5
     assert payload["results"][0]["raw"] == {"raw": "preserved"}
     assert payload["results"][0]["full_response_text"] == "full answer with evidence"
     assert out.read_text(encoding="utf-8") == json.dumps(

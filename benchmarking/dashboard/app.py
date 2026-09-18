@@ -97,6 +97,35 @@ def create_app(
         except RunNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/runs/{run_id}/monitor")
+    def api_get_monitor(run_id: str) -> dict[str, Any]:
+        try:
+            return dashboard.monitor(run_id)
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/runs/{run_id}/records/{record_id}/groups/{group_id}/attempts/"
+        "{attempt_index}/resources"
+    )
+    def api_get_attempt_resources(
+        run_id: str,
+        record_id: str,
+        group_id: str,
+        attempt_index: int,
+        max_points: int = 2000,
+    ) -> dict[str, Any]:
+        try:
+            return dashboard.attempt_resources(
+                run_id,
+                record_id,
+                group_id,
+                attempt_index,
+                max_points=max_points,
+            )
+        except (RunNotFoundError, RecordNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/api/runs/{run_id}/assets/{asset_path:path}")
     def api_get_asset(run_id: str, asset_path: str) -> Any:
         try:

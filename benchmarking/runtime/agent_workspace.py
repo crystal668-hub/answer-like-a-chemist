@@ -16,6 +16,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
 
 from benchmarking.core.contracts import FailureInfo
+from benchmarking.runtime.observability import (
+    increment,
+    observed_duration,
+)
+from benchmarking.runtime.transcript_index import TranscriptIndex
+from benchmarking.runtime.transcript_tools import tool_events_from_transcript
 from benchmarking.runtime.workspace_audit import (
     _audit_recovery_candidates,
     _forbidden_access_findings,
@@ -24,18 +30,12 @@ from benchmarking.runtime.workspace_audit import (
     _project_transcript_paths,
     _redact_text,
     _select_audit_transcript,
-    _tool_events_from_transcript,
     _transcript_audit_failure,
     _workdir_fallback_finding,
 )
 from benchmarking.runtime.workspace_policy import (
     WORKSPACE_ISOLATION_SCHEMA_VERSION as _WORKSPACE_ISOLATION_SCHEMA_VERSION,
 )
-from benchmarking.runtime.observability import (
-    increment,
-    observed_duration,
-)
-from benchmarking.runtime.transcript_index import TranscriptIndex
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit as _ContaminationAudit,
 )
@@ -786,7 +786,11 @@ class AttemptWorkspaceManager:
             )
             try:
                 if identity.runner_kind == "single_llm":
-                    from benchmarking.runtime.attempt_finalization import cleanup_owned_environment, read_evidence, write_evidence
+                    from benchmarking.runtime.attempt_finalization import (
+                        cleanup_owned_environment,
+                        read_evidence,
+                        write_evidence,
+                    )
                     owner = read_evidence(lease.notes_dir / "environment-owner.json")
                     if owner.get("identity") not in (None, identity.sentinel_fields()):
                         raise ValueError("environment ownership mismatch")
@@ -797,7 +801,9 @@ class AttemptWorkspaceManager:
                     if not (lease.notes_dir / "dependency-manifest.json").is_file():
                         write_evidence(lease.notes_dir / "dependency-manifest.json", {
                             "status": "unavailable", "identity": identity.sentinel_fields(), "reason": "crash_recovery"})
-                    from benchmarking.runtime.container_attempt import cleanup_plugin_skill_links
+                    from benchmarking.runtime.container_attempt import (
+                        cleanup_plugin_skill_links,
+                    )
                     cleanup_plugin_skill_links(lease.scratch_dir / "session", host_recovery=True)
                 archives.append(self.seal(lease, AttemptOutcome(runner_status="aborted", archive_reason="shutdown_recovery")))
             except (OSError, ValueError, WorkspaceIsolationError):
@@ -997,7 +1003,7 @@ class AttemptWorkspaceManager:
                 mappings=transcript_path_mappings,
                 projector=_project_transcript_paths,
             )
-            events, standalone_results = _tool_events_from_transcript(payloads)
+            events, standalone_results = tool_events_from_transcript(payloads)
         except Exception as exc:
             recovered = self._retry_audit_from_archive(
                 lease=lease,

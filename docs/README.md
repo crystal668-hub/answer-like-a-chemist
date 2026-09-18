@@ -8,7 +8,7 @@ Their status and code examples may describe an older system; check current code
 and the global specification before implementation or operation. Directory
 placement does not imply approval, implementation, or current validity.
 
-## design (11)
+## design (12)
 
 Architecture, specifications, interfaces, and invariants.
 
@@ -17,6 +17,7 @@ Architecture, specifications, interfaces, and invariants.
 - [Benchmark Agent Workspace Attempt Isolation Specification](design/2026-07-14-benchmark-agent-workspace-attempt-isolation-design.md)
 - [Verifier-Grounded Benchmark 与 OpenClaw Single-LLM 标准接入使用规格](design/2026-07-15-verifier-grounded-openclaw-single-llm-integration-usage-spec.md)
 - [VGB Track-Only Identity Specification](design/2026-09-17-vgb-track-only-identity-spec.md): canonical Track table, schema v4, CLI and storage layout, historical read compatibility, and dashboard filtering.
+- [Benchmark Observability and Dashboard v2 Specification](design/2026-09-18-benchmark-observability-dashboard-v2-spec.md): schema-v5 metrics, transcript/tool semantics, package and token evidence, container sampling, APIs, and dashboard contract.
 - [Benchmark Attempt Workspace Behavior and Contamination Adjudication Specification](design/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication-spec.md)
 - [Benchmark Forbidden Path Root Containment Specification](design/2026-07-16-benchmark-forbidden-path-root-containment-spec.md)
 - [Benchmark Audit Error Allowlist and Cancellation Specification](design/2026-07-23-benchmark-audit-error-allowlist-and-cancellation-spec.md)
@@ -81,7 +82,7 @@ Observed results, validation, and supporting evidence.
 
 Operating instructions for existing capabilities.
 
-- [Benchmark Dashboard 使用说明](guide/benchmark-dashboard-usage.md)
+- [Benchmark Dashboard 使用说明](guide/benchmark-dashboard-usage.md): 实时运行监控、v5 观测契约、工具/包/token/资源复盘和历史兼容。
 
 ## research (1)
 

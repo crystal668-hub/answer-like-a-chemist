@@ -79,7 +79,7 @@ runbooks.
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, Track selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
-| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, and pinned Track filtering across run summaries and record details. |
+| `benchmarking/dashboard/` | Local FastAPI dashboard, progress reconciliation, immutable run inspection, asset containment, dashboard-only annotations, pinned Track filtering, observability aggregation, active-attempt monitoring, and bounded resource-series reads. |
 
 `benchmarking.runtime.paths` is the shared path authority used by the package
 and scripts. The benchmark CLI is owned directly by `benchmarking.workflow.cli`;
@@ -155,6 +155,16 @@ thread-safe runtime metrics collector. The CLI starts and finalizes it; I/O,
 transcript consumers, attempts, audits, archives, scoring, Docker commands, and
 verifier subprocesses contribute counters or monotonic durations without adding
 record content to the metrics payload.
+`benchmarking.runtime.attempt_observability` owns the schema-v1 per-attempt and
+per-record behavioral metrics contract, token source precedence, redaction,
+package delta, tool-event summaries, historical projections, and retry
+aggregation. `benchmarking.runtime.transcript_tools` is the shared structured
+tool-call/result correlation and status authority used by convergence,
+dependency evidence, workspace audit, and observability. Structured result
+status, `isError`, and exit code take precedence over legacy text recognition;
+all non-success states count as failures while retaining their subtype.
+`benchmarking.runtime.container_resources` owns the single long-lived Docker
+stats reader, 5-second aggregation windows, JSONL evidence, and resource peaks.
 `benchmarking.runtime.transcript_index` owns disposable, fingerprinted JSONL
 snapshots. A stable primary transcript is decoded once per process boundary and
 the immutable parsed view is shared by convergence, answer recovery, dependency
@@ -375,6 +385,10 @@ For each invocation, the CLI:
    Within the OpenClaw wrapper, post-turn convergence and answer recovery share a
    transcript index. After the wrapper exits, the parent runtime builds one index
    for dependency evidence and workspace audit before sealing the workspace.
+   Each single-LLM attempt also publishes a versioned observability summary,
+   redacted tool/package/token evidence, and a 5-second Docker resource series;
+   retry, reminder, and rescue invocations are aggregated into the per-record
+   observability totals before scoring persistence.
 6. Starts detached automated analysis unless `--no-analysis` is selected. A
    cancelled run never launches detached analysis.
 
@@ -507,6 +521,12 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   distributions, then deletes the venv, uv cache, and native-tool wrappers
   before sealing the workspace; the manifest remains in archived scratch and
   runner metadata.
+- Dependency manifest schema version 3 retains `distributions` as the
+  pre-remediation inventory and adds the seeded baseline, effective inventory,
+  and deterministic added/removed/version-changed/policy-removed delta. Package
+  observability distinguishes successful direct install requests from transitive
+  additions; unavailable inventory degrades telemetry coverage without changing
+  the independent dependency scoring gate.
 - Docker Python and skill scripts use
   `/benchmark/workspace/scratch/venv/bin/python`; the uv cache is
   `scratch/tmp/cache/uv`. Container configs set `tools.exec.pathPrepend` to the
@@ -615,10 +635,15 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   their pending state through the refresh control and restore the control after
   either success or failure. Favorited runs are pinned to the top of the run
   list; within favorited and non-favorited groups, discovery keeps the existing
-  newest-first ordering. Record detail timing prefers the agent execution
-  duration from `runner_meta.durationMs`, converted from milliseconds to
-  seconds, and falls back to persisted `elapsed_seconds` for legacy results
-  without that metadata.
+  newest-first ordering. The dashboard is a dense monitoring and review console:
+  run summaries compare score, exact-observation timing, token use, unified tool
+  failures, package installation, and resource peaks; active attempts expose
+  resource heartbeats; record details expose overview, timeline, redacted exec,
+  packages, tokens, resource curves, and evidence views. Resource APIs accept
+  only run-derived identities, contain all paths within the immutable run root,
+  and return at most 2,000 points while retaining endpoints and CPU/memory peaks.
+  Historical v1-v4 records are projected read-only with explicit
+  `exact`/`partial`/`unavailable` coverage rather than fabricated zero values.
 - Dashboard Track choices come directly from the ordered pinned release table and
   do not depend on scanned run contents. The browser exposes one Track selector;
   `legacy:*` values remain visible in historical run/detail views but never become
@@ -649,9 +674,11 @@ service is required.
 - `RunnerResult.should_score()` is the gate into evaluator execution. Completed
   results score; recovered results score only when their recovery metadata marks
   them both evaluable and scoreable.
-- Current per-record and top-level result writers use schema version `4` and
-  carry one canonical `track` identity. Aggregate projections use `by_track`
-  and `group_track`; run metadata uses `track_files`.
+- Current per-record and top-level result writers use schema version `5`, carry
+  one canonical `track` identity, and add the versioned `observability` contract:
+  per-metric coverage, all-attempt totals, a final-attempt projection, and
+  attempt artifact references. Aggregate projections use `by_track` and
+  `group_track`; run metadata uses `track_files`.
 - Stable result axes are `run_lifecycle_status`,
   `protocol_completion_status`, `answer_availability`, `answer_reliability`,
   `evaluable`, `scored`, `recovery_mode`, `degraded_execution`, and
@@ -681,6 +708,9 @@ The final run artifact set includes:
 - `results.json`, `runtime-manifest.json`, and `runtime-metrics.json`;
 - `per-record/<group>/<record>.json`;
 - `progress/events.jsonl` and `progress/state.json`;
+- `observability/active/<attempt-id>.json` while attempts run and
+  `observability/attempts/<group>/<record>/<attempt>/summary.json` plus
+  `resources.jsonl` after finalization;
 - `runtime-config/*.json` and archived attempt workspaces; historical runs may
   already contain retained `input-bundles/`;
 - `skill-routing-inventory.json` and (when the
@@ -879,7 +909,11 @@ boundary. Processes still run as the same local user.
   original verifier-grounded exposure and isolated scoring decisions; its
   identity, CLI, layout, and result-schema sections are superseded below.
 - `docs/design/2026-09-17-vgb-track-only-identity-spec.md`: current Track-only
-  input identity, CLI, storage, schema-v4, dashboard, and historical-read contract.
+  input identity, CLI, storage, dashboard, and historical-read contract; its
+  schema-v4 result section is superseded by the observability specification.
+- `docs/design/2026-09-18-benchmark-observability-dashboard-v2-spec.md`:
+  current schema-v5 behavioral metrics, resource sampling, dashboard, API, and
+  historical coverage contract.
 - `benchmarking/resources/verifier_grounded/release.json`: current pinned
   verifier-grounded release identity.
 

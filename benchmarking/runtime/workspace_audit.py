@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.transcript_tools import ToolEvent
+from benchmarking.runtime.transcript_tools import (
+    operation_outcome as _operation_outcome,
+)
+from benchmarking.runtime.transcript_tools import tool_result_text as _tool_result_text
 from benchmarking.runtime.workspace_policy import WorkspaceAccessPolicy, _path_is_within
 
 
@@ -36,20 +41,14 @@ class AuditProjection:
     masked_construct_count: int = 0
 
 
-@dataclass(frozen=True)
-class ToolEvent:
-    tool_call_id: str
-    tool_name: str
-    arguments: Any
-    call_line: int
-    result_line: int | None = None
-    result: Mapping[str, Any] | None = None
-
-
 def _project_transcript_paths(value: Any, mappings: Mapping[str, str]) -> Any:
     if isinstance(value, str):
         for source, target in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
-            value = re.sub(re.escape(source) + r"(?=/|[\s\"'`;]|$)", lambda _match: target, value)
+            value = re.sub(
+                re.escape(source) + r"(?=/|[\s\"'`;]|$)",
+                lambda _match, replacement=target: replacement,
+                value,
+            )
         return value
     if isinstance(value, list):
         return [_project_transcript_paths(item, mappings) for item in value]
@@ -101,108 +100,6 @@ def _select_audit_transcript(
         "candidate_count": len(candidates),
         "model_reinvoked": False,
     }
-
-
-def _tool_events_from_transcript(
-    payloads: list[tuple[int, Any]],
-) -> tuple[list[ToolEvent], list[tuple[int, Mapping[str, Any]]]]:
-    pending: list[ToolEvent] = []
-    results: dict[str, tuple[int, Mapping[str, Any]]] = {}
-    result_order: list[tuple[int, Mapping[str, Any]]] = []
-    for line_number, payload in payloads:
-        if not isinstance(payload, Mapping):
-            continue
-        message = payload.get("message")
-        if not isinstance(message, Mapping):
-            continue
-        role = str(message.get("role") or "").strip().lower()
-        if role == "assistant":
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for item_index, item in enumerate(content):
-                if not isinstance(item, Mapping) or str(item.get("type") or "").lower() not in {
-                    "toolcall",
-                    "tool_call",
-                }:
-                    continue
-                call_id = str(item.get("id") or item.get("toolCallId") or "").strip()
-                if not call_id:
-                    call_id = f"transcript-line-{line_number}-call-{item_index}"
-                pending.append(
-                    ToolEvent(
-                        tool_call_id=call_id,
-                        tool_name=str(item.get("name") or ""),
-                        arguments=item.get("arguments"),
-                        call_line=line_number,
-                    )
-                )
-        elif role in {"toolresult", "tool_result"}:
-            call_id = str(message.get("toolCallId") or message.get("tool_call_id") or "").strip()
-            result_order.append((line_number, message))
-            if call_id:
-                results[call_id] = (line_number, message)
-
-    events: list[ToolEvent] = []
-    matched_result_ids: set[str] = set()
-    for event in pending:
-        result_entry = results.get(event.tool_call_id)
-        if result_entry is None:
-            events.append(event)
-            continue
-        result_line, result = result_entry
-        matched_result_ids.add(event.tool_call_id)
-        events.append(
-            ToolEvent(
-                tool_call_id=event.tool_call_id,
-                tool_name=event.tool_name,
-                arguments=event.arguments,
-                call_line=event.call_line,
-                result_line=result_line,
-                result=result,
-            )
-        )
-    standalone = [
-        (line_number, result)
-        for line_number, result in result_order
-        if str(result.get("toolCallId") or result.get("tool_call_id") or "").strip() not in matched_result_ids
-    ]
-    return events, standalone
-
-
-def _tool_result_text(message: Mapping[str, Any] | None) -> str:
-    if not isinstance(message, Mapping):
-        return ""
-    content = message.get("content")
-    if not isinstance(content, list):
-        return ""
-    return "\n".join(
-        str(item.get("text") or "")
-        for item in content
-        if isinstance(item, Mapping) and str(item.get("type") or "").lower() == "text"
-    )
-
-
-def _operation_outcome(message: Mapping[str, Any] | None) -> str:
-    if message is None:
-        return "unknown"
-    text = _tool_result_text(message)
-    if "benchmark_workspace_guard_blocked" in text or "benchmark_workdir_invalid" in text:
-        return "blocked"
-    if message.get("isError") is True:
-        return "failed"
-    details = message.get("details")
-    details = details if isinstance(details, Mapping) else {}
-    exit_code = details.get("exitCode", details.get("exit_code"))
-    if isinstance(exit_code, int) and exit_code != 0:
-        return "failed"
-    match = re.search(r"Command exited with code\s+(-?\d+)", text)
-    if match and int(match.group(1)) != 0:
-        return "failed"
-    match = re.search(r"Process exited with code\s+(-?\d+)", text)
-    if match and int(match.group(1)) != 0:
-        return "failed"
-    return "succeeded"
 
 
 def _workdir_fallback_finding(

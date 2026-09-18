@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from benchmarking.runtime.attempt_observability import token_usage_from_trajectory
 from benchmarking.runtime.session_isolation import (
     atomic_write_json,
     session_store_path_for_agent,
@@ -82,6 +83,7 @@ def provider_observability(trajectory_path: Path) -> dict[str, Any]:
         timeout_classification = "provider_stream_gap_timeout"
     elif "idle timeout" in prompt_error.lower():
         timeout_classification = "openclaw_idle_watchdog"
+    usage = token_usage_from_trajectory(trajectory_path)
     return {
         "request_started_at": str(submitted.get("ts") or "") if isinstance(submitted, dict) else "",
         "first_response_chunk_at": "",
@@ -94,6 +96,7 @@ def provider_observability(trajectory_path: Path) -> dict[str, Any]:
         "idle_timed_out": idle_timed_out,
         "timeout_classification": timeout_classification,
         "watchdog_source": "openclaw_idle_watchdog" if idle_timed_out else "",
+        "usage": usage or {},
     }
 
 

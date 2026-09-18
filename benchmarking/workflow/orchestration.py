@@ -10,6 +10,11 @@ from typing import Any
 from benchmarking.core.contracts import RunnerResult
 from benchmarking.core.reporting import GroupRecordResult
 from benchmarking.core.status import build_result_axes_from_runner
+from benchmarking.runtime.attempt_observability import (
+    aggregate_attempt_observability,
+    finalize_record_observability,
+    load_attempt_summaries,
+)
 from benchmarking.runtime.cancellation import BenchmarkCancelledError, CancellationToken
 from benchmarking.workflow.attempt_queue import (
     WorkStep,
@@ -293,13 +298,22 @@ def run_group(
             continue
         if progress_writer is not None:
             progress_writer.record_started(group.id, record.record_id, index=index)
-        started = time.time()
+        started = time.monotonic()
+        scoring_timing: dict[str, float | None] = {
+            "queued": None,
+            "started": None,
+            "ended": None,
+        }
         run_result: Any | None = None
         try:
             if getattr(runner.run, "supports_steps", False):
                 run_result = yield from runner.run(record, group, staged=True)
             else:
-                run_result = yield WorkStep(lambda: runner.run(record, group))
+                run_result = yield WorkStep(
+                    lambda selected_record=record, selected_group=group: runner.run(
+                        selected_record, selected_group
+                    )
+                )
             if cancellation_token is not None:
                 cancellation_token.raise_if_cancelled()
             ensure_compatible_runner_result(run_result, runner_kind=group.runner)
@@ -310,20 +324,48 @@ def run_group(
                     result_path = persist_runner_result(output_root / "scoring-pending" / group.id /
                                                        f"{slugify_fn(record.record_id)}.json", run_result)
                     run_result = None
-                    def score_saved(path=result_path, selected_record=record):
-                        saved = load_runner_result(path)
-                        return evaluate_answer_fn(selected_record, short_answer_text=saved.answer.short_answer_text,
-                            full_response_text=saved.answer.full_response_text,
-                            answer_text=saved.answer.full_response_text or saved.answer.short_answer_text, judge=judge)
+                    scoring_timing["queued"] = time.monotonic()
+
+                    def score_saved(
+                        path=result_path,
+                        selected_record=record,
+                        timing=scoring_timing,
+                    ):
+                        timing["started"] = time.monotonic()
+                        try:
+                            saved = load_runner_result(path)
+                            return evaluate_answer_fn(selected_record, short_answer_text=saved.answer.short_answer_text,
+                                full_response_text=saved.answer.full_response_text,
+                                answer_text=saved.answer.full_response_text or saved.answer.short_answer_text, judge=judge)
+                        finally:
+                            timing["ended"] = time.monotonic()
                     try:
                         evaluation = yield WorkStep(score_saved, kind="score")
                     finally:
                         run_result = load_runner_result(result_path)
                 else:
-                    evaluation = yield WorkStep(lambda: evaluate_answer_fn(
-                        record, short_answer_text=run_result.answer.short_answer_text,
-                        full_response_text=run_result.answer.full_response_text,
-                        answer_text=answer_text, judge=judge), kind="score")
+                    scoring_timing["queued"] = time.monotonic()
+
+                    def score_current(
+                        selected_record=record,
+                        selected_result=run_result,
+                        selected_answer_text=answer_text,
+                        timing=scoring_timing,
+                    ):
+                        timing["started"] = time.monotonic()
+                        try:
+                            return evaluate_answer_fn(
+                                selected_record,
+                                short_answer_text=selected_result.answer.short_answer_text,
+                                full_response_text=selected_result.answer.full_response_text,
+                                answer_text=selected_answer_text,
+                                judge=judge,
+                            )
+                        finally:
+                            timing["ended"] = time.monotonic()
+
+                    evaluation = yield WorkStep(score_current, kind="score")
+                elapsed = time.monotonic() - started
                 entry = GroupRecordResult(
                     **axes,
                     group_id=group.id,
@@ -341,10 +383,11 @@ def run_group(
                     evaluation=asdict(evaluation),
                     runner_meta=run_result.runner_meta,
                     raw=run_result.raw,
-                    elapsed_seconds=time.time() - started,
+                    elapsed_seconds=elapsed,
                     error=None,
                     short_answer_text=run_result.answer.short_answer_text,
                     full_response_text=run_result.answer.full_response_text,
+                    observability=(run_result.runner_meta.get("observability") or {}),
                 )
             else:
                 runner_meta_error = str((run_result.runner_meta or {}).get("error") or "").strip()
@@ -359,7 +402,7 @@ def run_group(
                     group=group,
                     record=record,
                     error_message=error_message,
-                    elapsed_seconds=time.time() - started,
+                    elapsed_seconds=time.monotonic() - started,
                     short_answer_text=run_result.answer.short_answer_text,
                     full_response_text=run_result.answer.full_response_text,
                     runner_meta=run_result.runner_meta,
@@ -367,7 +410,7 @@ def run_group(
                 )
                 entry = GroupRecordResult(**{**asdict(entry), **axes, "error": error_message})
         except Exception as exc:
-            elapsed = time.time() - started
+            elapsed = time.monotonic() - started
             if isinstance(exc, BenchmarkCancelledError) or (
                 cancellation_token is not None and cancellation_token.is_cancelled
             ):
@@ -415,6 +458,40 @@ def run_group(
                 )
             if progress_writer is not None:
                 progress_writer.error(group_id=group.id, record_id=record.record_id, message=str(exc))
+        queued_at = scoring_timing.get("queued")
+        scoring_started = scoring_timing.get("started")
+        scoring_ended = scoring_timing.get("ended")
+        scoring_wait_seconds = (
+            max(0.0, scoring_started - queued_at)
+            if isinstance(queued_at, float) and isinstance(scoring_started, float)
+            else 0.0
+        )
+        scoring_seconds = (
+            max(0.0, scoring_ended - scoring_started)
+            if isinstance(scoring_started, float) and isinstance(scoring_ended, float)
+            else 0.0
+        )
+        entry_observability = entry.observability or (
+            entry.runner_meta.get("observability")
+            if isinstance(entry.runner_meta, dict)
+            else {}
+        )
+        if not entry_observability:
+            recovered_attempts = load_attempt_summaries(
+                output_root,
+                group_id=str(group.id),
+                record_id=str(record.record_id),
+            )
+            if recovered_attempts:
+                entry_observability = aggregate_attempt_observability(recovered_attempts)
+        entry.observability = finalize_record_observability(
+            entry_observability,
+            record_wall_seconds=entry.elapsed_seconds,
+            scoring_wait_seconds=scoring_wait_seconds,
+            scoring_seconds=scoring_seconds,
+        )
+        if isinstance(entry.runner_meta, dict):
+            entry.runner_meta["observability"] = entry.observability
         save_json_fn(output_root / "per-record" / group.id / f"{slugify_fn(record.record_id)}.json", asdict(entry))
         entry_status = entry.run_lifecycle_status
         entry_evaluation = entry.evaluation if isinstance(entry.evaluation, dict) else {}

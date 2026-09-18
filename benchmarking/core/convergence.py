@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from benchmarking.runtime.transcript_index import TranscriptIndex
+from benchmarking.runtime.transcript_tools import (
+    canonical_tool_status,
+    tool_events_from_transcript,
+)
 
 FINAL_ANSWER_LINE_RE = re.compile(
     r"^\s*(?P<marker>\*\*)?\s*FINAL\s+ANSWER\s*[:：-](?P<answer>.*)$",
@@ -214,16 +218,22 @@ def summarize_transcript_convergence(
     transcript_index: TranscriptIndex | None = None,
 ) -> dict[str, Any]:
     assistant_turn_count = 0
-    tool_call_count = 0
-    tool_names: list[str] = []
+    transcript_events = _iter_transcript_events(transcript_path, transcript_index)
+    tool_events, standalone_results = tool_events_from_transcript(
+        list(enumerate(transcript_events, start=1))
+    )
+    tool_call_count = len(tool_events)
+    tool_names = [str(event.tool_name or "") for event in tool_events if str(event.tool_name or "")]
     prompt_errors: list[str] = []
     missing_skill_doc_read_count = 0
     tool_result_error_count = 0
     request_shape_error_count = 0
     exec_tool_result_error_count = 0
     exec_request_shape_error_count = 0
+    skill_runner_call_count = 0
+    skill_runner_failure_count = 0
     coverage_checklist_present = False
-    for event in _iter_transcript_events(transcript_path, transcript_index):
+    for event in transcript_events:
         if event.get("customType") == "openclaw:prompt-error":
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             error_text = str(data.get("error") or data.get("message") or "").strip()
@@ -237,28 +247,40 @@ def summarize_transcript_convergence(
             assistant_text = _text_from_content(message.get("content"))
             if "coverage checklist" in assistant_text.lower() and CHECKLIST_STATE_RE.search(assistant_text):
                 coverage_checklist_present = True
-            for item in message.get("content") or []:
-                if isinstance(item, dict) and item.get("type") == "toolCall":
-                    tool_call_count += 1
-                    name = str(item.get("name") or "")
-                    if name:
-                        tool_names.append(name)
         elif message.get("role") == "toolResult":
             tool_text = _text_from_content(message.get("content"))
             tool_name = str(message.get("toolName") or "")
             normalized = tool_text.lower()
             if any(pattern in normalized for pattern in MISSING_SKILL_DOC_PATTERNS):
                 missing_skill_doc_read_count += 1
-            is_tool_result_error = _looks_like_tool_result_error(normalized, tool_name=tool_name)
             is_request_shape_error = _looks_like_request_shape_error(normalized, tool_name=tool_name)
-            if is_tool_result_error:
-                tool_result_error_count += 1
-                if tool_name.strip().lower() == "exec":
-                    exec_tool_result_error_count += 1
             if is_request_shape_error:
                 request_shape_error_count += 1
                 if tool_name.strip().lower() == "exec":
                     exec_request_shape_error_count += 1
+    for tool_event in tool_events:
+        status, _ = canonical_tool_status(tool_event.result)
+        arguments = tool_event.arguments if isinstance(tool_event.arguments, dict) else {}
+        command = str(arguments.get("command") or "")
+        is_skill_runner = tool_event.tool_name.strip().lower() == "exec" and (
+            "BENCHMARK_SKILL_RUNNER" in command or "scripts/run_skill.py" in command
+        )
+        if is_skill_runner:
+            skill_runner_call_count += 1
+        if status == "success":
+            continue
+        tool_result_error_count += 1
+        if tool_event.tool_name.strip().lower() == "exec":
+            exec_tool_result_error_count += 1
+        if is_skill_runner:
+            skill_runner_failure_count += 1
+    for _, result in standalone_results:
+        status, _ = canonical_tool_status(result)
+        if status == "success":
+            continue
+        tool_result_error_count += 1
+        if str(result.get("toolName") or "").strip().lower() == "exec":
+            exec_tool_result_error_count += 1
     latest_prompt_error = prompt_errors[-1] if prompt_errors else ""
     return {
         "transcript_path": str(transcript_path),
@@ -274,6 +296,8 @@ def summarize_transcript_convergence(
         "request_shape_error_count": request_shape_error_count,
         "exec_tool_result_error_count": exec_tool_result_error_count,
         "exec_request_shape_error_count": exec_request_shape_error_count,
+        "skill_runner_call_count": skill_runner_call_count,
+        "skill_runner_failure_count": skill_runner_failure_count,
         "coverage_checklist_present": coverage_checklist_present,
     }
 
