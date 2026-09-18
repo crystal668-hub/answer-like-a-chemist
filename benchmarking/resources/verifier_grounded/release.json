@@ -1,11 +1,11 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "7670c3421354ef4e10eb5f4cca662d58f3ae8bc2",
+  "source_commit": "fd844ddf790889d14f1f063eff383a9ef49042ce",
   "source_tag": "v0.9.3",
   "sdist": {
     "filename": "verifier_grounded_benchmark-0.9.3.tar.gz",
-    "sha256": "8f10aad10623d221af36ec11b8b925cef102d6e0543a48211aa1bcd050f477a1"
+    "sha256": "b92869ff3fe9769e70db5eb48fe8fd7dcce7b63fe9243d49b776a084954585c6"
   },
   "tracks": {
     "rdkit": {
@@ -141,7 +141,7 @@
   "version": "0.9.3",
   "wheel": {
     "filename": "verifier_grounded_benchmark-0.9.3-py3-none-any.whl",
-    "sha256": "891a4e524616ca9feb9540f8a967949f14fcf5686347d1019c40cc6d79f3ef9b",
-    "size": 185792
+    "sha256": "8ed70758b1e7cbb0f20e6fd81a0d96578a2a9a629a000213f5301ddc8455b20a",
+    "size": 186437
   }
 }

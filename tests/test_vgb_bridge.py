@@ -17,9 +17,9 @@ def test_release_config_pins_version_hash_and_complete_inventory() -> None:
 
     assert config.version == "0.9.3"
     assert config.source_tag == "v0.9.3"
-    assert config.source_commit == "7670c3421354ef4e10eb5f4cca662d58f3ae8bc2"
-    assert config.wheel_sha256 == "891a4e524616ca9feb9540f8a967949f14fcf5686347d1019c40cc6d79f3ef9b"
-    assert config.wheel_size == 185792
+    assert config.source_commit == "fd844ddf790889d14f1f063eff383a9ef49042ce"
+    assert config.wheel_sha256 == "8ed70758b1e7cbb0f20e6fd81a0d96578a2a9a629a000213f5301ddc8455b20a"
+    assert config.wheel_size == 186437
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation_advanced": 20,
         "property_calculation_basic": 51,

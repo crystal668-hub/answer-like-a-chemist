@@ -277,7 +277,7 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
   identity and sanitized public Track snapshots. The current pinned VGB
-  runtime is v0.9.2.
+  runtime is v0.9.3.
 Run-scoped and materialized container OpenClaw configs force `agents.defaults.skipBootstrap=true` while preserving other defaults. Container path projection uses boundary-aware prefix matching.
 Finalization rescue can consume only a frozen primary transcript through the
 restricted `benchmarking.core.finalization_context` bundle; timeout and process
