@@ -5,6 +5,7 @@ import math
 import mimetypes
 import os
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -199,6 +200,25 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
         "chemqa_skills_on": 2,
     }
     return (preferred.get(group_id, 100), group_id)
+
+
+def _run_sort_key(run: dict[str, Any]) -> tuple[bool, bool, float, str]:
+    generated_at = str(run.get("generated_at") or "").strip()
+    timestamp: float | None = None
+    if generated_at:
+        try:
+            parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            timestamp = parsed.timestamp()
+        except ValueError:
+            pass
+    return (
+        not bool(run.get("favorite")),
+        timestamp is None,
+        -timestamp if timestamp is not None else 0.0,
+        str(run.get("run_id") or ""),
+    )
 
 
 def _audit_int(audit: dict[str, Any], key: str) -> int:
@@ -553,9 +573,9 @@ class BenchmarkDashboard:
                     "observability": _run_observability_summary(results),
                 }
             )
-        # Keep discovery's newest-first order within each group while pinning
-        # favorited runs ahead of all other runs.
-        runs.sort(key=lambda run: not run["favorite"])
+        # generated_at is persisted run data, so later filesystem activity does
+        # not reorder the list. Missing/invalid timestamps sort last by run ID.
+        runs.sort(key=_run_sort_key)
         return runs
 
     def get_run(self, run_id: str) -> dict[str, Any]:

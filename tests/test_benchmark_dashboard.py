@@ -70,14 +70,19 @@ def result_payload(
     }
 
 
-def write_demo_run(root: Path, run_id: str = "benchmark-20260604-120000") -> Path:
+def write_demo_run(
+    root: Path,
+    run_id: str = "benchmark-20260604-120000",
+    *,
+    generated_at: str = "2026-06-04T12:00:00+0800",
+) -> Path:
     run_root = root / run_id
     result = result_payload(group_id="single_llm_skills_on", record_id="r1")
     write_json(
         run_root / "results.json",
         {
             "schema_version": 4,
-            "generated_at": "2026-06-04T12:00:00+0800",
+            "generated_at": generated_at,
             "records": 1,
             "groups": [
                 {
@@ -202,19 +207,26 @@ def test_dashboard_ignores_invalid_runner_agent_duration(duration_ms: object) ->
     assert dashboard_service._agent_duration_seconds(result) is None
 
 
-def test_list_runs_pins_favorited_runs_and_preserves_newest_first_order(tmp_path: Path) -> None:
-    older_favorite = write_demo_run(tmp_path, run_id="favorite-old")
-    newer_favorite = write_demo_run(tmp_path, run_id="favorite-new")
-    newest_unfavorited = write_demo_run(tmp_path, run_id="plain-new")
-    oldest_unfavorited = write_demo_run(tmp_path, run_id="plain-old")
+def test_list_runs_pins_favorites_and_orders_by_generated_at_not_mtime(tmp_path: Path) -> None:
+    older_favorite = write_demo_run(
+        tmp_path, run_id="favorite-old", generated_at="2026-06-01T12:00:00+0800"
+    )
+    newer_favorite = write_demo_run(
+        tmp_path, run_id="favorite-new", generated_at="2026-06-02T04:00:00Z"
+    )
+    newest_unfavorited = write_demo_run(
+        tmp_path, run_id="plain-new", generated_at="2026-06-04T12:00:00+0800"
+    )
+    oldest_unfavorited = write_demo_run(
+        tmp_path, run_id="plain-old", generated_at="2026-06-03T12:00:00+0800"
+    )
 
-    # Make the expected discovery order deterministic instead of relying on
-    # filesystem timestamp resolution.
+    # Deliberately oppose generated_at order with directory mtimes.
     for path, mtime in (
-        (older_favorite, 100),
-        (newer_favorite, 200),
-        (newest_unfavorited, 300),
-        (oldest_unfavorited, 400),
+        (older_favorite, 400),
+        (newer_favorite, 100),
+        (newest_unfavorited, 200),
+        (oldest_unfavorited, 300),
     ):
         os.utime(path, (mtime, mtime))
 
@@ -222,14 +234,32 @@ def test_list_runs_pins_favorited_runs_and_preserves_newest_first_order(tmp_path
     store.upsert_run_metadata(run_id=older_favorite.name, favorite=True)
     store.upsert_run_metadata(run_id=newer_favorite.name, favorite=True)
 
-    runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store).list_runs()
+    dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store)
+    runs = dashboard.list_runs()
 
-    assert [run["run_id"] for run in runs] == [
+    expected = [
         newer_favorite.name,
         older_favorite.name,
-        oldest_unfavorited.name,
         newest_unfavorited.name,
+        oldest_unfavorited.name,
     ]
+    assert [run["run_id"] for run in runs] == expected
+
+    os.utime(newest_unfavorited, (500, 500))
+    os.utime(oldest_unfavorited, (50, 50))
+
+    assert [run["run_id"] for run in dashboard.list_runs()] == expected
+
+
+def test_list_runs_uses_run_id_tie_breaker_for_missing_or_equal_generated_at(tmp_path: Path) -> None:
+    write_demo_run(tmp_path, run_id="same-b", generated_at="2026-06-04T12:00:00+0800")
+    write_demo_run(tmp_path, run_id="same-a", generated_at="2026-06-04T04:00:00Z")
+    write_demo_run(tmp_path, run_id="missing-b", generated_at="")
+    write_demo_run(tmp_path, run_id="missing-a", generated_at="not-a-time")
+
+    runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).list_runs()
+
+    assert [run["run_id"] for run in runs] == ["same-a", "same-b", "missing-a", "missing-b"]
 
 
 def test_dashboard_maps_historical_source_identity_to_track(tmp_path: Path) -> None:

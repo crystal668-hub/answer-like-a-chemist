@@ -634,8 +634,10 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   become non-executable `legacy:<identifier>` values. Manual dashboard refreshes expose
   their pending state through the refresh control and restore the control after
   either success or failure. Favorited runs are pinned to the top of the run
-  list; within favorited and non-favorited groups, discovery keeps the existing
-  newest-first ordering. The dashboard is a dense monitoring and review console:
+  list; within favorited and non-favorited groups, runs are ordered by persisted
+  `generated_at` newest first, independent of later filesystem mtime changes.
+  Equal, missing, or invalid timestamps use run ID as a deterministic tie-breaker,
+  with missing or invalid timestamps after valid ones. The dashboard is a dense monitoring and review console:
   run summaries compare score, exact-observation timing, token use, unified tool
   failures, package installation, and resource peaks; active attempts expose
   resource heartbeats; record details expose overview, timeline, redacted exec,
