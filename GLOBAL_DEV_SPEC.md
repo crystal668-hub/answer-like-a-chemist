@@ -635,9 +635,11 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   their pending state through the refresh control and restore the control after
   either success or failure. Favorited runs are pinned to the top of the run
   list; within favorited and non-favorited groups, runs are ordered by persisted
-  `generated_at` newest first, independent of later filesystem mtime changes.
-  Equal, missing, or invalid timestamps use run ID as a deterministic tie-breaker,
-  with missing or invalid timestamps after valid ones. The dashboard is a dense monitoring and review console:
+  `progress.started_at` newest first, independent of completion or later filesystem
+  mtime changes. Historical runs without a valid start time fall back to
+  `generated_at`. Equal, missing, or invalid timestamps use run ID as a
+  deterministic tie-breaker, with missing or invalid timestamps after valid ones.
+  The dashboard is a dense monitoring and review console:
   run summaries compare score, exact-observation timing, token use, unified tool
   failures, package installation, and resource peaks; active attempts expose
   resource heartbeats; record details expose overview, timeline, redacted exec,

@@ -203,16 +203,19 @@ def _group_sort_key(group: dict[str, Any]) -> tuple[int, str]:
 
 
 def _run_sort_key(run: dict[str, Any]) -> tuple[bool, bool, float, str]:
-    generated_at = str(run.get("generated_at") or "").strip()
     timestamp: float | None = None
-    if generated_at:
+    for field in ("started_at", "generated_at"):
+        value = str(run.get(field) or "").strip()
+        if not value:
+            continue
         try:
-            parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=UTC)
             timestamp = parsed.timestamp()
+            break
         except ValueError:
-            pass
+            continue
     return (
         not bool(run.get("favorite")),
         timestamp is None,
@@ -561,6 +564,7 @@ class BenchmarkDashboard:
                     "favorite": bool(meta.get("favorite", False)),
                     "hidden": bool(meta.get("hidden", False)),
                     "path": str(run_root),
+                    "started_at": progress.get("started_at") or payload.get("generated_at", ""),
                     "generated_at": payload.get("generated_at", ""),
                     "updated_at": progress.get("updated_at") or payload.get("generated_at", ""),
                     "status": progress.get("status") or ("completed" if (run_root / "results.json").is_file() else "pending"),
@@ -573,8 +577,9 @@ class BenchmarkDashboard:
                     "observability": _run_observability_summary(results),
                 }
             )
-        # generated_at is persisted run data, so later filesystem activity does
-        # not reorder the list. Missing/invalid timestamps sort last by run ID.
+        # started_at is persisted when execution begins, so completion and later
+        # filesystem activity do not reorder the list. Historical runs fall back
+        # to generated_at; missing/invalid timestamps sort last by run ID.
         runs.sort(key=_run_sort_key)
         return runs
 

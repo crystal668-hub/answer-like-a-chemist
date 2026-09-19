@@ -111,6 +111,22 @@ def write_demo_run(
     return run_root
 
 
+def write_run_progress(run_root: Path, *, started_at: str) -> None:
+    write_json(
+        run_root / "progress" / "state.json",
+        {
+            "status": "completed",
+            "total": 1,
+            "completed": 1,
+            "started_at": started_at,
+            "updated_at": started_at,
+            "completed_at": started_at,
+            "groups": {},
+            "errors": [],
+        },
+    )
+
+
 def test_track_options_are_fixed_and_historical_details_remain_readable(tmp_path: Path) -> None:
     run = write_demo_run(tmp_path)
     from benchmarking.runtime.vgb_bridge import load_release_config
@@ -207,21 +223,25 @@ def test_dashboard_ignores_invalid_runner_agent_duration(duration_ms: object) ->
     assert dashboard_service._agent_duration_seconds(result) is None
 
 
-def test_list_runs_pins_favorites_and_orders_by_generated_at_not_mtime(tmp_path: Path) -> None:
+def test_list_runs_pins_favorites_and_orders_by_started_at_not_generated_at_or_mtime(tmp_path: Path) -> None:
     older_favorite = write_demo_run(
-        tmp_path, run_id="favorite-old", generated_at="2026-06-01T12:00:00+0800"
+        tmp_path, run_id="favorite-old", generated_at="2026-06-04T12:00:00+0800"
     )
     newer_favorite = write_demo_run(
-        tmp_path, run_id="favorite-new", generated_at="2026-06-02T04:00:00Z"
+        tmp_path, run_id="favorite-new", generated_at="2026-06-03T12:00:00+0800"
     )
     newest_unfavorited = write_demo_run(
-        tmp_path, run_id="plain-new", generated_at="2026-06-04T12:00:00+0800"
+        tmp_path, run_id="plain-new", generated_at="2026-06-01T12:00:00+0800"
     )
     oldest_unfavorited = write_demo_run(
-        tmp_path, run_id="plain-old", generated_at="2026-06-03T12:00:00+0800"
+        tmp_path, run_id="plain-old", generated_at="2026-06-02T12:00:00+0800"
     )
+    write_run_progress(older_favorite, started_at="2026-06-01T12:00:00+0800")
+    write_run_progress(newer_favorite, started_at="2026-06-02T04:00:00Z")
+    write_run_progress(newest_unfavorited, started_at="2026-06-04T12:00:00+0800")
+    write_run_progress(oldest_unfavorited, started_at="2026-06-03T12:00:00+0800")
 
-    # Deliberately oppose generated_at order with directory mtimes.
+    # Deliberately oppose started_at order with generated_at and directory mtimes.
     for path, mtime in (
         (older_favorite, 400),
         (newer_favorite, 100),
@@ -251,15 +271,17 @@ def test_list_runs_pins_favorites_and_orders_by_generated_at_not_mtime(tmp_path:
     assert [run["run_id"] for run in dashboard.list_runs()] == expected
 
 
-def test_list_runs_uses_run_id_tie_breaker_for_missing_or_equal_generated_at(tmp_path: Path) -> None:
-    write_demo_run(tmp_path, run_id="same-b", generated_at="2026-06-04T12:00:00+0800")
-    write_demo_run(tmp_path, run_id="same-a", generated_at="2026-06-04T04:00:00Z")
-    write_demo_run(tmp_path, run_id="missing-b", generated_at="")
-    write_demo_run(tmp_path, run_id="missing-a", generated_at="not-a-time")
+def test_list_runs_falls_back_to_generated_at_and_uses_run_id_tie_breaker(tmp_path: Path) -> None:
+    same_b = write_demo_run(tmp_path, run_id="same-b", generated_at="2026-06-01T12:00:00+0800")
+    same_a = write_demo_run(tmp_path, run_id="same-a", generated_at="2026-06-01T12:00:00+0800")
+    write_run_progress(same_b, started_at="2026-06-04T12:00:00+0800")
+    write_run_progress(same_a, started_at="2026-06-04T04:00:00Z")
+    write_demo_run(tmp_path, run_id="fallback", generated_at="2026-06-03T12:00:00+0800")
+    write_demo_run(tmp_path, run_id="missing", generated_at="not-a-time")
 
     runs = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path]).list_runs()
 
-    assert [run["run_id"] for run in runs] == ["same-a", "same-b", "missing-a", "missing-b"]
+    assert [run["run_id"] for run in runs] == ["same-a", "same-b", "fallback", "missing"]
 
 
 def test_dashboard_maps_historical_source_identity_to_track(tmp_path: Path) -> None:
