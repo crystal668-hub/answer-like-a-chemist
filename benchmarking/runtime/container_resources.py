@@ -15,6 +15,8 @@ from typing import Any
 
 from benchmarking.runtime.observability import increment
 
+MAX_RECORDED_RESOURCE_ERRORS = 20
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _SIZE_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?i?B)?\s*$", re.I)
 _SIZE_FACTORS = {
     "": 1,
@@ -81,6 +83,13 @@ def normalize_docker_stats(payload: dict[str, Any]) -> dict[str, Any]:
         "block_write_bytes": parse_size_bytes(block_write),
         "pids": pids,
     }
+
+
+def _parse_docker_stats_line(line: str) -> dict[str, Any]:
+    payload = json.loads(_ANSI_CSI_RE.sub("", line).strip())
+    if not isinstance(payload, dict):
+        raise ValueError("docker stats row is not an object")
+    return payload
 
 
 class ResourceWindowAccumulator:
@@ -153,10 +162,13 @@ def summarize_resource_windows(
     windows: list[dict[str, Any]],
     *,
     errors: list[str] | None = None,
+    error_count: int | None = None,
+    errors_truncated: bool = False,
     started_at: str = "",
     ended_at: str = "",
 ) -> dict[str, Any]:
     errors = list(errors or [])
+    error_count = max(len(errors), int(error_count if error_count is not None else len(errors)))
     sample_count = sum(int(row.get("sample_count") or 0) for row in windows)
 
     def weighted_average(key: str) -> float | None:
@@ -171,7 +183,7 @@ def summarize_resource_windows(
         return max(values, default=default)
 
     latest = windows[-1] if windows else {}
-    coverage = "unavailable" if not windows else "partial" if errors else "exact"
+    coverage = "unavailable" if not windows else "partial" if error_count else "exact"
     return {
         "coverage": coverage,
         "window_seconds": 5.0,
@@ -193,6 +205,8 @@ def summarize_resource_windows(
         "pids_last": int(latest.get("pids_last") or 0),
         "pids_peak": int(maximum("pids_peak")),
         "errors": errors,
+        "error_count": error_count,
+        "errors_truncated": bool(errors_truncated),
     }
 
 
@@ -216,6 +230,9 @@ class DockerStatsSampler:
         self._accumulator = ResourceWindowAccumulator(window_seconds=window_seconds)
         self._windows: list[dict[str, Any]] = []
         self._errors: list[str] = []
+        self._error_messages: set[str] = set()
+        self._error_count = 0
+        self._errors_truncated = False
         self._heartbeat_path = heartbeat_path
         self._lock = threading.Lock()
         increment("container_resource_sampler_count")
@@ -244,18 +261,27 @@ class DockerStatsSampler:
             with suppress(OSError):
                 self._heartbeat_path.touch(exist_ok=True)
 
+    def _record_error(self, message: str) -> None:
+        with self._lock:
+            self._error_count += 1
+            if message in self._error_messages:
+                return
+            if len(self._errors) >= MAX_RECORDED_RESOURCE_ERRORS:
+                self._errors_truncated = True
+                return
+            self._errors.append(message)
+            self._error_messages.add(message)
+
     def _consume(self) -> None:
         stdout = self.process.stdout
         if stdout is None:
-            self._errors.append("docker stats stdout unavailable")
+            self._record_error("docker stats stdout unavailable")
             return
         for line in stdout:
             if not line.strip():
                 continue
             try:
-                payload = json.loads(line)
-                if not isinstance(payload, dict):
-                    raise ValueError("docker stats row is not an object")
+                payload = _parse_docker_stats_line(line)
                 sample = normalize_docker_stats(payload)
                 emitted = self._accumulator.add(
                     sample,
@@ -264,7 +290,7 @@ class DockerStatsSampler:
                 )
                 self._write_window(emitted)
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                self._errors.append(f"{type(exc).__name__}: {exc}")
+                self._record_error(f"{type(exc).__name__}: {exc}")
                 increment("container_resource_parse_error_count")
 
     def stop(self) -> dict[str, Any]:
@@ -282,7 +308,7 @@ class DockerStatsSampler:
             stderr = ""
             if self.process.stderr is not None:
                 stderr = self.process.stderr.read().strip()
-            self._errors.append(stderr[:1000] or f"docker stats exited {self.process.returncode}")
+            self._record_error(stderr[:1000] or f"docker stats exited {self.process.returncode}")
         self._handle.flush()
         with suppress(OSError):
             os.fsync(self._handle.fileno())
@@ -290,6 +316,8 @@ class DockerStatsSampler:
         return summarize_resource_windows(
             list(self._windows),
             errors=self._errors,
+            error_count=self._error_count,
+            errors_truncated=self._errors_truncated,
             started_at=self.started_at,
             ended_at=self.ended_at,
         )

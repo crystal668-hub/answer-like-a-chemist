@@ -164,7 +164,9 @@ dependency evidence, workspace audit, and observability. Structured result
 status, `isError`, and exit code take precedence over legacy text recognition;
 all non-success states count as failures while retaining their subtype.
 `benchmarking.runtime.container_resources` owns the single long-lived Docker
-stats reader, 5-second aggregation windows, JSONL evidence, and resource peaks.
+stats reader, ANSI CSI framing removal before strict JSON decoding, 5-second
+aggregation windows, JSONL evidence, resource peaks, and bounded deduplicated
+sampler errors with total occurrence counts.
 `benchmarking.runtime.transcript_index` owns disposable, fingerprinted JSONL
 snapshots. A stable primary transcript is decoded once per process boundary and
 the immutable parsed view is shared by convergence, answer recovery, dependency

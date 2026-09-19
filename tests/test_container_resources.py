@@ -4,12 +4,34 @@ import io
 from pathlib import Path
 
 from benchmarking.runtime.container_resources import (
+    MAX_RECORDED_RESOURCE_ERRORS,
     DockerStatsSampler,
     ResourceWindowAccumulator,
     normalize_docker_stats,
     parse_size_bytes,
     summarize_resource_windows,
 )
+
+
+class StatsProcess:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO("")
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
 
 
 def test_parse_docker_units_and_normalize_stats() -> None:
@@ -58,30 +80,10 @@ def test_resource_summary_degrades_on_sampler_error() -> None:
 
 
 def test_sampler_stops_owned_stats_process_and_flushes_tail(tmp_path: Path) -> None:
-    class Process:
-        def __init__(self) -> None:
-            self.stdout = io.StringIO(
-                '{"CPUPerc":"10%","MemUsage":"1MiB / 2MiB","MemPerc":"50%",'
-                '"NetIO":"1kB / 2kB","BlockIO":"3kB / 4kB","PIDs":"2"}\n'
-            )
-            self.stderr = io.StringIO("")
-            self.returncode = None
-            self.terminated = False
-
-        def poll(self):
-            return self.returncode
-
-        def terminate(self):
-            self.terminated = True
-            self.returncode = -15
-
-        def wait(self, timeout=None):
-            return self.returncode
-
-        def kill(self):
-            self.returncode = -9
-
-    process = Process()
+    process = StatsProcess(
+        '{"CPUPerc":"10%","MemUsage":"1MiB / 2MiB","MemPerc":"50%",'
+        '"NetIO":"1kB / 2kB","BlockIO":"3kB / 4kB","PIDs":"2"}\n'
+    )
     sampler = DockerStatsSampler(
         command=["docker", "stats", "container"],
         output_path=tmp_path / "resources.jsonl",
@@ -95,3 +97,58 @@ def test_sampler_stops_owned_stats_process_and_flushes_tail(tmp_path: Path) -> N
     assert summary["sample_count"] == 1
     assert summary["coverage"] == "exact"
     assert (tmp_path / "resources.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_sampler_parses_ansi_wrapped_docker_stats(tmp_path: Path) -> None:
+    process = StatsProcess(
+        '\x1b[H{"CPUPerc":"10%","MemUsage":"1MiB / 2MiB","MemPerc":"50%",'
+        '"NetIO":"1kB / 2kB","BlockIO":"3kB / 4kB","PIDs":"2"}\x1b[K\n'
+    )
+    sampler = DockerStatsSampler(
+        command=["docker", "stats", "container"],
+        output_path=tmp_path / "resources.jsonl",
+        popen=lambda *args, **kwargs: process,
+        monotonic_clock=lambda: 1.0,
+    )
+
+    summary = sampler.stop()
+
+    assert summary["coverage"] == "exact"
+    assert summary["sample_count"] == 1
+    assert summary["cpu_peak_percent"] == 10.0
+    assert summary["memory_peak_bytes"] == 1024 * 1024
+    assert summary["errors"] == []
+    assert (tmp_path / "resources.jsonl").read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_sampler_deduplicates_repeated_parse_errors(tmp_path: Path) -> None:
+    process = StatsProcess("not json\n" * 5)
+    sampler = DockerStatsSampler(
+        command=["docker", "stats", "container"],
+        output_path=tmp_path / "resources.jsonl",
+        popen=lambda *args, **kwargs: process,
+    )
+
+    summary = sampler.stop()
+
+    assert summary["coverage"] == "unavailable"
+    assert summary["error_count"] == 5
+    assert len(summary["errors"]) == 1
+    assert summary["errors_truncated"] is False
+
+
+def test_sampler_caps_unique_parse_errors(tmp_path: Path) -> None:
+    error_lines = "".join(f"1{' ' * index}x\n" for index in range(MAX_RECORDED_RESOURCE_ERRORS + 3))
+    process = StatsProcess(error_lines)
+    sampler = DockerStatsSampler(
+        command=["docker", "stats", "container"],
+        output_path=tmp_path / "resources.jsonl",
+        popen=lambda *args, **kwargs: process,
+    )
+
+    summary = sampler.stop()
+
+    assert summary["error_count"] == MAX_RECORDED_RESOURCE_ERRORS + 3
+    assert len(summary["errors"]) == MAX_RECORDED_RESOURCE_ERRORS
+    assert len(set(summary["errors"])) == MAX_RECORDED_RESOURCE_ERRORS
+    assert summary["errors_truncated"] is True
