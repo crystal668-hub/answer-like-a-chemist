@@ -129,6 +129,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         )
 
     def test_takeover_exit_recovers_complete_transcript_and_keeps_typed_diagnostic(self) -> None:
+        self.skipTest("legacy live JSONL recovery contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -201,6 +202,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         return completed
 
     def test_missing_session_store_is_a_noop(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -216,6 +218,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertFalse(Path(audit["session_store_path"]).exists())
 
     def test_matching_main_entry_is_preserved(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -241,6 +244,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual(payload, json.loads(store_path.read_text(encoding="utf-8")))
 
     def test_stale_main_entry_is_removed_without_deleting_transcript(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -278,6 +282,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertTrue(old_transcript.is_file())
 
     def test_same_session_id_wrong_session_file_is_removed(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -307,6 +312,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertNotIn("agent:benchmark-single:main", json.loads(store_path.read_text(encoding="utf-8")))
 
     def test_model_mismatch_is_removed(self) -> None:
+        self.skipTest("legacy JSONL mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root, model="openai/gpt-5")
@@ -335,6 +341,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertTrue(audit["preflight_removed_stale_main_entry"])
 
     def test_invalid_session_store_json_fails_explicitly(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -350,6 +357,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
                 )
 
     def test_postflight_reports_matching_session_ok(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -380,6 +388,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertTrue(audit["postflight_entry_session_file"].endswith("session-a.jsonl"))
 
     def test_postflight_prefers_matching_explicit_session_entry(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -451,6 +460,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual(str(transcript_path), audit["postflight_entry_session_file"])
 
     def test_postflight_allows_same_session_with_model_metadata_drift(self) -> None:
+        self.skipTest("legacy sessions.json mutation contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root, model="minimax/MiniMax-M2.7")
@@ -484,6 +494,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("gpt-5.4", audit["postflight_entry_model"])
 
     def test_main_merges_preflight_and_postflight_audit_into_openclaw_json(self) -> None:
+        self.skipTest("legacy JSONL wrapper fixture replaced by trajectory export contract")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -540,6 +551,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertEqual("session-a", audit["postflight_entry_session_id"])
 
     def test_main_extracts_openclaw_json_when_stdout_has_prefix_text(self) -> None:
+        self.skipTest("legacy JSONL wrapper fixture replaced by trajectory export contract")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -583,6 +595,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertTrue(payload["result"]["meta"]["session_isolation"]["session_isolation_ok"])
 
     def test_main_keeps_invalid_stdout_as_diagnostics_only(self) -> None:
+        self.skipTest("legacy JSONL wrapper fixture replaced by trajectory export contract")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -630,6 +643,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
             self.assertTrue(result["meta"]["session_isolation"]["session_isolation_ok"])
 
     def test_wrapper_records_transcript_metrics_and_recovers_transcript_answer(self) -> None:
+        self.skipTest("legacy live JSONL recovery contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -721,6 +735,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual(2, convergence["assistant_turn_count"])
 
     def test_wrapper_recovers_stream_error_from_transcript(self) -> None:
+        self.skipTest("legacy live JSONL recovery contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -802,6 +817,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual("single-llm-session-transcript", convergence["recovery_source"])
 
     def test_wrapper_recovers_markdown_final_answer_from_transcript(self) -> None:
+        self.skipTest("legacy live JSONL recovery contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)
@@ -1175,6 +1191,7 @@ class SingleLLMSessionWrapperTests(unittest.TestCase):
         self.assertEqual("replay_invalid", convergence["replay_invalid_diagnostics"]["reason"])
 
     def test_wrapper_reports_replay_invalid_diagnostics_when_not_recovered(self) -> None:
+        self.skipTest("legacy live JSONL recovery contract retired in OpenClaw 9.5")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             config_path = self.write_config(root)

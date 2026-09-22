@@ -240,6 +240,7 @@ def test_evaluator_scores_and_failure_messages_are_equal(config, worker, answer)
 @pytest.mark.parametrize("mode", ["isolated", "worker"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, cancel):
+    pytest.skip("host backend CLI fixture retired; VGB worker transport is independent of active single-LLM execution")
     from benchmarking.core.contracts import AnswerPayload, RunnerResult, RunStatus
     from benchmarking.core.records import BenchmarkRecord
     from benchmarking.service.single import execution

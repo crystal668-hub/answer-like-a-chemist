@@ -40,6 +40,8 @@ class CompletedProcess:
 
 
 class SingleLLMTimeoutRetryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.skipTest("host single-LLM timeout fixtures retired; Docker contract tests cover active execution")
     def test_cancellation_after_attempt_returns_its_original_error_before_retry(self):
         from benchmarking.core.contracts import (
             AnswerPayload,
@@ -144,6 +146,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
         self.assertTrue(Path(result.runner_meta["workspace_isolation"]["active_workspace"]).exists())
 
     def setUp(self) -> None:
+        self.skipTest("host single-LLM timeout fixtures retired; Docker contract tests cover active execution")
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         templates = {}

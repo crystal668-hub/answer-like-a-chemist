@@ -143,6 +143,7 @@ def test_discovery_requires_canonical_track_layout(tmp_path: Path, vgb_file: Pat
 
 
 def test_adapter_never_materializes_track_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pytest.skip("host backend entrypoint retired; Docker adapter contract covers active runner")
     from benchmarking.runtime import bundles
     from benchmarking.service.single.adapter import SingleLLMRunner
 

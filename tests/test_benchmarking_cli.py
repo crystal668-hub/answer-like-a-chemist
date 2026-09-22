@@ -537,7 +537,8 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
             "Args",
             (),
             {
-                "execution_backend": "host",
+                "execution_backend": "docker",
+                "container_image": "fixture-image",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -712,7 +713,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             "Args",
             (),
             {
-                "execution_backend": "host",
+                "execution_backend": "docker",
+                "container_image": "fixture-image",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -746,6 +748,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
             },
         )(),
     )
+    monkeypatch.setattr(benchmarking_cli, "DockerContainerRuntime", lambda: SimpleNamespace(check_ready=lambda: {}, resolve_image_digest=lambda image: "sha256:" + "a" * 64, recover_orphans=lambda **kwargs: []))
+    monkeypatch.setattr(benchmarking_cli, "check_provider_connection", lambda **kwargs: {"status": "ready"})
     monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
@@ -863,7 +867,8 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             "Args",
             (),
             {
-                "execution_backend": "host",
+                "execution_backend": "docker",
+                "container_image": "fixture-image",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "no_analysis": True,
@@ -898,6 +903,8 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
             },
         )(),
     )
+    monkeypatch.setattr(benchmarking_cli, "DockerContainerRuntime", lambda: SimpleNamespace(check_ready=lambda: {}, resolve_image_digest=lambda image: "sha256:" + "a" * 64, recover_orphans=lambda **kwargs: []))
+    monkeypatch.setattr(benchmarking_cli, "check_provider_connection", lambda **kwargs: {"status": "ready"})
     monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)
@@ -967,7 +974,8 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             "Args",
             (),
             {
-                "execution_backend": "host",
+                "execution_backend": "docker",
+                "container_image": "fixture-image",
                 "single_timeout": 30,
                 "no_timeout": False,
                 "chemqa_timeout": 30,
@@ -1001,6 +1009,8 @@ def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path)
             },
         )(),
     )
+    monkeypatch.setattr(benchmarking_cli, "DockerContainerRuntime", lambda: SimpleNamespace(check_ready=lambda: {}, resolve_image_digest=lambda image: "sha256:" + "a" * 64, recover_orphans=lambda **kwargs: []))
+    monkeypatch.setattr(benchmarking_cli, "check_provider_connection", lambda **kwargs: {"status": "ready"})
     monkeypatch.setattr(single_execution, "select_track_files", lambda args: [tmp_path / "demo.jsonl"])
     monkeypatch.setattr(single_execution, "select_records", lambda paths, args: [record])
     monkeypatch.setattr(runtime_config_pool, "ConfigPool", FakeConfigPool)

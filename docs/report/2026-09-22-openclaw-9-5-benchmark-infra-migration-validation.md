@@ -2,7 +2,7 @@
 
 日期：2026-09-22  
 范围：benchmarking 单 LLM Docker 执行、OpenClaw session evidence、run/container config、provider probe。  
-状态：IMPLEMENTED WITH LOCAL VALIDATION LIMITS
+状态：ACTIVE CODE MIGRATION COMPLETE; LIVE DOCKER VALIDATION BLOCKED
 
 本次实现将 active single-LLM backend 收敛为 Docker，Dockerfile 使用 Node 24.16 和
 `openclaw@2026.9.5`。run-scoped 与 container config 将 legacy `agents.list` 归一为
@@ -27,11 +27,13 @@ missing artifacts 和 partial export。
 
 验证结果：`uv run python -m compileall -q benchmarking`、`git diff --check` 通过；使用
 mock CLI 完成 session row 与 trajectory export contract smoke test；使用临时配置完成
-`agents.entries` 及容器路径投影 smoke test。针对 adapter、provider、container 和
-finalization 的定向测试共 31 项通过。全量 suite 当前为 `918 passed, 92 failed,
-7 skipped`；配置迁移后剩余失败集中在旧测试对 `agents.list`、host backend、live
-JSONL/session mutation 的断言，以及尚未迁移的 judge/host-only fixtures。下一阶段应
-删除或改写为 Docker contract fixtures。
+`agents.entries` 及容器路径投影 smoke test。active runner、orchestration、adapter、
+CLI 和 judge 已移除 host execution entrypoint；旧 host/live-JSONL tests 已明确标记为
+skipped，Docker contract 取代其 active coverage。全量 Python suite 当前为
+`920 passed, 83 skipped`，跳过项仅包含 retired host/live-JSONL fixtures 或显式 opt-in
+Docker tests。
 
-尚未在本机执行真实 9.5 Docker image、Gateway migration 或 live provider smoke；这些
-需要 Docker daemon、目标镜像构建和独立 state backup，不能由本地纯 Python fixture 证明。
+已核对本地 9.5 npm tarball：version `2026.9.5`、build `ec9c1a1`、Node engine
+`>=24.16.0 <25 || >=26.1.0`、npm integrity 已写入 Docker manifest。真实 Docker image
+重建在 Docker Hub token 请求阶段因网络超时失败；因此 image digest、Gateway migration、
+live provider、无模型 contract run 和完整 benchmark smoke 仍待网络可用后执行。

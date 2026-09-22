@@ -48,7 +48,6 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
         contamination_auditor=None,
         cancellation_token: CancellationToken | None = None,
         process_registry: OwnedProcessRegistry | None = None,
-        execution_backend: str = "docker",
         container_image: str = "openclaw-benchmark-single-llm:latest",
         container_cpus: float | None = None,
         container_memory_bytes: int | None = None,
@@ -79,8 +78,6 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
-        if str(execution_backend).strip().lower() != "docker":
-            raise ValueError("Host single-LLM execution has been retired; use Docker")
         super().__init__(
             agent_id=agent_id,
             timeout_seconds=timeout_seconds,
@@ -95,8 +92,7 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             no_timeout=no_timeout,
             pypi_cutoff=pypi_cutoff,
             admission_controller=admission_controller,
-            execution_backend=execution_backend,
-            container_runtime=DockerContainerRuntime() if execution_backend == "docker" else None,
+            container_runtime=DockerContainerRuntime(),
             container_image=container_image,
             container_cpus=container_cpus,
             container_memory_bytes=container_memory_bytes,

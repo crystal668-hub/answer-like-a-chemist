@@ -882,9 +882,10 @@ boundary. Processes still run as the same local user.
 
 ### Non-goals of the current system
 
-- Docker is the only active single-LLM execution backend. The container image
-  owns the OpenClaw runtime and isolated state root; historical host results are
-  supported by readers and replay tooling only.
+- Docker is the only active single-LLM execution backend. The active runner,
+  orchestration, adapter, CLI, and judge paths expose no host execution entrypoint.
+  The container image owns the OpenClaw runtime and isolated state root;
+  historical host results are supported by readers and replay tooling only.
 - The benchmark dashboard is a localhost review surface, not a benchmark launcher,
   multi-user service, or authority that rewrites immutable result artifacts.
 - Automated post-run analysis is not part of benchmark scoring.

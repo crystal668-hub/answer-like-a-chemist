@@ -258,7 +258,7 @@ def test_materialize_container_config_uses_attempt_local_agent_state(tmp_path: P
         skills_enabled=False,
     )
     payload = __import__("json").loads(destination.read_text(encoding="utf-8"))
-    entry = payload["agents"]["list"][0]
+    entry = payload["agents"]["entries"]["agent"]
     assert entry["workspace"] == "/benchmark/workspace"
     assert entry["agentDir"] == "/benchmark/session/agents/agent/agent"
     assert payload["tools"]["exec"]["pathPrepend"] == [

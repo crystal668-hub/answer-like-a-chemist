@@ -39,18 +39,8 @@ from benchmarking.runtime.agent_workspace import (
     AttemptWorkspaceManager,
     WorkspaceIsolationError,
 )
-from benchmarking.runtime.attempt_environment import (
-    AttemptPythonEnvironment,
-    collect_dependency_manifest,
-    collect_distribution_inventory,
-    create_attempt_environment,
-    dependency_install_events,
-    remediate_forbidden_distributions,
-)
 from benchmarking.runtime.attempt_finalization import (
-    cleanup_owned_environment,
     read_evidence,
-    register_environment,
     write_evidence,
 )
 from benchmarking.runtime.attempt_observability import (
@@ -59,7 +49,6 @@ from benchmarking.runtime.attempt_observability import (
     attempt_artifact_paths,
     build_attempt_observability,
     clear_active_attempt,
-    package_delta,
     publish_active_attempt,
     relative_artifact_path,
     unavailable_attempt_observability,
@@ -84,11 +73,6 @@ from benchmarking.runtime.error_capture import (
     capture_execution_error,
 )
 from benchmarking.runtime.observability import observed_duration
-from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
-from benchmarking.runtime.session_isolation import (
-    SessionIsolationError,
-    inspect_postflight_session,
-)
 from benchmarking.runtime.transcript_index import TranscriptIndex
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
@@ -491,7 +475,6 @@ class SingleLLMRunner:
         no_timeout: bool = False,
         pypi_cutoff: str | None = None,
         admission_controller=None,
-        execution_backend: str = "docker",
         container_runtime: DockerContainerRuntime | None = None,
         container_image: str = "openclaw-benchmark-single-llm:latest",
         container_cpus: float | None = None,
@@ -523,15 +506,12 @@ class SingleLLMRunner:
         self.no_timeout = bool(no_timeout)
         self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or datetime.now(UTC).isoformat()).strip()
         self.admission_controller = admission_controller
-        self.execution_backend = str(execution_backend or "docker").strip().lower()
-        if self.execution_backend != "docker":
-            raise ValueError("Host single-LLM execution has been retired; use Docker")
         self.container_runtime = container_runtime or DockerContainerRuntime()
         self.container_image = container_image
         self.container_cpus = container_cpus
         self.container_memory_bytes = container_memory_bytes
         self.container_pids_limit = container_pids_limit
-        self.container_network = container_network or (resolve_container_network() if self.execution_backend == "docker" else ContainerNetworkConfig())
+        self.container_network = container_network or resolve_container_network()
         self.timeout_retry_backoff_seconds = self._normalize_backoff_seconds(
             timeout_retry_backoff_seconds,
             max_retries=self.timeout_retries,
@@ -699,30 +679,15 @@ class SingleLLMRunner:
         )
 
     def _inspect_failed_attempt_session(self, session_id: str) -> dict[str, Any]:
-        try:
-            audit = inspect_postflight_session(
-                self.agent_id,
-                session_id,
-                config_path=self.config_path,
-            )
-        except (OSError, SessionIsolationError) as exc:
-            return {
-                "requested_session_id": session_id,
-                "agent_id": self.agent_id,
-                "postflight_entry_session_file": "",
-                "session_isolation_ok": False,
-                "postflight_inspection_error": f"{type(exc).__name__}: {exc}",
-            }
-
-        if not str(audit.get("postflight_entry_session_file") or "").strip():
-            store_path_text = str(audit.get("session_store_path") or "").strip()
-            if store_path_text:
-                transcript_path = Path(store_path_text).expanduser().parent / f"{session_id}.jsonl"
-                if transcript_path.is_file() and not transcript_path.is_symlink():
-                    audit["postflight_entry_session_id"] = session_id
-                    audit["postflight_entry_session_file"] = str(transcript_path.resolve())
-                    audit["transcript_path_recovered"] = True
-        return audit
+        return {
+            "requested_session_id": session_id,
+            "session_id": session_id,
+            "session_key": f"agent:{self.agent_id}:explicit:{session_id}",
+            "agent_id": self.agent_id,
+            "session_isolation_ok": False,
+            "legacy_compatibility": False,
+            "evidence_source": "unavailable",
+        }
 
     def _subprocess_timeout_result(
         self,
@@ -888,9 +853,7 @@ class SingleLLMRunner:
                 environment=environment,
                 policy=policy,
             ))
-        mappings = None
-        if self.execution_backend == "docker":
-            mappings = RuntimePathProjection(lease.active_workspace, runtime_paths.skills_root, input_bundle).audit_mappings()
+        mappings = RuntimePathProjection(lease.active_workspace, runtime_paths.skills_root, input_bundle).audit_mappings()
         return self.workspace_manager.audit_attempt(
             lease,
             result.runner_meta,
@@ -950,47 +913,8 @@ class SingleLLMRunner:
                 },
             )
 
-        attempt_environment: AttemptPythonEnvironment | None = None
-        baseline_distributions: list[dict[str, Any]] | None = None
         result: RunnerResult | None = None
         attempt_env = dict(environment)
-        if self.execution_backend == "host":
-            try:
-                register_environment(lease.scratch_dir, identity.sentinel_fields(), "host")
-                attempt_environment = create_attempt_environment(
-                    lease.scratch_dir,
-                    bootstrap_python=sys.executable,
-                    pypi_cutoff=self.pypi_cutoff,
-                )
-                attempt_env = build_openclaw_subprocess_env(
-                    base_env=attempt_env,
-                    config_path=self.config_path,
-                    attempt_python=attempt_environment.python,
-                )
-                attempt_env.update(attempt_environment.to_env())
-                try:
-                    baseline = collect_distribution_inventory(
-                        attempt_environment,
-                        base_env=attempt_env,
-                    )
-                    baseline_distributions = baseline.get("distributions")
-                    write_evidence(
-                        lease.notes_dir / "dependency-baseline.json",
-                        {"schema_version": 1, **baseline},
-                    )
-                except (AttributeError, OSError, TypeError, ValueError):
-                    baseline_distributions = None
-            except Exception as exc:
-                cleanup_report = cleanup_owned_environment(lease.scratch_dir)
-                result = self._unexpected_attempt_failure_result(
-                    exc=exc,
-                    record=record,
-                    group=group,
-                    input_bundle=input_bundle,
-                    session_id=session_id,
-                )
-                result.runner_meta["attempt_environment"] = {"status": "failed", "error": str(exc)}
-                result.runner_meta["attempt_environment_cleanup"] = cleanup_report
 
         attempt_env["BENCHMARK_WORKSPACE_DIR"] = str(lease.active_workspace)
         attempt_env["BENCHMARK_ATTEMPT_INDEX"] = str(attempt_index)
@@ -1000,25 +924,12 @@ class SingleLLMRunner:
         attempt_env["BENCHMARK_SKILL_NOTES_DIR"] = str(lease.notes_dir)
         attempt_env["BENCHMARK_PROJECT_ROOT"] = str(Path(__file__).resolve().parents[3])
         attempt_env["BENCHMARK_SKILL_RUNNER"] = str(Path(__file__).resolve().parents[3] / "scripts" / "run_skill.py")
-        if result is None and self.execution_backend == "host" and self.config_path.is_file():
-            try:
-                config = read_evidence(self.config_path)
-                policy = self.workspace_manager.policy_for_lease(
-                    lease, role="single_llm", skills_enabled=skills_enabled,
-                    always_read_scopes=[Path(input_bundle.bundle_dir)] if input_bundle is not None else [],
-                    read_scopes=self.allowed_workspace_roots if skills_enabled else ())
-                config.setdefault("plugins", {}).setdefault("entries", {}).setdefault(
-                    "benchmark-workdir-guard", {}).setdefault("config", {}).setdefault("agentPolicies", {})[self.agent_id] = policy.to_payload()
-                write_evidence(self.config_path, config)
-            except Exception as exc:
-                result = self._unexpected_attempt_failure_result(exc=exc, record=record, group=group,
-                                                                 input_bundle=input_bundle, session_id=session_id)
         attempt_prompt = self._attach_scratch_prompt(
             prompt,
             scratch_dir=lease.scratch_dir,
             request_dir=lease.request_dir,
             output_dir=lease.output_dir,
-            attempt_python_enabled=attempt_environment is not None or self.execution_backend == "docker",
+            attempt_python_enabled=True,
         )
         scratch_meta = {
             "workspace_dir": str(lease.active_workspace),
@@ -1056,13 +967,11 @@ class SingleLLMRunner:
                 "recovery_required": True, "reason": "container_execution_state_unconfirmed"}
             self.workspace_manager._release_lease(lease)
             return result
-        if self.execution_backend == "docker":
-            manifest_path = lease.notes_dir / "dependency-manifest.json"
-            result.runner_meta["attempt_environment"] = read_evidence(manifest_path)
-            result.runner_meta["dependency_audit"] = result.runner_meta["attempt_environment"].get("dependency_audit", {})
-            cleanup_path = lease.notes_dir / "dependency-cleanup.json"
-            result.runner_meta["attempt_environment_cleanup"] = read_evidence(cleanup_path)
-            result.runner_meta["host_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
+        manifest_path = lease.notes_dir / "dependency-manifest.json"
+        result.runner_meta["attempt_environment"] = read_evidence(manifest_path)
+        result.runner_meta["dependency_audit"] = result.runner_meta["attempt_environment"].get("dependency_audit", {})
+        cleanup_path = lease.notes_dir / "dependency-cleanup.json"
+        result.runner_meta["attempt_environment_cleanup"] = read_evidence(cleanup_path)
         session_isolation = result.runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
         transcript_path_value = str(session_isolation.get("transcript_path") or session_isolation.get("postflight_entry_session_file") or "").strip()
@@ -1074,55 +983,10 @@ class SingleLLMRunner:
                     transcript_index = TranscriptIndex.from_path(transcript_path)
                 except (OSError, UnicodeError):
                     transcript_index = None
-        if attempt_environment is not None:
-            manifest = {}
-            try:
-                session_isolation = result.runner_meta.get("session_isolation")
-                session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
-                manifest = collect_dependency_manifest(
-                    attempt_environment,
-                    identity=identity.sentinel_fields(),
-                    base_env=attempt_env,
-                    install_events=dependency_install_events(
-                        session_isolation.get("postflight_entry_session_file"),
-                        transcript_index=transcript_index,
-                    ),
-                    baseline_distributions=baseline_distributions,
-                )
-                dependency_audit = remediate_forbidden_distributions(
-                    attempt_environment,
-                    manifest,
-                )
-                manifest["dependency_audit"] = dependency_audit
-                try:
-                    effective = collect_distribution_inventory(
-                        attempt_environment,
-                        base_env=attempt_env,
-                    )
-                except (AttributeError, OSError, TypeError, ValueError) as exc:
-                    effective = {
-                        "distributions": None,
-                        "collection": {"returncode": 1, "stderr": str(exc)},
-                    }
-                manifest["effective_distributions"] = effective.get("distributions")
-                manifest["effective_inventory_collection"] = effective.get("collection") or {}
-                manifest["distribution_delta"] = package_delta(
-                    manifest.get("baseline_distributions"),
-                    manifest.get("distributions"),
-                    manifest.get("effective_distributions"),
-                )
-                manifest_path = lease.notes_dir / "dependency-manifest.json"
-                manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-                result.runner_meta["attempt_environment"] = manifest
-                result.runner_meta["dependency_audit"] = dependency_audit
-            except Exception as exc:
-                manifest.update(status="manifest_failed", error=f"{type(exc).__name__}: {exc}")
-                result.runner_meta["attempt_environment"] = manifest
-            result.runner_meta["attempt_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
         manifest = result.runner_meta.get("attempt_environment") or {}
         try:
             validation = validate_dependency_evidence(manifest, identity=identity.sentinel_fields(), scratch=lease.scratch_dir,
-                expected_venv="/benchmark/workspace/scratch/venv" if self.execution_backend == "docker" else str(lease.scratch_dir / "venv"),
+                expected_venv="/benchmark/workspace/scratch/venv",
                 pypi_cutoff=self.pypi_cutoff)
         except (TypeError, ValueError, AttributeError) as exc:
             validation = {"status": "invalid", "scoreable": False, "errors": [str(exc)]}
@@ -1247,10 +1111,6 @@ class SingleLLMRunner:
                     source=lease.active_workspace,
                     target=archive.workspace,
                 )
-        if attempt_environment is not None:
-            archived_environment_manifest = archive.workspace / "scratch" / "notes" / "dependency-manifest.json"
-            if archived_environment_manifest.is_file():
-                result.runner_meta["attempt_environment_manifest"] = str(archived_environment_manifest)
         result.runner_meta["workspace_isolation"] = isolation_meta
         return result
 
@@ -1936,203 +1796,12 @@ class SingleLLMRunner:
         wrapper_path: Path,
         env: dict[str, str],
     ) -> RunnerResult:
-        if self.execution_backend == "docker":
-            return self._run_attempt_in_docker(
-                record=record,
-                group=group,
-                input_bundle=input_bundle,
-                prompt=prompt,
-                session_id=session_id,
-                wrapper_path=wrapper_path,
-                env=env,
-            )
-        command = self._build_command(record=record, session_id=session_id, prompt=prompt, wrapper_path=wrapper_path)
-        try:
-            result = self._run_subprocess(command, env=env, timeout=self._wrapper_subprocess_timeout_seconds())
-            if result.returncode != 0:
-                classification = capture_execution_error(
-                    returncode=result.returncode,
-                    stdout=str(result.stdout or ""),
-                    stderr=str(result.stderr or ""),
-                    session_id=session_id,
-                )
-                failed_result = self._execution_error_result(
-                    classification=classification,
-                    record=record,
-                    group=group,
-                    input_bundle=input_bundle,
-                    session_id=session_id,
-                )
-                workspace_text = str(env.get("BENCHMARK_WORKSPACE_DIR") or "").strip()
-                if workspace_text:
-                    lifecycle = read_evidence(Path(workspace_text) / "scratch" / "notes" / "session-lifecycle.json")
-                    if lifecycle:
-                        failed_result.runner_meta["session_lifecycle"] = lifecycle
-                return failed_result
-            payload = self._parse_json_stdout(result, command)
-        except subprocess.TimeoutExpired as exc:
-            return self._subprocess_timeout_result(
-                exc=exc,
-                record=record,
-                group=group,
-                input_bundle=input_bundle,
-                session_id=session_id,
-            )
-        result_payload = self._unwrap_agent_payload(payload)
-        runner_meta = dict(result_payload.get("meta") or {})
-        runner_meta["convergence_policy"] = self.convergence_policy.to_meta()
-        runner_meta["timeout_mode"] = self._timeout_mode()
-        stdout_diagnostics = runner_meta.get("stdout_diagnostics")
-        if isinstance(stdout_diagnostics, dict) and stdout_diagnostics.get("schema_valid") is False:
-            message = (
-                "Single-LLM OpenClaw stdout did not contain a schema-valid agent result payload: "
-                + str(stdout_diagnostics.get("reason") or "invalid_stdout")
-            )
-            runner_meta["error"] = message
-            runner_meta["stdout_diagnostics"] = dict(stdout_diagnostics)
-            runner_meta["skill_use_audit"] = build_skill_use_audit(
-                skills_enabled=bool(getattr(group, "skills_enabled", True)),
-                configured_skills=self.configured_skills,
-                runner_meta=runner_meta,
-                final_response_text="",
-            )
-            if input_bundle is not None:
-                runner_meta["runtime_bundle"] = input_bundle.to_meta()
-            return RunnerResult(
-                status=RunStatus.FAILED,
-                answer=AnswerPayload(),
-                raw=payload,
-                runner_meta=runner_meta,
-                failure=FailureInfo(
-                    code="agent_result_contract_invalid",
-                    message=message,
-                    details=dict(stdout_diagnostics),
-                ),
-            )
-        payloads = list(result_payload.get("payloads") or [])
-        full_response_text = self._summarize_payloads(payloads)
-        short_answer_text, full_response_text = self._normalize_answer_tracks(full_response_text=full_response_text)
-        runner_meta["skill_use_audit"] = build_skill_use_audit(
-            skills_enabled=bool(getattr(group, "skills_enabled", True)),
-            configured_skills=self.configured_skills,
-            runner_meta=runner_meta,
-            final_response_text=full_response_text,
-        )
-        if input_bundle is not None:
-            runner_meta["runtime_bundle"] = input_bundle.to_meta()
-        convergence_meta = runner_meta.get("convergence")
-        transcript_answer_recovered = (
-            isinstance(convergence_meta, dict) and convergence_meta.get("transcript_answer_recovered") is True
-        )
-        finalization_rescue_recovered = (
-            isinstance(convergence_meta, dict) and convergence_meta.get("finalization_rescue_succeeded") is True
-        )
-        recovery_source = ""
-        if isinstance(convergence_meta, dict):
-            recovery_source = str(convergence_meta.get("recovery_source") or "")
-        session_isolation = runner_meta.get("session_isolation")
-        if isinstance(session_isolation, dict) and session_isolation.get("session_isolation_ok") is False:
-            actual_session = str(session_isolation.get("postflight_entry_session_id") or "")
-            requested_session = str(session_isolation.get("requested_session_id") or session_id)
-            message = (
-                "Single-LLM OpenClaw session isolation failed: "
-                f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
-            )
-            runner_meta["error"] = message
-            return RunnerResult(
-                status=RunStatus.FAILED,
-                answer=AnswerPayload(
-                    short_answer_text=short_answer_text,
-                    full_response_text=full_response_text,
-                ),
-                raw=payload,
-                runner_meta=runner_meta,
-                failure=FailureInfo(
-                    code="session_isolation_failed",
-                    message=message,
-                    details=dict(session_isolation),
-                ),
-            )
-        agent_error = classify_agent_error_payload(
-            payloads=payloads,
-            runner_meta=runner_meta,
-            full_response_text=full_response_text,
-            eval_kind=str(getattr(record, "eval_kind", "") or ""),
-            answer_schema=verifier_grounded_answer_schema_from_record(record),
-        )
-        if agent_error is not None and not transcript_answer_recovered and not finalization_rescue_recovered:
-            runner_meta["agent_error"] = dict(agent_error.details)
-            runner_meta["error"] = agent_error.message
-            return RunnerResult(
-                status=RunStatus.FAILED,
-                answer=AnswerPayload(),
-                raw=payload,
-                runner_meta=runner_meta,
-                failure=FailureInfo(
-                    code=agent_error.kind,
-                    message=agent_error.message,
-                    details=dict(agent_error.details),
-                ),
-            )
-        contract = validate_candidate_answer_contract(
+        return self._run_attempt_in_docker(
             record=record,
-            short_answer_text=short_answer_text,
-            full_response_text=full_response_text,
-            runner_meta=runner_meta,
-        )
-        runner_meta["candidate_answer_contract"] = dict(contract.details)
-        if not contract.valid and not transcript_answer_recovered:
-            assert contract.code
-            message = contract.message
-            runner_meta["error"] = message
-            if contract.code == "agent_response_timeout":
-                runner_meta["agent_timeout_detected"] = True
-                runner_meta["agent_timeout_payload_text"] = full_response_text
-            return RunnerResult(
-                status=RunStatus.FAILED,
-                answer=AnswerPayload(),
-                raw=payload,
-                runner_meta=runner_meta,
-                failure=FailureInfo(
-                    code=contract.code,
-                    message=message,
-                    details={
-                        **dict(contract.details),
-                        "aborted": runner_meta.get("aborted"),
-                        "livenessState": runner_meta.get("livenessState"),
-                        "durationMs": runner_meta.get("durationMs"),
-                    },
-                ),
-            )
-        if transcript_answer_recovered or finalization_rescue_recovered:
-            assert isinstance(convergence_meta, dict)
-            source = recovery_source or "single-llm-session-transcript"
-            runner_meta["degraded_execution"] = True
-            runner_meta["recovery_mode"] = source
-            runner_meta["answer_reliability"] = "high_confidence_recovered"
-            return RunnerResult(
-                status=RunStatus.RECOVERED,
-                answer=AnswerPayload(
-                    short_answer_text=short_answer_text,
-                    full_response_text=full_response_text,
-                ),
-                raw=payload,
-                runner_meta=runner_meta,
-                recovery=RecoveryInfo(
-                    source=source,
-                    scored=True,
-                    evaluable=True,
-                    reliability="high_confidence_recovered",
-                    recovery_mode=source,
-                    details=dict(convergence_meta),
-                ),
-            )
-        return RunnerResult(
-            status=RunStatus.COMPLETED,
-            answer=AnswerPayload(
-                short_answer_text=short_answer_text,
-                full_response_text=full_response_text,
-            ),
-            raw=payload,
-            runner_meta=runner_meta,
+            group=group,
+            input_bundle=input_bundle,
+            prompt=prompt,
+            session_id=session_id,
+            wrapper_path=wrapper_path,
+            env=env,
         )

@@ -421,7 +421,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         ),
     )
     docker_startup = {}
-    if getattr(args, "execution_backend", "docker") == "docker" and any(
+    if any(
         catalog.EXPERIMENT_GROUPS[key].runner == "single_llm" for key in group_ids
     ):
         runtime = DockerContainerRuntime()
@@ -429,6 +429,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
             args.container_network = resolve_container_network()
             docker_startup["network"] = args.container_network.to_meta()
             docker_startup["daemon"] = runtime.check_ready()
+            args.container_image = getattr(args, "container_image", "openclaw-benchmark-single-llm:latest")
             docker_startup["requested_image"] = args.container_image
             args.container_image = runtime.resolve_image_digest(args.container_image)
             docker_startup["image_id"] = args.container_image
@@ -907,7 +908,7 @@ def _run_main(service=None, *, runtime_metrics: RuntimeMetrics, resources: ExitS
         },
         "timeout_mode": timeout_mode,
         "container_runtime": {
-            "backend": getattr(args, "execution_backend", "docker"),
+            "backend": "docker",
             "image": getattr(args, "container_image", "openclaw-benchmark-single-llm:latest"),
             "network_mode": args.container_network.network_mode if getattr(args, "container_network", None) else "host",
             "network": args.container_network.to_meta() if getattr(args, "container_network", None) else {},

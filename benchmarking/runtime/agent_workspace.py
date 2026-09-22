@@ -966,7 +966,11 @@ class AttemptWorkspaceManager:
     ) -> _WorkspaceAudit:
         session_isolation = runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, Mapping) else {}
-        requested_path = str(session_isolation.get("postflight_entry_session_file") or "").strip()
+        requested_path = str(
+            session_isolation.get("transcript_path")
+            or session_isolation.get("postflight_entry_session_file")
+            or ""
+        ).strip()
         recovery_candidates = _audit_recovery_candidates(runner_meta)
         transcript_path, recovery = _select_audit_transcript(requested_path, recovery_candidates)
         if transcript_path is None:
@@ -974,7 +978,7 @@ class AttemptWorkspaceManager:
                 "rule_id": "transcript_unavailable",
                 "tool_call_id": "",
                 "tool_name": "",
-                "candidate_source": "session_isolation.postflight_entry_session_file",
+                "candidate_source": "session_isolation.transcript_path",
                 "access_mode": "unknown",
                 "operation_outcome": "unknown",
                 "resource_provenance": "unknown",
