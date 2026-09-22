@@ -79,6 +79,8 @@ class SingleLLMRunner(_CancellationRunnerMixin, BaseSingleLLMRunner):
             )
         if compatibility_manager and contamination_auditor is None:
             contamination_auditor = lambda **_kwargs: ContaminationAudit(status="clean")
+        if str(execution_backend).strip().lower() != "docker":
+            raise ValueError("Host single-LLM execution has been retired; use Docker")
         super().__init__(
             agent_id=agent_id,
             timeout_seconds=timeout_seconds,

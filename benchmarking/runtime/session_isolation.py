@@ -89,7 +89,11 @@ def load_openclaw_config(config_path: Path) -> dict[str, Any]:
 def resolve_agent_entry(agent_id: str, *, config_path: Path) -> dict[str, Any]:
     payload = load_openclaw_config(config_path)
     agents = payload.get("agents", {})
-    entries = agents.get("list", []) if isinstance(agents, dict) else []
+    entries = agents.get("entries", {}) if isinstance(agents, dict) else {}
+    if (not entries) and isinstance(agents, dict) and isinstance(agents.get("list"), list):
+        entries = agents["list"]
+    if isinstance(entries, dict):
+        entries = list(entries.values())
     normalized = agent_id.strip().lower()
     for entry in entries:
         if not isinstance(entry, dict):
@@ -105,7 +109,9 @@ def session_store_path_for_agent(agent_id: str, *, config_path: Path) -> Path:
     agent_dir = str(entry.get("agentDir") or "").strip()
     if agent_dir:
         return Path(agent_dir).expanduser().resolve().parent / "sessions" / "sessions.json"
-    return Path.home() / ".openclaw" / "agents" / sanitize_agent_id(agent_id) / "sessions" / "sessions.json"
+    # Kept only for historical readers. Active 9.5 execution uses SQLite and
+    # trajectory export through openclaw_session.OpenClawSessionAdapter.
+    return Path.home() / ".openclaw" / "agents" / sanitize_agent_id(agent_id) / "agent" / "openclaw-agent.sqlite"
 
 
 def requested_model_for_agent(agent_id: str, *, config_path: Path) -> tuple[str | None, str | None]:
@@ -183,37 +189,9 @@ def reset_agent_main_session_if_stale(
 ) -> dict[str, Any]:
     store_path = session_store_path_for_agent(agent_id, config_path=config_path)
     audit = base_audit(agent_id, requested_session_id, store_path)
-    store = load_json_object(store_path, label="OpenClaw session store")
-    if not store:
-        return audit
-
-    keys = main_session_keys_for_agent(agent_id)
-    current_entries = [(key, store.get(key)) for key in keys if isinstance(store.get(key), dict)]
-    if not current_entries:
-        return audit
-
-    requested_provider, requested_model = requested_model_for_agent(agent_id, config_path=config_path)
-    stale_entries = [
-        (key, entry)
-        for key, entry in current_entries
-        if isinstance(entry, dict)
-        and not entry_matches_requested_session(
-            entry,
-            requested_session_id=requested_session_id,
-            requested_provider=requested_provider,
-            requested_model=requested_model,
-        )
-    ]
-    if not stale_entries:
-        return audit
-
-    first_stale = stale_entries[0][1]
-    audit["preflight_removed_stale_main_entry"] = True
-    audit["preflight_previous_session_id"] = str(first_stale.get("sessionId") or "")
-    updated = dict(store)
-    for key in keys:
-        updated.pop(key, None)
-    atomic_write_json(store_path, updated)
+    audit.update({"legacy_compatibility": True, "preflight_deprecated": True, "session_key": f"agent:{sanitize_agent_id(agent_id)}:explicit:{requested_session_id}", "session_id": requested_session_id})
+    # Never mutate OpenClaw's state. Ownership and stale-row handling belong to
+    # the 9.5 CLI/Gateway owner.
     return audit
 
 

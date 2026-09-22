@@ -43,6 +43,7 @@ Implementation sequences and diagnosis plans.
 - [Benchmark Result Contract and Skill Runtime Health Implementation Plan](plan/2026-05-09-benchmark-result-contract-skill-runtime-health.md)
 - [Benchmark Agent Workspace Attempt Isolation Implementation Plan](plan/2026-07-14-benchmark-agent-workspace-attempt-isolation.md)
 - [Benchmark Attempt Workspace Behavior and Adjudication Implementation Plan](plan/2026-07-16-benchmark-attempt-workspace-behavior-and-adjudication.md)
+- [OpenClaw 2026.9.5 Benchmark Infra 更新与重构计划](plan/2026-09-22-openclaw-2026-9-5-benchmark-infra-migration.md)
 
 ## handoff (5)
 
@@ -77,6 +78,7 @@ Observed results, validation, and supporting evidence.
 - [VGB Runtime Cleanup Implementation](report/2026-09-17-vgb-runtime-cleanup-implementation-report.md): completed active/frozen composition cleanup, validation evidence, and user-approved removal of eight legacy input directories to Trash.
 - [VGB Legacy Residual Scan](report/2026-09-17-vgb-legacy-residual-scan-report.md): two active HLE residues, retained frozen evaluators/prompts, and live dashboard Dataset/Subset options derived from historical runs.
 - [Retired Benchmark Removal](report/2026-09-17-retired-benchmark-removal-report.md): removal of four legacy evaluators/prompts and filter choices, VGB boundary protection, and retained historical result access.
+- [OpenClaw 9.5 Benchmark Infra Migration Validation](report/2026-09-22-openclaw-9-5-benchmark-infra-migration-validation.md): Docker-only active backend, identity-first session evidence, canonical config projection, provider probe, and validation limits.
 
 ## guide (1)
 

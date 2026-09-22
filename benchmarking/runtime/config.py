@@ -23,12 +23,20 @@ def _upsert_agent_entry(
     skills: list[str] | None = None,
 ) -> None:
     agents = payload.setdefault("agents", {})
-    entries = agents.setdefault("list", [])
-    if not isinstance(entries, list):
-        raise ConfigRenderError("OpenClaw config agents.list is not a list")
+    entries = agents.get("entries")
+    if entries is None:
+        entries = agents.get("list", [])
+        agents.pop("list", None)
+        agents["entries"] = {str(item.get("id")): item for item in entries if isinstance(item, dict) and item.get("id")}
+    if isinstance(entries, dict):
+        entries_list = list(entries.values())
+    else:
+        entries_list = entries
+    if not isinstance(entries_list, list):
+        raise ConfigRenderError("OpenClaw config agents.entries is invalid")
     normalized_workspace = str(provisioned_agent.workspace.resolve())
     normalized_agent_dir = str(provisioned_agent.agent_dir.resolve())
-    for entry in entries:
+    for entry in entries_list:
         if isinstance(entry, dict) and str(entry.get("id", "")) == provisioned_agent.agent_id:
             entry["name"] = provisioned_agent.agent_id
             entry["workspace"] = normalized_workspace
@@ -39,6 +47,7 @@ def _upsert_agent_entry(
                 entry.pop("skills", None)
             else:
                 entry["skills"] = list(skills)
+            agents["entries"] = {str(item.get("id")): item for item in entries_list if isinstance(item, dict) and item.get("id")}
             return
     entry = {
         "id": provisioned_agent.agent_id,
@@ -49,7 +58,8 @@ def _upsert_agent_entry(
     }
     if skills is not None:
         entry["skills"] = list(skills)
-    entries.append(entry)
+    entries_list.append(entry)
+    agents["entries"] = {str(item.get("id")): item for item in entries_list if isinstance(item, dict) and item.get("id")}
 
 
 def render_run_config(
@@ -62,6 +72,22 @@ def render_run_config(
 ) -> dict[str, Any]:
     payload = _deep_copy_jsonish(base_payload)
     agents = payload.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        raise ConfigRenderError("OpenClaw config agents is not an object")
+    legacy_entries = agents.pop("list", None)
+    if "entries" not in agents:
+        if isinstance(legacy_entries, list):
+            agents["entries"] = {
+                str(item.get("id")): item for item in legacy_entries
+                if isinstance(item, dict) and str(item.get("id") or "").strip()
+            }
+        else:
+            agents["entries"] = {}
+    elif isinstance(agents["entries"], list):
+        agents["entries"] = {
+            str(item.get("id")): item for item in agents["entries"]
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
     defaults = agents.setdefault("defaults", {})
     if not isinstance(defaults, dict):
         raise ConfigRenderError("OpenClaw config agents.defaults is not an object")

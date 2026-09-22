@@ -259,7 +259,7 @@ def parse_args(service=None) -> argparse.Namespace:
         default="5,15,45",
         help="单一 LLM timeout 重试前等待秒数，逗号分隔，默认 5,15,45",
     )
-    parser.add_argument("--execution-backend", choices=("host", "docker"), default="docker", help="single-LLM execution backend")
+    parser.add_argument("--execution-backend", choices=("docker",), default="docker", help="single-LLM execution backend (Docker only)")
     parser.add_argument("--container-image", default="openclaw-benchmark-single-llm:latest", help="Docker image for single-LLM attempts")
     parser.add_argument("--container-cpus", type=float, help="CPU limit per single-LLM container")
     parser.add_argument("--container-memory-bytes", type=int, help="Memory limit per single-LLM container")

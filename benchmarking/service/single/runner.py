@@ -524,8 +524,8 @@ class SingleLLMRunner:
         self.pypi_cutoff = str(pypi_cutoff or os.environ.get("BENCHMARK_PYPI_CUTOFF") or datetime.now(UTC).isoformat()).strip()
         self.admission_controller = admission_controller
         self.execution_backend = str(execution_backend or "docker").strip().lower()
-        if self.execution_backend not in {"host", "docker"}:
-            raise ValueError(f"Unsupported single-LLM execution backend: {execution_backend}")
+        if self.execution_backend != "docker":
+            raise ValueError("Host single-LLM execution has been retired; use Docker")
         self.container_runtime = container_runtime or DockerContainerRuntime()
         self.container_image = container_image
         self.container_cpus = container_cpus

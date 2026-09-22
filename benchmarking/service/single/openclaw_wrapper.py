@@ -35,6 +35,7 @@ from benchmarking.runtime.session_isolation import (
     merge_preflight_postflight_audit,
     reset_agent_main_session_if_stale,
 )
+from benchmarking.runtime.openclaw_session import OpenClawSessionAdapter, OpenClawSessionError, make_session_target
 from benchmarking.runtime.session_lifecycle import SessionLifecycleSupervisor
 from benchmarking.runtime.transcript_index import TranscriptIndex
 
@@ -613,6 +614,8 @@ def _build_openclaw_command(
         "--local",
         "--agent",
         args.agent,
+        "--session-key",
+        f"agent:{args.agent}:explicit:{args.session_id}",
         "--session-id",
         args.session_id if session_id_override is None else session_id_override,
         "--message",
@@ -703,7 +706,7 @@ def run_openclaw(
     invocation_kind: str = "primary",
 ) -> subprocess.CompletedProcess[str]:
     session_id = args.session_id
-    if supervisor is not None and invocation_kind != "primary":
+    if supervisor is not None and invocation_kind not in {"primary", "time_reminder"}:
         session_id = supervisor.allocate_followup_session(invocation_kind)
     command = _build_openclaw_command(
         args,
@@ -807,16 +810,27 @@ def main() -> int:
             env=env,
         )
         with supervisor:
-            preflight_audit = reset_agent_main_session_if_stale(args.agent, args.session_id, config_path=config_path)
+            state_dir = Path(str(env.get("OPENCLAW_STATE_DIR") or config_path.parent)).expanduser().resolve()
+            target = make_session_target(agent_id=args.agent, session_id=args.session_id, state_dir=state_dir, config_path=config_path)
+            preflight_audit = {
+                "requested_session_id": target.session_id,
+                "session_id": target.session_id,
+                "session_key": target.session_key,
+                "agent_id": target.agent_id,
+                "state_dir": str(target.state_dir),
+                "legacy_compatibility": False,
+                "preflight_removed_stale_main_entry": False,
+            }
             result = run_openclaw(args, env=env, supervisor=supervisor)
             result_session_id = str(getattr(result, "session_id", args.session_id) or args.session_id)
-            primary_audit = inspect_postflight_session_with_lifecycle_fallback(
-                agent_id=args.agent,
-                session_id=result_session_id,
-                config_path=config_path,
-                preflight_audit=preflight_audit,
-                supervisor=supervisor,
-            )
+            try:
+                evidence = OpenClawSessionAdapter().collect(
+                    target if result_session_id == target.session_id else make_session_target(agent_id=args.agent, session_id=result_session_id, state_dir=state_dir, config_path=config_path),
+                    output_dir=Path(str(env.get("BENCHMARK_WORKSPACE_DIR") or state_dir)) / "scratch" / "session-evidence",
+                )
+                primary_audit = {**preflight_audit, **evidence.to_dict(), "trajectory_export": evidence.source == "trajectory_export", "session_isolation_ok": not bool(evidence.error)}
+            except OpenClawSessionError as exc:
+                primary_audit = {**preflight_audit, "trajectory_export": False, "session_isolation_ok": False, "error_code": exc.code, "error": str(exc), "error_details": exc.details}
             if result.returncode == 0:
                 result, time_reminder_meta, transcript_index = _maybe_run_time_reminder(
                     result,
@@ -827,13 +841,14 @@ def main() -> int:
                     supervisor=supervisor,
                 )
                 result_session_id = str(getattr(result, "session_id", result_session_id) or result_session_id)
-                audit = inspect_postflight_session_with_lifecycle_fallback(
-                    agent_id=args.agent,
-                    session_id=result_session_id,
-                    config_path=config_path,
-                    preflight_audit=preflight_audit,
-                    supervisor=supervisor,
-                )
+                try:
+                    evidence = OpenClawSessionAdapter().collect(
+                        make_session_target(agent_id=args.agent, session_id=result_session_id, state_dir=state_dir, config_path=config_path),
+                        output_dir=Path(str(env.get("BENCHMARK_WORKSPACE_DIR") or state_dir)) / "scratch" / "session-evidence",
+                    )
+                    audit = {**preflight_audit, **evidence.to_dict(), "trajectory_export": evidence.source == "trajectory_export", "session_isolation_ok": not bool(evidence.error)}
+                except OpenClawSessionError as exc:
+                    audit = {**primary_audit, "trajectory_export": False, "session_isolation_ok": False, "error_code": exc.code, "error": str(exc), "error_details": exc.details}
             else:
                 time_reminder_meta = _base_time_reminder_meta(args)
                 audit = primary_audit

@@ -16,7 +16,6 @@ from typing import Any
 from benchmarking.runtime.attempt_observability import token_usage_from_trajectory
 from benchmarking.runtime.session_isolation import (
     atomic_write_json,
-    session_store_path_for_agent,
 )
 from benchmarking.runtime.transcript_index import TranscriptIndex
 
@@ -116,7 +115,9 @@ class SessionLifecycleSupervisor:
         self.config_path = config_path
         self.evidence_path = evidence_path
         self.journal_path = evidence_path.with_name("session-lifecycle.events.jsonl")
-        self.session_dir = session_store_path_for_agent(agent_id, config_path=config_path).parent
+        # Lifecycle scratch is benchmark-owned evidence. OpenClaw's SQLite
+        # state is never used as a writable transcript path by the supervisor.
+        self.session_dir = evidence_path.parent / "lifecycle-session"
         self.owner_token = uuid.uuid4().hex
         self.wrapper_pid = os.getpid()
         self.lock_path = self.session_dir / f".{session_id}.benchmark-owner.lock"

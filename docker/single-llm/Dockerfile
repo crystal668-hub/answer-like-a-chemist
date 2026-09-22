@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS node-runtime
+FROM node:24.16-bookworm-slim AS node-runtime
 FROM python:3.12-slim-bookworm
 
 COPY --from=node-runtime /usr/local/ /usr/local/
@@ -12,7 +12,7 @@ WORKDIR /opt/benchmark
 COPY pyproject.toml uv.lock README.md ./
 COPY benchmarking ./benchmarking
 
-RUN npm install --global openclaw@2026.6.9 \
+RUN npm install --global openclaw@2026.9.5 \
     && uv sync --frozen --no-dev \
     && python -c "from pathlib import Path; Path('/etc/group').open('a').write('benchmark:x:1000:\\n'); Path('/etc/passwd').open('a').write('benchmark:x:1000:1000::/home/benchmark:/bin/sh\\n'); Path('/home/benchmark').mkdir(parents=True, exist_ok=True)"
 

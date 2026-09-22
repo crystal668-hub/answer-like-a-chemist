@@ -75,7 +75,7 @@ runbooks.
 | --- | --- |
 | `benchmarking/core/` | Track-only record normalization, runner/result dataclasses, historical identity projection, pure attempt outcome/retry decisions, convergence and answer recovery, stateless answer/agent-response processing, result status axes, reporting, and stdout result validation. |
 | `benchmarking/scoring/` | Pinned VGB evaluator and result/error contracts. |
-| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, invocation observability, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
+| `benchmarking/runtime/` | Shared path resolution, run-scoped OpenClaw configuration, identity-first OpenClaw 9.5 session/trajectory evidence, invocation observability, attempt workspace lifecycle, access policy and adjudication, transcript audit and typed recovery, session ownership/lifecycle evidence, structured execution-error capture, cancellation and owned process groups, historical session isolation, visual input bundles, subprocess execution utilities, Docker attempt runtime primitives, attempt concurrency admission, judge execution, verifier-grounded isolation, cleanroom integration, web-search preflight, historical adjudication replay, and verified legacy-workspace evidence archival. |
 | `benchmarking/skills/` | Matrix-backed benchmark skill inventory/routing projection, derived skills-on presentation tree, fixed skill-script runtime, and post-run tool/skill diagnostics. Startup health checks are not used to filter benchmark skill exposure. |
 | `benchmarking/workflow/` | CLI entrypoint and top-level scheduling, experiment definitions, Track selection, persisted run state, shared result orchestration and lazy runner selection; business implementations live in `benchmarking/service/single/` and `benchmarking/service/chemdebate/`. |
 | `benchmarking/analysis/` | Detached post-run evidence bundling and automated analysis reports. |
@@ -279,12 +279,11 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
 - The benchmark CLI and fixed-lane OpenClaw drivers accept the `adaptive`
   thinking level required by MiniMax-M3; the Benchmark Orchestrator validates
   the model-specific level before launching a run.
-- All Docker single-LLM attempts and host VGB attempts create a fresh
-  `scratch/venv` with `uv venv --seed --no-project`. Docker environment creation,
-  execution, dependency inventory, and cleanup are owned by
-  `benchmarking.runtime.container_attempt` inside the container; host VGB
-  lifecycle remains in `benchmarking.runtime.attempt_environment`. The active
-  single-LLM runner rejects non-VGB records on both backends.
+- All Docker single-LLM attempts create a fresh `scratch/venv` with `uv venv
+  --seed --no-project`. Docker environment creation, execution, dependency
+  inventory, and cleanup are owned by `benchmarking.runtime.container_attempt`
+  inside the container. Host single-LLM execution is retired; historical host
+  artifacts remain readable.
 - `benchmarking/resources/agent-workspace-templates/` contains the canonical
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
@@ -451,21 +450,17 @@ are non-evaluable, unscored, and use `execution_error_kind=cancelled`.
   <seconds> seconds for the whole answer attempt.` For bounded positive
   budgets, the wrapper tracks the primary turn and, when it returns without a
   complete answer after roughly five sixths of the budget (6000 seconds at the
-  default), sends a reminder with the remaining time using a new follow-up
-  session file owned by the same benchmark attempt.
+  default), sends a reminder with the remaining time using the same logical
+  session identity owned by the benchmark attempt.
 - Every primary or timeout-retry attempt receives a fresh sentinel-managed
   workspace and run-scoped session id.
-- Each wrapper acquires an exclusive per-session owner mutex before starting
-  OpenClaw. Its append-only lifecycle journal and atomic summary record the
-  attempt/session identity, wrapper and OpenClaw PIDs, owner token, invocation
-  kind, session-file fingerprints, provider terminal events, takeover state,
-  cleanup, and immutable transcript snapshots. Follow-up reminder and
-  finalization turns receive new session files. The reusable mutex inode is
-  retained empty after its lock is released so unlock/removal cannot race a new
-  owner. Container attempts guarantee a lifecycle artifact even if the wrapper
-  cannot initialize.
-- Both Docker and host VGB records receive a
-  fresh attempt-local Python environment and uv cache. All attempts in an invocation
+- Each wrapper receives an explicit `agentId/sessionKey/sessionId` identity. The
+  9.5 session adapter queries the supported session inventory surface and exports
+  one immutable trajectory bundle after invocation; active execution does not
+  delete rows or inspect live `sessions.json`/JSONL files. Lifecycle records keep
+  state-root, owner, export, and provider evidence. Historical JSONL remains a
+  read-only compatibility source.
+- Docker records receive a fresh attempt-local Python environment and uv cache. All attempts in an invocation
   share its run-start PyPI cutoff, while each retry starts from a new empty
   environment. The agent may install registry packages with `uv pip`; pip
   mutations, direct URLs, local/editable sources, alternate indexes, dependency
@@ -811,9 +806,9 @@ boundary. Processes still run as the same local user.
 
 ### Session, skill, artifact, and cleanup contracts
 
-- Single-LLM and judge calls clear only stale main-session pointers, use explicit
-  run-scoped session ids, and verify the requested session and transcript after
-  the turn. Historical transcripts remain available for audit.
+- Single-LLM and judge calls use explicit run-scoped session keys and ids. Session
+  ownership and row state are delegated to the OpenClaw 9.5 CLI/Gateway owner;
+  trajectory export is the active audit input and historical JSONL is read-only.
 - Skills-on exposure uses the complete benchmark skill routing inventory.
   Skills-off runner configs contain `skills: []`. Both groups use the same base
   runtime and may install dependencies through the registry allowlist during an
@@ -882,11 +877,9 @@ boundary. Processes still run as the same local user.
 
 ### Non-goals of the current system
 
-- The host execution backend still runs attempt workspaces as the same local
-  user; the optional Docker backend adds container isolation but is not a
-  complete syscall or multi-user security boundary. The CLI defaults to the
-  Docker backend for single-LLM attempts; `--execution-backend host` remains a
-  compatibility fallback.
+- Docker is the only active single-LLM execution backend. The container image
+  owns the OpenClaw runtime and isolated state root; historical host results are
+  supported by readers and replay tooling only.
 - The benchmark dashboard is a localhost review surface, not a benchmark launcher,
   multi-user service, or authority that rewrites immutable result artifacts.
 - Automated post-run analysis is not part of benchmark scoring.

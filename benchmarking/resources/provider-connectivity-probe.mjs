@@ -13,7 +13,8 @@ try {
   const root = "/usr/local/lib/node_modules/openclaw/dist/";
   const files = await readdir(root);
   const load = async (prefix) => {
-    const file = files.find((name) => name.startsWith(prefix) && name.endsWith(".js"));
+    const candidates = files.filter((name) => name.startsWith(prefix) && (name.endsWith(".mjs") || name.endsWith(".js")));
+    const file = candidates.find((name) => name.endsWith(".mjs")) || candidates.find((name) => name.endsWith(".js"));
     if (!file) throw Object.assign(new Error(), { code: "OPENCLAW_TRANSPORT_UNAVAILABLE" });
     return import(pathToFileURL(root + file));
   };

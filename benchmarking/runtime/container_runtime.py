@@ -612,9 +612,15 @@ def materialize_container_config(
     if not isinstance(payload, dict):
         raise ContainerRuntimeError("OpenClaw config must be a JSON object", code="container_config_invalid")
     agents = payload.get("agents")
-    entries = agents.get("list") if isinstance(agents, dict) else None
-    if not isinstance(entries, list):
-        raise ContainerRuntimeError("OpenClaw config agents.list is invalid", code="container_config_invalid")
+    entries = agents.get("entries") if isinstance(agents, dict) else None
+    if entries is None and isinstance(agents, dict):
+        legacy = agents.get("list")
+        if isinstance(legacy, list):
+            entries = {str(item.get("id")): item for item in legacy if isinstance(item, dict) and item.get("id")}
+    if isinstance(entries, list):
+        entries = {str(item.get("id")): item for item in entries if isinstance(item, dict) and item.get("id")}
+    if not isinstance(entries, dict):
+        raise ContainerRuntimeError("OpenClaw config agents.entries is invalid", code="container_config_invalid")
 
     host_workspace_text = str(host_workspace.resolve())
     host_skills_text = str(host_skills_root.resolve())
@@ -653,9 +659,8 @@ def materialize_container_config(
         raise ContainerRuntimeError("OpenClaw config agents.defaults is invalid", code="container_config_invalid")
     defaults["skipBootstrap"] = True
     payload.pop("secrets", None)
-    entries = payload["agents"]["list"]
     selected = []
-    for entry in entries:
+    for entry in entries.values():
         if not isinstance(entry, dict):
             continue
         if str(entry.get("id") or "") == agent_id:
@@ -665,7 +670,11 @@ def materialize_container_config(
             selected.append(item)
     if not selected:
         raise ContainerRuntimeError(f"OpenClaw agent is missing from config: {agent_id}", code="container_config_invalid")
-    payload["agents"] = {**payload["agents"], "list": selected}
+    payload["agents"] = {**payload["agents"], "entries": {agent_id: selected[0]}}
+    if len(selected) > 1:
+        raise ContainerRuntimeError(f"OpenClaw agent selection is ambiguous: {agent_id}", code="container_config_invalid")
+    if len(entries) > 1:
+        payload["agents"]["ownership"] = "explicit"
 
     tools = payload.setdefault("tools", {})
     if not isinstance(tools, dict):
