@@ -6,6 +6,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /bin/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONNOUSERSITE=1 \
+    OPENCLAW_VERSION=2026.9.5 \
+    OPENCLAW_PACKAGE_INTEGRITY=sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w== \
     PATH=/opt/benchmark/.venv/bin:/usr/local/bin:/usr/bin:/bin
 
 WORKDIR /opt/benchmark

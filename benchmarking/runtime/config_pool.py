@@ -203,8 +203,13 @@ class ConfigPool:
         self._single_agent_id_override = single_agent_id_override
 
     def _discover_agent_model(self, agent_id: str) -> str | None:
-        agents = ((self._payload.get("agents") or {}).get("list") or [])
-        for entry in agents:
+        agents = (self._payload.get("agents") or {})
+        entries = agents.get("entries", {}) if isinstance(agents, dict) else {}
+        if isinstance(entries, list):
+            entries = {str(entry.get("id")): entry for entry in entries if isinstance(entry, dict)}
+        if not entries and isinstance(agents, dict):
+            entries = {str(entry.get("id")): entry for entry in (agents.get("list") or []) if isinstance(entry, dict)}
+        for entry in entries.values() if isinstance(entries, dict) else ():
             if isinstance(entry, dict) and str(entry.get("id", "")) == agent_id:
                 model = str(entry.get("model") or "").strip()
                 if model:

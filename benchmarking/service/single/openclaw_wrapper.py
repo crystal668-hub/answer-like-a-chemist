@@ -110,7 +110,7 @@ def merge_isolation_audit(payload: Any, audit: dict[str, Any]) -> Any:
 
 
 def transcript_path_from_audit(audit: dict[str, Any]) -> Path | None:
-    raw = str(audit.get("postflight_entry_session_file") or "").strip()
+    raw = str(audit.get("transcript_path") or audit.get("postflight_entry_session_file") or "").strip()
     if not raw:
         return None
     path = Path(raw).expanduser()

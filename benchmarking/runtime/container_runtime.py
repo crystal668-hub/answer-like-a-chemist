@@ -671,6 +671,7 @@ def materialize_container_config(
     if not selected:
         raise ContainerRuntimeError(f"OpenClaw agent is missing from config: {agent_id}", code="container_config_invalid")
     payload["agents"] = {**payload["agents"], "entries": {agent_id: selected[0]}}
+    payload["agents"].pop("list", None)
     if len(selected) > 1:
         raise ContainerRuntimeError(f"OpenClaw agent selection is ambiguous: {agent_id}", code="container_config_invalid")
     if len(entries) > 1:

@@ -175,6 +175,11 @@ and archive recovery are distinct evidence sources and receive distinct indexes.
 Malformed-line metadata retains line numbers and hashes without copying raw line
 content; audit remains fail-closed while recovery-oriented views retain the
 existing skip-malformed-line behavior.
+`benchmarking.runtime.openclaw_session` owns active 9.5 session identity,
+supported session inventory, trajectory export, and typed evidence degradation;
+active consumers use the exported transcript branch and `events.jsonl` bundle.
+Container attempt manifests record the pinned OpenClaw version, Node engine,
+npm integrity, and resolved image digest.
 `benchmarking.workflow.run_state.ResultSink` owns canonical per-record writes. It
 uses the atomic writer, rejects symlinks within the output-root boundary, and
 skips byte-identical payloads; reporting-reference enrichment is persisted when

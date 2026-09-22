@@ -15,10 +15,19 @@ keyed `agents.entries`，多 agent 配置设置 `agents.ownership: "explicit"`�
 `sessions.json`/JSONL；旧 session reader 只作为历史兼容路径保留。provider probe
 同时加载 `.mjs` 和 `.js` transport export。
 
+第二阶段将官方 9.5 导出 bundle 的 `outputDir`、`manifest.json`、`events.jsonl` 和
+`session-branch.json` 纳入校验，并将 branch 投影为现有 transcript consumer 可读的
+临时证据。容器 manifest 记录 OpenClaw 版本、Node engine、npm integrity 和 resolved
+image digest。新增 adapter deterministic tests 覆盖 owner mismatch、export failure、
+missing artifacts 和 partial export。
+
 验证结果：`uv run python -m compileall -q benchmarking`、`git diff --check` 通过；使用
 mock CLI 完成 session row 与 trajectory export contract smoke test；使用临时配置完成
-`agents.entries` 及容器路径投影 smoke test。现有仓库中部分旧测试仍断言
-`agents.list` 和 host session mutation，需随新契约更新，不能作为 9.5 行为验收依据。
+`agents.entries` 及容器路径投影 smoke test。针对 adapter、provider、container 和
+finalization 的定向测试共 31 项通过。全量 suite 当前为 `918 passed, 92 failed,
+7 skipped`；失败集中在旧测试对 `agents.list`、host backend、live JSONL/session
+mutation 的断言，以及尚未迁移的 host-only fixtures。下一阶段应删除或改写为 Docker
+contract fixtures。
 
 尚未在本机执行真实 9.5 Docker image、Gateway migration 或 live provider smoke；这些
 需要 Docker daemon、目标镜像构建和独立 state backup，不能由本地纯 Python fixture 证明。

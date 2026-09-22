@@ -1057,18 +1057,6 @@ class SingleLLMRunner:
             self.workspace_manager._release_lease(lease)
             return result
         if self.execution_backend == "docker":
-            if result.failure is not None:
-                session_root = lease.scratch_dir / "session"
-                try:
-                    session_audit = inspect_postflight_session(
-                        self.agent_id, session_id, config_path=self.config_path,
-                        session_store_path=session_root / "agents" / self.agent_id / "sessions/sessions.json",
-                    )
-                    result.runner_meta["session_isolation"] = self._translate_container_paths(session_audit, session_root=session_root)
-                except (OSError, SessionIsolationError):
-                    transcript = session_root / "agents" / self.agent_id / "sessions" / f"{session_id}.jsonl"
-                    if transcript.is_file() and not transcript.is_symlink():
-                        result.runner_meta["session_isolation"]["postflight_entry_session_file"] = str(transcript)
             manifest_path = lease.notes_dir / "dependency-manifest.json"
             result.runner_meta["attempt_environment"] = read_evidence(manifest_path)
             result.runner_meta["dependency_audit"] = result.runner_meta["attempt_environment"].get("dependency_audit", {})
@@ -1077,7 +1065,7 @@ class SingleLLMRunner:
             result.runner_meta["host_environment_cleanup"] = cleanup_owned_environment(lease.scratch_dir)
         session_isolation = result.runner_meta.get("session_isolation")
         session_isolation = session_isolation if isinstance(session_isolation, dict) else {}
-        transcript_path_value = str(session_isolation.get("postflight_entry_session_file") or "").strip()
+        transcript_path_value = str(session_isolation.get("transcript_path") or session_isolation.get("postflight_entry_session_file") or "").strip()
         transcript_index: TranscriptIndex | None = None
         if transcript_path_value:
             transcript_path = Path(transcript_path_value).expanduser()
@@ -1693,10 +1681,17 @@ class SingleLLMRunner:
         (spool / "container-manifest.json").write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "identity": identity.sentinel_fields(),
                     "path_projection": projection.to_meta(),
                     "image": spec.image,
+                    "runtime": {
+                        "openclaw_version": "2026.9.5",
+                        "openclaw_package": "openclaw@2026.9.5",
+                        "package_integrity": "sha512-TCO/ImVLh5HkF4tdfo7iriIa7kT6iYkIr/jR5ZOkePGFGhUx5Oe7DE716Y1DzzG2teRAVDdCjgJDu1A24Yta7w==",
+                        "node_engine": ">=24.16.0 <25 || >=26.1.0",
+                        "fingerprint_status": "declared",
+                    },
                     "network_mode": spec.network_mode,
                     "network": self.container_network.to_meta(),
                     "mounts": [
@@ -1723,6 +1718,16 @@ class SingleLLMRunner:
             result = self._unexpected_attempt_failure_result(exc=exc, record=record, group=group, input_bundle=input_bundle, session_id=session_id)
             result.runner_meta["container_cleanup"] = {"removed": False, **exc.details}
             return result
+        try:
+            manifest = json.loads((spool / "container-manifest.json").read_text(encoding="utf-8"))
+            manifest["image_digest"] = handle.image_digest
+            manifest.setdefault("runtime", {})["image_digest"] = handle.image_digest
+            manifest["runtime"]["fingerprint_status"] = "declared_and_resolved"
+            (spool / "container-manifest.json").write_text(
+                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+        except (OSError, TypeError, ValueError):
+            pass
         result = None
         outcome = None
         cleanup_errors = []
