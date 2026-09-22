@@ -30,10 +30,8 @@ from benchmarking.runtime.cancellation import (
 from benchmarking.runtime.openclaw_env import build_openclaw_subprocess_env
 from benchmarking.runtime.session_isolation import (
     SessionIsolationError,
-    inspect_postflight_session,
-    merge_preflight_postflight_audit,
-    reset_agent_main_session_if_stale,
 )
+from benchmarking.runtime.openclaw_session import OpenClawSessionAdapter, OpenClawSessionError, make_session_target
 from benchmarking.runtime.workspace_policy import (
     ContaminationAudit,
     ProtectedRoot,
@@ -122,6 +120,8 @@ class JudgeClient:
             "--local",
             "--agent",
             self.judge_agent,
+            "--session-key",
+            f"agent:{self.judge_agent}:explicit:{session_id}",
             "--session-id",
             session_id,
             "--message",
@@ -157,11 +157,14 @@ class JudgeClient:
             call_error: Exception | None = None
             parsed: dict[str, Any] = {}
             try:
-                preflight_audit = reset_agent_main_session_if_stale(
-                    self.judge_agent,
-                    session_id,
+                state_dir = Path(str(env.get("OPENCLAW_STATE_DIR") or lease.scratch_dir / "session")).resolve()
+                target = make_session_target(
+                    agent_id=self.judge_agent,
+                    session_id=session_id,
+                    state_dir=state_dir,
                     config_path=self.config_path,
                 )
+                env["OPENCLAW_STATE_DIR"] = str(state_dir)
                 result = subprocess_utils.run_owned_subprocess(
                     command,
                     env=env,
@@ -169,18 +172,24 @@ class JudgeClient:
                     cancellation_token=self._cancellation_token,
                     process_registry=self._process_registry,
                 )
-                postflight_audit = inspect_postflight_session(
-                    self.judge_agent,
-                    session_id,
-                    config_path=self.config_path,
+                evidence = OpenClawSessionAdapter(
+                    runner=subprocess_utils.run_subprocess,
+                ).collect(
+                    target,
+                    output_dir=lease.notes_dir / "session-evidence",
                 )
-                audit = merge_preflight_postflight_audit(preflight_audit, postflight_audit)
+                audit = evidence.to_dict()
+                audit.update({
+                    "requested_session_id": session_id,
+                    "session_id": session_id,
+                    "session_key": target.session_key,
+                    "agent_id": self.judge_agent,
+                    "session_isolation_ok": not bool(evidence.error),
+                })
                 if audit.get("session_isolation_ok") is not True:
-                    requested_session = str(audit.get("requested_session_id") or session_id)
-                    actual_session = str(audit.get("postflight_entry_session_id") or "")
                     raise JudgeError(
-                        "Judge OpenClaw session isolation failed: "
-                        f"requested `{requested_session}` but postflight entry pointed to `{actual_session}`."
+                        "Judge OpenClaw session evidence unavailable: "
+                        f"{evidence.error.get('code', 'unknown')}"
                     )
                 payload = subprocess_utils.parse_json_stdout(result, command)
                 result_payload = subprocess_utils.unwrap_agent_payload(payload)
@@ -216,7 +225,7 @@ class JudgeClient:
                         "Judge workspace information contamination was detected or could not be excluded."
                     )
                 outcome_status = "completed"
-            except SessionIsolationError as exc:
+            except (SessionIsolationError, OpenClawSessionError) as exc:
                 call_error = JudgeError(f"Judge OpenClaw session isolation failed: {exc}")
             except Exception as exc:
                 call_error = exc

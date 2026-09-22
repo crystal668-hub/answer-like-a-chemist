@@ -93,7 +93,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
         self.assertTrue(rendered["tools"]["web"]["search"]["enabled"])
         self.assertTrue(rendered["tools"]["web"]["fetch"]["enabled"])
         self.assertTrue(rendered["plugins"]["entries"]["duckduckgo"]["enabled"])
-        self.assertEqual(["chem-calculator", "rdkit"], rendered["agents"]["list"][1]["skills"])
+        self.assertEqual(["chem-calculator", "rdkit"], rendered["agents"]["entries"]["benchmark-single-skills-on"]["skills"])
 
     def test_render_run_config_forces_single_llm_web_search_and_fetch_off(self) -> None:
         for group_id, skills_enabled, skill_allowlist in (
@@ -171,7 +171,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             runner_model="qwen3.5-plus",
         )
 
-        agents = {entry["id"]: entry for entry in rendered["agents"]["list"]}
+        agents = rendered["agents"]["entries"]
         self.assertNotIn("skills", agents["benchmark-judge"])
         self.assertEqual([], agents["benchmark-single-skills-off"]["skills"])
 
@@ -209,7 +209,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             runner_model="runner-model",
         )
 
-        agents = payload["agents"]["list"]
+        agents = list(payload["agents"]["entries"].values())
         runner = next(agent for agent in agents if agent["id"] == "benchmark-single-skills-on")
         skills = runner["skills"]
 
@@ -273,7 +273,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             runner_model="qwen3.5-plus",
         )
 
-        agents = {entry["id"]: entry for entry in rendered["agents"]["list"]}
+        agents = rendered["agents"]["entries"]
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
         self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
         self.assertNotIn("thinking", agents["benchmark-judge"])
@@ -347,7 +347,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 workspace_manager=self._workspace_manager(root),
             )
 
-            agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+            agents = payload["agents"]["entries"]
             self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
             self.assertNotIn("benchmark-judge", agents)
             self.assertFalse((root / "agents/benchmark-judge").exists())
@@ -503,7 +503,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                 workspace_manager=self._workspace_manager(root),
             )
 
-            agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+            agents = payload["agents"]["entries"]
             self.assertEqual("qwen3.5-plus", agents["debateA-coordinator"]["model"])
             self.assertEqual("qwen3.5-plus", agents["debateA-5"]["model"])
             self.assertEqual(["chem-calculator", "rdkit"], agents["debateA-coordinator"]["skills"])
@@ -602,7 +602,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
             config_path = pool.config_for_group(group)
             payload = json.loads(config_path.read_text(encoding="utf-8"))
 
-            agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+            agents = payload["agents"]["entries"]
             self.assertEqual("openai/gpt-5.5", agents["benchmark-single-skills-on"]["model"])
             self.assertNotIn("benchmark-judge", agents)
             self.assertFalse((root / "agents/benchmark-judge").exists())
@@ -652,7 +652,7 @@ class BenchmarkConfigRuntimeTests(unittest.TestCase):
                     workspace_manager=manager,
                     single_agent_id_override="shared-agent",
                 )
-                agent = next(entry for entry in payload["agents"]["list"] if entry["id"] == "shared-agent")
+                agent = payload["agents"]["entries"]["shared-agent"]
                 paths.append(Path(agent["workspace"]))
 
             self.assertNotEqual(paths[0], paths[1])

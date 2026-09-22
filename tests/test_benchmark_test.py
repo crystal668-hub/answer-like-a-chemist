@@ -598,7 +598,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        agents = payload["agents"]["entries"]
         self.assertEqual("qwen3.5-plus", agents["benchmark-single-skills-on"]["model"])
         self.assertNotIn("benchmark-judge", agents)
         self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents["benchmark-single-skills-on"]["skills"])
@@ -624,7 +624,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        agents = payload["agents"]["entries"]
         self.assertEqual([], agents["benchmark-single-skills-off"]["skills"])
         self.assertFalse(payload["tools"]["web"]["search"]["enabled"])
         self.assertFalse(payload["plugins"]["entries"]["duckduckgo"]["enabled"])
@@ -648,7 +648,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        agents = payload["agents"]["entries"]
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
         self.assertNotIn("thinking", agents["benchmark-judge"])
 
@@ -667,7 +667,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        agents = payload["agents"]["entries"]
         self.assertEqual("su8/gpt-5.4", agents["benchmark-judge"]["model"])
         self.assertEqual("qwen3.5-plus", agents["debateA-coordinator"]["model"])
         self.assertEqual(experiments.BENCHMARK_SKILLS_ALLOWLIST, agents["debateA-coordinator"]["skills"])
@@ -695,7 +695,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 single_agent_model="qwen3.5-plus",
                 judge_model="su8/gpt-5.4",
             )
-        agents = {entry["id"]: entry for entry in payload["agents"]["list"]}
+        agents = payload["agents"]["entries"]
         coordinator_workspace = Path(agents["debateA-coordinator"]["workspace"])
         proposer_workspace = Path(agents["debateA-1"]["workspace"])
         self.assertIn("runs", coordinator_workspace.parts)

@@ -75,6 +75,8 @@ def render_run_config(
     if not isinstance(agents, dict):
         raise ConfigRenderError("OpenClaw config agents is not an object")
     legacy_entries = agents.pop("list", None)
+    if legacy_entries is not None and not isinstance(legacy_entries, list):
+        raise ConfigRenderError("OpenClaw config agents.list is not a list")
     if "entries" not in agents:
         if isinstance(legacy_entries, list):
             agents["entries"] = {
