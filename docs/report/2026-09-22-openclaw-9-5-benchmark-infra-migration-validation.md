@@ -33,6 +33,14 @@ skipped，Docker contract 取代其 active coverage。全量 Python suite 当前
 `920 passed, 83 skipped`，跳过项仅包含 retired host/live-JSONL fixtures 或显式 opt-in
 Docker tests。
 
+新增 `benchmarking.runtime.agent_exec_contract`，记录 `agent --local` 与 `agent exec`
+的 envelope、session identity、cleanup/evidence 覆盖和推荐结论。离线 fixture 结论为：
+在 exec 无法提供可验证 trajectory evidence 时保留 `agent --local`。本机直接运行 9.5
+CLI 被 Node `24.15.0` engine 诊断阻断；Docker 重建又被 Docker Hub token 网络超时阻断。
+现有缓存镜像 `openclaw-benchmark-single-llm:latest` 仍为 OpenClaw `2026.6.9`
+（digest `sha256:7b5cf7de75a82e3afbd8aa92e38e6850cfa50cc1f94270eb9a6c9358c92a2777`），
+因此没有将其误标为 9.5 acceptance image。
+
 已核对本地 9.5 npm tarball：version `2026.9.5`、build `ec9c1a1`、Node engine
 `>=24.16.0 <25 || >=26.1.0`、npm integrity 已写入 Docker manifest。真实 Docker image
 重建在 Docker Hub token 请求阶段因网络超时失败；因此 image digest、Gateway migration、
