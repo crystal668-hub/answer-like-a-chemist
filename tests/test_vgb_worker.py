@@ -29,7 +29,7 @@ def config(tmp_path, monkeypatch):
     content = Path(__file__).with_name("fixtures").joinpath("vgb_worker/verifier_grounded_benchmark.py").read_bytes()
     config = bridge.ReleaseConfig("fixture", "1", "commit", "tag", "fixture.whl",
         hashlib.sha256(content).hexdigest(), len(content),
-        {name: {"task_ids": ["task-a", "task-b"], "timeout_seconds": 2} for name in ("rdkit", "property")})
+        {name: {"task_ids": ["task-a", "task-b"], "timeout_seconds": 2} for name in ("open_generation_rdkit", "property")})
     config.wheel_path.parent.mkdir(parents=True)
     config.wheel_path.write_bytes(content)
     venv.EnvBuilder(with_pip=False, symlinks=True).create(config.runtime_root / ".venv")
@@ -50,15 +50,15 @@ def worker(config, tmp_path):
     assert not worker.registry.active()
 
 
-def evaluate(config, worker=None, answer="FINAL ANSWER: CCO", track="rdkit", task="task-a"):
+def evaluate(config, worker=None, answer="FINAL ANSWER: CCO", track="open_generation_rdkit", task="task-a"):
     return bridge.evaluate_answer(track=track, task_id=task, answer_text=answer,
         release_identity=config.identity, release_config=config, worker=worker)
 
 
 def test_shadow_complete_results_repeated_interleaved_and_recycle(config, worker):
     worker.max_requests = 3
-    cases = [("rdkit", "FINAL ANSWER: CCO"), ("property", "FINAL ANSWER: 1.25"),
-             ("rdkit", "invalid"), ("property", "infrastructure"), ("rdkit", "FINAL ANSWER: CCO")]
+    cases = [("open_generation_rdkit", "FINAL ANSWER: CCO"), ("property", "FINAL ANSWER: 1.25"),
+             ("open_generation_rdkit", "invalid"), ("property", "infrastructure"), ("open_generation_rdkit", "FINAL ANSWER: CCO")]
     for track, answer in cases * 2:
         assert evaluate(config, worker, answer, track) == evaluate(config, None, answer, track)
     assert worker.to_meta()["process_count"] == 4
@@ -73,7 +73,7 @@ def test_shadow_complete_results_repeated_interleaved_and_recycle(config, worker
                                          ("__exception__", "verifier_exception")])
 def test_fault_has_evidence_and_next_request_restarts_without_replay(config, worker, answer, code):
     with pytest.raises(workers.VerifierWorkerError) as caught:
-        worker.invoke(config, {"action": "evaluate_one", "track": "rdkit", "task_id": "task-a", "answer_text": answer}, timeout=0.15)
+        worker.invoke(config, {"action": "evaluate_one", "track": "open_generation_rdkit", "task_id": "task-a", "answer_text": answer}, timeout=0.15)
     assert caught.value.code == code
     assert evaluate(config, worker)["scores"]["score"] == 0.75
     assert worker.to_meta()["process_count"] == 2
@@ -224,9 +224,9 @@ def test_evaluator_scores_and_failure_messages_are_equal(config, worker, answer)
         evaluate_verifier_grounded,
         run_verifier_grounded_evaluation,
     )
-    record = BenchmarkRecord(record_id="task-a", track="rdkit", source_file="fixture", prompt="fixture",
+    record = BenchmarkRecord(record_id="task-a", track="open_generation_rdkit", source_file="fixture", prompt="fixture",
         eval_kind="verifier_grounded", payload={"verifier_grounded": {
-            "release": config.identity, "track": "rdkit", "task_id": "task-a"}})
+            "release": config.identity, "track": "open_generation_rdkit", "task_id": "task-a"}})
     outcomes = []
     for selected in (None, worker):
         try:
@@ -244,9 +244,9 @@ def test_cli_transport_wiring_and_cleanup(config, tmp_path, monkeypatch, mode, c
     from benchmarking.core.records import BenchmarkRecord
     from benchmarking.service.single import execution
     from benchmarking.workflow import cli, experiments, runner_adapters
-    record = BenchmarkRecord(record_id="task-a", track="rdkit", source_file="fixture",
+    record = BenchmarkRecord(record_id="task-a", track="open_generation_rdkit", source_file="fixture",
         prompt="fixture", eval_kind="verifier_grounded", payload={"verifier_grounded": {
-            "release": config.identity, "track": "rdkit", "task_id": "task-a"}})
+            "release": config.identity, "track": "open_generation_rdkit", "task_id": "task-a"}})
     monkeypatch.setattr(sys, "argv", ["benchmark", "--execution-backend", "host", "--no-analysis",
         "--groups", "single_llm_skills_off", "--exact-output-dir", str(tmp_path / "out"),
         *(["--verifier-mode", mode] if mode == "worker" else [])])

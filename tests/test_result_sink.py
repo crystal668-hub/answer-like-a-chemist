@@ -45,7 +45,7 @@ def test_per_record_commit_is_resume_source_before_results_aggregate(tmp_path: P
     sink.save_json(path, {"record_id": "r1", "status": "completed"})
     record = BenchmarkRecord(
         record_id="r1",
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="demo.jsonl",
         eval_kind="verifier_grounded",
         prompt="Q",

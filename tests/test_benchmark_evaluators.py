@@ -23,7 +23,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_returns_continuous_score_without_pass_threshold(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -35,8 +35,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                         "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
-                    "track": "rdkit",
-                    "task_id": "rdkit_logp_window_003",
+                    "track": "open_generation_rdkit",
+                    "task_id": "rdkit_003_logp_window",
                 }
             },
         )
@@ -44,7 +44,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         def verifier_runner(*, record, answer_text):
             self.assertEqual("Reasoning.\nFINAL ANSWER: c1ccccc1", answer_text)
             return {
-                "task_id": "rdkit_logp_window_003",
+                "task_id": "rdkit_003_logp_window",
                 "status": "scored",
                 "canonical_smiles": "c1ccccc1",
                 "properties": {"logp": 1.6866},
@@ -54,7 +54,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                 },
                 "failure_type": None,
                 "message": None,
-                "versions": {"rdkit": "2026.03.2"},
+                "versions": {"open_generation_rdkit": "2026.03.2"},
                 "raw_answer": "Reasoning.\nFINAL ANSWER: c1ccccc1",
                 "extracted_answer": "c1ccccc1",
             }
@@ -79,7 +79,7 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
     def test_verifier_grounded_parse_error_is_scored_zero_but_not_threshold_passed(self) -> None:
         record = BenchmarkRecord(
             record_id="rdkit-logp",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -91,15 +91,15 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                         "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
-                    "track": "rdkit",
-                    "task_id": "rdkit_logp_window_003",
+                    "track": "open_generation_rdkit",
+                    "task_id": "rdkit_003_logp_window",
                 }
             },
         )
 
         def verifier_runner(*, record, answer_text):
             return {
-                "task_id": "rdkit_logp_window_003",
+                "task_id": "rdkit_003_logp_window",
                 "status": "scored",
                 "failure_type": "parse_error",
                 "message": "missing final answer line",
@@ -125,8 +125,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
     def test_verifier_grounded_infrastructure_error_is_not_converted_to_zero(self) -> None:
         record = BenchmarkRecord(
-            record_id="rdkit_logp_window_003",
-            track="rdkit",
+            record_id="rdkit_003_logp_window",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Propose one valid single-component small-molecule SMILES.",
@@ -138,15 +138,15 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                         "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
-                    "track": "rdkit",
-                    "task_id": "rdkit_logp_window_003",
+                    "track": "open_generation_rdkit",
+                    "task_id": "rdkit_003_logp_window",
                 }
             },
         )
 
         def verifier_runner(*, record, answer_text):
             return {
-                "task_id": "rdkit_logp_window_003",
+                "task_id": "rdkit_003_logp_window",
                 "status": "error",
                 "failure_scope": "infrastructure",
                 "failure_type": "verifier_timeout",
@@ -168,8 +168,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
     def test_verifier_grounded_rejects_record_task_mismatch_before_runtime(self) -> None:
         record = BenchmarkRecord(
-            record_id="rdkit_qed_max_001",
-            track="rdkit",
+            record_id="rdkit_001_qed_max",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -181,8 +181,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                         "version": "0.2.0",
                         "wheel_sha256": "pinned",
                     },
-                    "track": "rdkit",
-                    "task_id": "rdkit_sa_min_002",
+                    "track": "open_generation_rdkit",
+                    "task_id": "rdkit_002_sa_min",
                 }
             },
         )
@@ -192,8 +192,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
 
     def test_verifier_grounded_rejects_release_mismatch_at_invocation_start(self) -> None:
         record = BenchmarkRecord(
-            record_id="rdkit_qed_max_001",
-            track="rdkit",
+            record_id="rdkit_001_qed_max",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -205,8 +205,8 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
                         "version": "stale",
                         "wheel_sha256": "stale",
                     },
-                    "track": "rdkit",
-                    "task_id": "rdkit_qed_max_001",
+                    "track": "open_generation_rdkit",
+                    "task_id": "rdkit_001_qed_max",
                 }
             },
         )

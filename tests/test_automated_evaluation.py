@@ -34,7 +34,7 @@ def minimal_record_payload(*, group_id: str, record_id: str, runner: str, runner
         "websearch": True,
         "skills_enabled": group_id.endswith("skills_on"),
         "record_id": record_id,
-        "track": "rdkit",
+        "track": "open_generation_rdkit",
         "source_file": "/tmp/demo.jsonl",
         "eval_kind": "verifier_grounded",
         "prompt": "What is the answer?",

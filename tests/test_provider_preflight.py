@@ -71,7 +71,7 @@ def test_cli_connection_failure_stops_before_workspace_recovery_and_scheduling(s
     output = tmp_path / "run"
     record = load_records([
         Path(__file__).resolve().parents[1]
-        / "benchmarking/resources/verifier_grounded/tracks/rdkit.jsonl"
+        / "benchmarking/resources/verifier_grounded/tracks/open_generation_rdkit.jsonl"
     ])[0]
     monkeypatch.setattr(sys, "argv", ["benchmark", "--openclaw-config", str(config), "--exact-output-dir", str(output), "--single-agent-model", "qwen/flash"])
     monkeypatch.setattr(execution, "select_track_files", lambda args: [tmp_path / "test.jsonl"])

@@ -38,8 +38,8 @@ print(json.dumps([name for name in sys.modules if name.startswith((
 def test_release_inventory_is_the_canonical_track_table() -> None:
     release = load_release_config()
     assert list(release.tracks) == [
-        "rdkit",
-        "xtb",
+        "open_generation_rdkit",
+        "open_generation_xtb",
         "property_calculation_advanced",
         "property_calculation_basic",
     ]
@@ -71,8 +71,8 @@ def test_frozen_entrypoint_is_vgb_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert callable(legacy_cli.main)
     assert set(frozen.evaluator_registry()) == {"verifier_grounded"}
-    monkeypatch.setattr(sys, "argv", ["legacy", "--tracks", "rdkit"])
-    assert cli.parse_args(frozen).tracks == "rdkit"
+    monkeypatch.setattr(sys, "argv", ["legacy", "--tracks", "open_generation_rdkit"])
+    assert cli.parse_args(frozen).tracks == "open_generation_rdkit"
 
 
 def test_invocation_registry_has_no_generic_fallback() -> None:
@@ -89,8 +89,8 @@ def test_invocation_registry_has_no_generic_fallback() -> None:
 
 @pytest.fixture
 def vgb_file(tmp_path: Path) -> Path:
-    source = RESOURCE / "rdkit.jsonl"
-    path = tmp_path / "rdkit/data/rdkit.jsonl"
+    source = RESOURCE / "open_generation_rdkit.jsonl"
+    path = tmp_path / "open_generation_rdkit/data/open_generation_rdkit.jsonl"
     path.parent.mkdir(parents=True)
     path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     return path
@@ -98,7 +98,7 @@ def vgb_file(tmp_path: Path) -> Path:
 
 def test_valid_records_and_explicit_files_are_accepted(vgb_file: Path) -> None:
     records = execution.select_records([vgb_file], SimpleNamespace(record_ids=None))
-    assert len(records) == load_release_config().tracks["rdkit"]["task_count"]
+    assert len(records) == load_release_config().tracks["open_generation_rdkit"]["task_count"]
     args = SimpleNamespace(benchmark_root="", files=str(vgb_file), tracks=None)
     assert execution.select_track_files(args) == [vgb_file]
 
@@ -111,7 +111,7 @@ def test_record_validation_precedes_filtering(
 ) -> None:
     record = deepcopy(load_records([vgb_file])[0])
     if mutation == "record_track":
-        record.track = "xtb"
+        record.track = "open_generation_xtb"
     elif mutation == "eval_kind":
         record.eval_kind = "generic_semantic"
     else:
@@ -123,10 +123,10 @@ def test_record_validation_precedes_filtering(
 
 
 def test_discovery_requires_canonical_track_layout(tmp_path: Path, vgb_file: Path) -> None:
-    canonical = tmp_path / "rdkit/data/rdkit.jsonl"
+    canonical = tmp_path / "open_generation_rdkit/data/open_generation_rdkit.jsonl"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_text(vgb_file.read_text(encoding="utf-8"), encoding="utf-8")
-    args = SimpleNamespace(benchmark_root=str(tmp_path), files=None, tracks="rdkit")
+    args = SimpleNamespace(benchmark_root=str(tmp_path), files=None, tracks="open_generation_rdkit")
     assert execution.select_track_files(args) == [canonical.resolve()]
 
     args.tracks = "chembench"

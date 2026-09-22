@@ -15,7 +15,7 @@ from benchmarking.scoring.registry import (
 )
 
 
-def _write_record(path: Path, *, track: str = "rdkit", **overrides: object) -> Path:
+def _write_record(path: Path, *, track: str = "open_generation_rdkit", **overrides: object) -> Path:
     payload = {
         "id": "task-1",
         "prompt": "Question?",
@@ -29,7 +29,7 @@ def _write_record(path: Path, *, track: str = "rdkit", **overrides: object) -> P
     return path
 
 
-@pytest.mark.parametrize("track", ["rdkit", "xtb"])
+@pytest.mark.parametrize("track", ["open_generation_rdkit", "open_generation_xtb"])
 def test_load_records_builds_track_grading_spec(tmp_path: Path, track: str) -> None:
     path = _write_record(tmp_path / track / "data" / f"{track}.jsonl", track=track)
 
@@ -41,7 +41,7 @@ def test_load_records_builds_track_grading_spec(tmp_path: Path, track: str) -> N
 
 
 def test_load_records_rejects_missing_prompt_answer_and_mismatched_track(tmp_path: Path) -> None:
-    path = tmp_path / "rdkit" / "data" / "rdkit.jsonl"
+    path = tmp_path / "open_generation_rdkit" / "data" / "open_generation_rdkit.jsonl"
     _write_record(path, prompt="")
     with pytest.raises(ValueError, match="Missing prompt"):
         load_records([path])
@@ -50,7 +50,7 @@ def test_load_records_rejects_missing_prompt_answer_and_mismatched_track(tmp_pat
     with pytest.raises(ValueError, match="Missing answer/target"):
         load_records([path])
 
-    _write_record(path, track="xtb")
+    _write_record(path, track="open_generation_xtb")
     with pytest.raises(ValueError, match="does not match source track"):
         load_records([path])
 
@@ -67,7 +67,7 @@ def test_evaluate_record_uses_explicit_registry_dispatch() -> None:
         register_evaluator("unit_test", evaluator)
         record = BenchmarkRecord(
             record_id="task-1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="fixture",
             prompt="Question?",
             grading=GradingSpec(kind="unit_test", reference_answer="42"),
@@ -88,7 +88,7 @@ def test_benchmark_record_serializes_track_only_and_deep_copies_payload() -> Non
     payload = {"options": {"A": "x"}}
     record = BenchmarkRecord(
         record_id="task-1",
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="fixture",
         prompt="Question?",
         eval_kind="verifier_grounded",
@@ -109,7 +109,7 @@ def test_benchmark_record_serializes_track_only_and_deep_copies_payload() -> Non
 def test_evaluate_record_unknown_kind_has_no_generic_fallback() -> None:
     record = BenchmarkRecord(
         record_id="task-1",
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="fixture",
         prompt="Question?",
         grading=GradingSpec(kind="missing", reference_answer="42"),

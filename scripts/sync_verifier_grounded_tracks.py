@@ -41,8 +41,8 @@ RESOURCE_TRACK_ROOT = (
 VERIFIER_RUNTIME_ROOT = runtime_paths.project_state_root / "verifier-grounded-runtimes"
 RUNTIME_HISTORY_VERSIONS = 2
 LEGACY_TRACK_DIRECTORIES = {
-    "rdkit": "verifier_grounded_rdkit",
-    "xtb": "verifier_grounded_xtb_xyz",
+    "open_generation_rdkit": "verifier_grounded_rdkit",
+    "open_generation_xtb": "verifier_grounded_xtb_xyz",
     "property_calculation_advanced": "verifier_grounded_property_calculation",
     "property_calculation_basic": "verifier_grounded_property_calculation_easy",
 }

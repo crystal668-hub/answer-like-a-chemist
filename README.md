@@ -14,7 +14,7 @@ without calling a model:
 cd ~/.openclaw/workspace
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --tracks rdkit \
+  --tracks open_generation_rdkit \
   --limit 1 \
   --print-selected-records
 ```
@@ -24,7 +24,7 @@ Run the same selection and skip optional post-run analysis:
 ```bash
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --tracks rdkit \
+  --tracks open_generation_rdkit \
   --limit 1 \
   --no-analysis
 ```
@@ -34,8 +34,8 @@ Select an exact package task ID:
 ```bash
 uv run python -m benchmarking.workflow.cli \
   --groups single_llm_skills_on \
-  --tracks xtb \
-  --record-ids xtb_gap_window_001 \
+  --tracks open_generation_xtb \
+  --record-ids xtb_001_gap_window \
   --no-analysis
 ```
 
@@ -44,7 +44,7 @@ Without `--exact-output-dir`, runs are classified under
 
 Use `single_llm_skills_off` for the skills-disabled condition, or pass both
 single-LLM group IDs to compare them. Omit `--limit` and `--record-ids` to run
-the complete selected Track. The supported Track names are `rdkit`, `xtb`,
+the complete selected Track. The supported Track names are `open_generation_rdkit`, `open_generation_xtb`,
 `property_calculation_advanced`, and `property_calculation_basic`. The pinned
 `benchmarking/resources/verifier_grounded/release.json` owns their order and task
 inventory. Explicit `--files` inputs must use the

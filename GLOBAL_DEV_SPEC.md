@@ -56,8 +56,8 @@ runbooks.
   single-LLM model slugs provide the next two levels. Verifier-grounded isolated
   runtimes and dashboard metadata also live under `workspace/state/`.
 - Default single-Track benchmark directory names use the canonical mapping
-  owned by `benchmarking.workflow.track_selection`: `rdkit` maps to
-  `vgb-rdkit`, `xtb` maps to `vgb-xtb`, `property_calculation_advanced` maps to
+  owned by `benchmarking.workflow.track_selection`: `open_generation_rdkit` maps to
+  `vgb-rdkit`, `open_generation_xtb` maps to `vgb-xtb`, `property_calculation_advanced` maps to
   `vgb-property-calculation-advanced`, and `property_calculation_basic` maps to
   `vgb-property-calculation-basic`. Multi-Track runs use `mixed-tracks`.
 - Explicitly retained fixed-workspace evidence lives under
@@ -289,7 +289,7 @@ cache under `data/verifier-grounded-releases` is not part of this cleanup.
   benchmark workspace base contract and role overlays.
 - `benchmarking/resources/verifier_grounded/` contains the pinned release
   identity and sanitized public Track snapshots. The current pinned VGB
-  runtime is v0.9.3.
+  runtime is v0.10.0.
 Run-scoped and materialized container OpenClaw configs force `agents.defaults.skipBootstrap=true` while preserving other defaults. Container path projection uses boundary-aware prefix matching.
 Finalization rescue can consume only a frozen primary transcript through the
 restricted `benchmarking.core.finalization_context` bundle; timeout and process
@@ -321,7 +321,7 @@ For each invocation, the CLI:
 
 1. Uses service-owned selection backed by `benchmarking.workflow.track_selection`.
    Both active single-LLM and frozen ChemQA execution accept only the ordered
-   Track table declared in the pinned release: `rdkit`, `xtb`,
+   Track table declared in the pinned release: `open_generation_rdkit`, `open_generation_xtb`,
    `property_calculation_advanced`, and `property_calculation_basic`. The CLI
    exposes `--tracks` and `--list-tracks`; dataset/subset flags have no aliases.
    Every loaded record must use `eval_kind=verifier_grounded`, match its

@@ -12,7 +12,7 @@ def _group_result(*, skills_enabled: bool, audit: dict[str, object]) -> GroupRec
         runner="single_llm",
         websearch=False,
         record_id="r",
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="/tmp/d.jsonl",
         eval_kind="verifier_grounded",
         prompt="Q",

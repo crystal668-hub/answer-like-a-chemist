@@ -39,7 +39,7 @@ from benchmarking.workflow.orchestration import run_group
 def _record(record_id: str) -> BenchmarkRecord:
     return BenchmarkRecord(
         record_id=record_id,
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="/tmp/demo.jsonl",
         eval_kind="chembench_open_ended",
         prompt="Q",

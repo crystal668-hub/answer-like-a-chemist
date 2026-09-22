@@ -6,8 +6,8 @@ from benchmarking.runtime.bundles import ensure_runtime_bundle
 
 def test_vgb_records_do_not_materialize_input_bundles(tmp_path: Path) -> None:
     record = BenchmarkRecord(
-        record_id="rdkit_qed_max_001",
-        track="rdkit",
+        record_id="rdkit_001_qed_max",
+        track="open_generation_rdkit",
         source_file="fixture",
         eval_kind="verifier_grounded",
         prompt="Question?",

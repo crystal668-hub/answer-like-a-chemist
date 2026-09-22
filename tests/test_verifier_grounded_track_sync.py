@@ -36,12 +36,12 @@ FORBIDDEN_KEYS = {
 def _description() -> dict[str, Any]:
     config = load_release_config()
     schemas = {
-        "rdkit": {
+        "open_generation_rdkit": {
             "format": "final_answer_line",
             "final_answer_prefix": "FINAL ANSWER:",
             "value_type": "smiles",
         },
-        "xtb": {
+        "open_generation_xtb": {
             "format": "final_answer_block",
             "final_answer_prefix": "FINAL ANSWER:",
             "value_type": "xyz",
@@ -225,9 +225,9 @@ def test_checked_in_tracks_match_pinned_release_inventory() -> None:
 
 
 def test_rdkit_chain_distance_prompt_exposes_smarts_and_uff_protocol() -> None:
-    path = RESOURCE_TRACK_ROOT / "rdkit.jsonl"
+    path = RESOURCE_TRACK_ROOT / "open_generation_rdkit.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    record = next(row for row in rows if row["id"] == "rdkit_chain_end_to_end_max_013")
+    record = next(row for row in rows if row["id"] == "rdkit_013_chain_end_to_end_max")
 
     assert (
         "[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]-[C;X4;!R]"
@@ -263,8 +263,8 @@ def test_migrate_legacy_layout_preserves_all_legacy_dirs_on_validation_failure(
 ) -> None:
     config = load_release_config()
     _write_legacy_layout(tmp_path)
-    broken = tmp_path / LEGACY_TRACK_DIRECTORIES["xtb"] / "data" / (
-        LEGACY_TRACK_DIRECTORIES["xtb"] + ".jsonl"
+    broken = tmp_path / LEGACY_TRACK_DIRECTORIES["open_generation_xtb"] / "data" / (
+        LEGACY_TRACK_DIRECTORIES["open_generation_xtb"] + ".jsonl"
     )
     broken.write_text("{}\n", encoding="utf-8")
 
@@ -279,7 +279,7 @@ def test_migrate_legacy_layout_rejects_incomplete_destination_without_cleanup(
 ) -> None:
     config = load_release_config()
     _write_legacy_layout(tmp_path)
-    (tmp_path / "rdkit").mkdir()
+    (tmp_path / "open_generation_rdkit").mkdir()
 
     with pytest.raises(VerifierGroundedRuntimeError, match="destination exists but is incomplete"):
         migrate_legacy_track_layout(config=config, benchmarks_root=tmp_path)

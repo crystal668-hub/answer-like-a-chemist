@@ -65,7 +65,7 @@ class ChemQAWorkspaceIsolationTests(unittest.TestCase):
     def _record(record_id: str) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id=record_id,
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Return water.",

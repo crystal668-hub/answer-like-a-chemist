@@ -5,14 +5,16 @@ from pathlib import Path
 from typing import Any
 
 LEGACY_VGB_TRACK_ALIASES = {
-    "verifier_grounded_rdkit": "rdkit",
-    "verifier_grounded_xtb_xyz": "xtb",
+    "rdkit": "open_generation_rdkit",
+    "xtb": "open_generation_xtb",
+    "verifier_grounded_rdkit": "open_generation_rdkit",
+    "verifier_grounded_xtb_xyz": "open_generation_xtb",
     "verifier_grounded_property_calculation": "property_calculation_advanced",
     "verifier_grounded_property_calculation_easy": "property_calculation_basic",
     "property_calculation_advanced": "property_calculation_advanced",
     "property_calculation_basic": "property_calculation_basic",
-    "rdkit": "rdkit",
-    "xtb": "xtb",
+    "open_generation_rdkit": "open_generation_rdkit",
+    "open_generation_xtb": "open_generation_xtb",
 }
 LEGACY_NON_VGB_IDENTIFIERS = {
     "chembench",

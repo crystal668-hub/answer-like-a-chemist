@@ -170,7 +170,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="record-1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded_rdkit.jsonl",
             eval_kind="verifier_grounded",
             prompt="Identify X.",
@@ -181,7 +181,7 @@ class SingleLLMTimeoutRetryTests(unittest.TestCase):
     def _vgb_record(self) -> BenchmarkRecord:
         return BenchmarkRecord(
             record_id="vgb-record-1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/verifier_grounded_rdkit.jsonl",
             eval_kind="verifier_grounded",
             prompt="Return a molecule.",

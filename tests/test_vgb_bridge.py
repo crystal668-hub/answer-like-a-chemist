@@ -15,16 +15,16 @@ from benchmarking.runtime import vgb_bridge as bridge
 def test_release_config_pins_version_hash_and_complete_inventory() -> None:
     config = bridge.load_release_config()
 
-    assert config.version == "0.9.3"
-    assert config.source_tag == "v0.9.3"
-    assert config.source_commit == "fd844ddf790889d14f1f063eff383a9ef49042ce"
-    assert config.wheel_sha256 == "8ed70758b1e7cbb0f20e6fd81a0d96578a2a9a629a000213f5301ddc8455b20a"
-    assert config.wheel_size == 186437
+    assert config.version == "0.10.0"
+    assert config.source_tag == "v0.10.0"
+    assert config.source_commit == "5e4d345e47ff5e0cac16297972ce7a70e6577075"
+    assert config.wheel_sha256 == "019b7c90031355b804d8d6873cdc81b52153496b06681962775f54367c19140a"
+    assert config.wheel_size == 192362
     assert {name: track["task_count"] for name, track in config.tracks.items()} == {
         "property_calculation_advanced": 20,
         "property_calculation_basic": 51,
-        "rdkit": 14,
-        "xtb": 20,
+        "open_generation_rdkit": 14,
+        "open_generation_xtb": 20,
     }
     assert all(track["task_count"] == len(track["task_ids"]) for track in config.tracks.values())
 
@@ -48,8 +48,8 @@ def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
         pytest.raises(bridge.VerifierGroundedRuntimeError, match="does not match"),
     ):
         bridge.evaluate_answer(
-            track="rdkit",
-            task_id="rdkit_qed_max_001",
+            track="open_generation_rdkit",
+            task_id="rdkit_001_qed_max",
             answer_text="FINAL ANSWER: CCO",
             release_identity={"package": "wrong", "version": "0", "wheel_sha256": "0"},
         )
@@ -58,11 +58,11 @@ def test_evaluate_answer_rejects_unpinned_release_before_subprocess() -> None:
 
 def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     config = bridge.load_release_config()
-    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
+    expected = {"task_id": "rdkit_001_qed_max", "status": "scored", "scores": {"score": 0.5}}
     with patch.object(bridge, "_invoke_api", return_value=expected) as invoke:
         result = bridge.evaluate_answer(
-            track="rdkit",
-            task_id="rdkit_qed_max_001",
+            track="open_generation_rdkit",
+            task_id="rdkit_001_qed_max",
             answer_text="FINAL ANSWER: CCO",
             release_identity=config.identity,
         )
@@ -71,8 +71,8 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
     payload = invoke.call_args.args[1]
     assert payload == {
         "action": "evaluate_one",
-        "track": "rdkit",
-        "task_id": "rdkit_qed_max_001",
+        "track": "open_generation_rdkit",
+        "task_id": "rdkit_001_qed_max",
         "answer_text": "FINAL ANSWER: CCO",
     }
     assert "source_repo" not in payload
@@ -82,10 +82,10 @@ def test_evaluate_answer_calls_public_api_runtime_with_track_and_task() -> None:
 def test_evaluate_answer_forwards_invocation_validation_cache() -> None:
     config = bridge.load_release_config()
     cache = bridge.InvocationValidationCache()
-    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
+    expected = {"task_id": "rdkit_001_qed_max", "status": "scored", "scores": {"score": 0.5}}
     with patch.object(bridge, "_invoke_api", return_value=expected) as invoke:
         bridge.evaluate_answer(
-            track="rdkit", task_id="rdkit_qed_max_001", answer_text="FINAL ANSWER: CCO",
+            track="open_generation_rdkit", task_id="rdkit_001_qed_max", answer_text="FINAL ANSWER: CCO",
             release_identity=config.identity, release_config=config, validation_cache=cache,
         )
     assert invoke.call_args.kwargs["validation_cache"] is cache
@@ -99,14 +99,14 @@ def test_evaluate_answer_uses_invocation_release_after_default_changes() -> None
             "version": "future",
         }
     )
-    expected = {"task_id": "rdkit_qed_max_001", "status": "scored", "scores": {"score": 0.5}}
+    expected = {"task_id": "rdkit_001_qed_max", "status": "scored", "scores": {"score": 0.5}}
     with (
         patch.object(bridge, "load_release_config", return_value=changed_default),
         patch.object(bridge, "_invoke_api", return_value=expected) as invoke,
     ):
         result = bridge.evaluate_answer(
-            track="rdkit",
-            task_id="rdkit_qed_max_001",
+            track="open_generation_rdkit",
+            task_id="rdkit_001_qed_max",
             answer_text="FINAL ANSWER: CCO",
             release_identity=invocation_config.identity,
             release_config=invocation_config,

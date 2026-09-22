@@ -48,8 +48,8 @@ def test_default_run_output_root_classifies_formal_run_by_track_and_model(
     monkeypatch.setattr(track_selection.runtime_paths, "temp_benchmarks_root", temp_root)
     record = BenchmarkRecord(
         record_id="r1",
-        track="rdkit",
-        source_file=str(tmp_path / "formal" / "rdkit.jsonl"),
+        track="open_generation_rdkit",
+        source_file=str(tmp_path / "formal" / "open_generation_rdkit.jsonl"),
         prompt="question",
         eval_kind="verifier_grounded",
         reference_answer="hidden",
@@ -58,7 +58,7 @@ def test_default_run_output_root_classifies_formal_run_by_track_and_model(
 
     output_root = track_selection.default_run_output_root(
         output_dir=tmp_path / "runs",
-        track_files=[tmp_path / "formal" / "rdkit.jsonl"],
+        track_files=[tmp_path / "formal" / "open_generation_rdkit.jsonl"],
         records=[record],
         single_agent_model="qwen/qwen3.7-max",
         timestamp="20260721-120000",
@@ -77,8 +77,8 @@ def test_default_run_output_root_classifies_formal_run_by_track_and_model(
 @pytest.mark.parametrize(
     ("track", "benchmark"),
     [
-        ("rdkit", "vgb-rdkit"),
-        ("xtb", "vgb-xtb"),
+        ("open_generation_rdkit", "vgb-rdkit"),
+        ("open_generation_xtb", "vgb-xtb"),
         ("property_calculation_advanced", "vgb-property-calculation-advanced"),
         ("property_calculation_basic", "vgb-property-calculation-basic"),
     ],
@@ -135,12 +135,12 @@ def test_default_run_output_root_classifies_multi_track_temp_run(
             reference_answer="answer",
             payload={},
         )
-        for index, track in enumerate(("rdkit", "xtb"), start=1)
+        for index, track in enumerate(("open_generation_rdkit", "open_generation_xtb"), start=1)
     ]
 
     output_root = track_selection.default_run_output_root(
         output_dir=tmp_path / "runs",
-        track_files=[temp_root / "rdkit.jsonl", temp_root / "xtb.jsonl"],
+        track_files=[temp_root / "open_generation_rdkit.jsonl", temp_root / "open_generation_xtb.jsonl"],
         records=records,
         single_agent_model="openai/gpt-5.5",
         timestamp="20260721-120000",
@@ -252,8 +252,8 @@ def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
     rdkit_result = SimpleNamespace(
-        track="rdkit",
-        record_id="rdkit_qed_max_001",
+        track="open_generation_rdkit",
+        record_id="rdkit_001_qed_max",
         reference_answer="No reference answer is exposed; score with the pinned verifier release.",
     )
     easy_property_result = SimpleNamespace(
@@ -265,7 +265,7 @@ def test_reporting_references_use_public_property_gold_only(monkeypatch) -> None
         tracks={
             "property_calculation_advanced": {},
             "property_calculation_basic": {},
-            "rdkit": {},
+            "open_generation_rdkit": {},
         }
     )
 
@@ -360,7 +360,7 @@ def test_filter_records_by_ids_preserves_requested_order() -> None:
     records = [
         BenchmarkRecord(
             record_id=record_id,
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -378,7 +378,7 @@ def test_filter_records_by_ids_rejects_unknown_ids() -> None:
     records = [
         BenchmarkRecord(
             record_id="known",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -394,7 +394,7 @@ def test_filter_records_by_ids_rejects_duplicate_requested_ids() -> None:
     records = [
         BenchmarkRecord(
             record_id="known",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -416,7 +416,7 @@ def test_filter_records_by_ids_rejects_ambiguous_selected_track_ids() -> None:
             reference_answer="Answer",
             eval_kind="verifier_grounded",
         )
-        for track in ("rdkit", "xtb")
+        for track in ("open_generation_rdkit", "open_generation_xtb")
     ]
 
     with pytest.raises(BenchmarkError, match="Ambiguous record id"):
@@ -452,7 +452,7 @@ def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> 
     records = [
         BenchmarkRecord(
             record_id=record_id,
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             prompt="Question?",
             reference_answer="Answer",
@@ -478,7 +478,7 @@ def test_resume_filters_existing_per_record_before_runner_creation(tmp_path) -> 
 def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
         record_id="record-1",
-        track="rdkit",
+        track="open_generation_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
@@ -611,14 +611,14 @@ def test_web_search_preflight_failure_materializes_group_failure(monkeypatch, tm
 
 def test_main_launches_automated_evaluation_after_results_are_written(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="rdkit_qed_max_001",
-        track="rdkit",
+        record_id="rdkit_001_qed_max",
+        track="open_generation_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
         eval_kind="verifier_grounded",
         payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
-            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
+            "track": "open_generation_rdkit", "task_id": "rdkit_001_qed_max"}},
         grading=GradingSpec(
             kind="verifier_grounded",
             reference_answer="Answer",
@@ -650,8 +650,8 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
-                record_id="rdkit_qed_max_001",
-                track="rdkit",
+                record_id="rdkit_001_qed_max",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -780,14 +780,14 @@ def test_main_launches_automated_evaluation_after_results_are_written(monkeypatc
 
 def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="rdkit_qed_max_001",
-        track="rdkit",
+        record_id="rdkit_001_qed_max",
+        track="open_generation_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
         eval_kind="verifier_grounded",
         payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
-            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
+            "track": "open_generation_rdkit", "task_id": "rdkit_001_qed_max"}},
         grading=GradingSpec(
             kind="verifier_grounded",
             reference_answer="Answer",
@@ -819,8 +819,8 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
                 group_label="single off",
                 runner="single_llm",
                 websearch=False,
-                record_id="rdkit_qed_max_001",
-                track="rdkit",
+                record_id="rdkit_001_qed_max",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -925,19 +925,19 @@ def test_main_skips_automated_evaluation_when_no_analysis_is_set(monkeypatch, tm
     assert manifest["automated_evaluation"]["status_path"] == str(tmp_path / "out" / "analysis" / "status.json")
     results = json.loads((tmp_path / "out" / "results.json").read_text(encoding="utf-8"))
     assert results["records"] == 1
-    assert results["results"][0]["record_id"] == "rdkit_qed_max_001"
+    assert results["results"][0]["record_id"] == "rdkit_001_qed_max"
 
 
 def test_main_ignores_automated_evaluation_launch_failure(monkeypatch, tmp_path) -> None:
     record = BenchmarkRecord(
-        record_id="rdkit_qed_max_001",
-        track="rdkit",
+        record_id="rdkit_001_qed_max",
+        track="open_generation_rdkit",
         source_file="/tmp/demo.jsonl",
         prompt="Question?",
         reference_answer="Answer",
         eval_kind="verifier_grounded",
         payload={"verifier_grounded": {"release": benchmarking_cli.load_release_config().identity,
-            "track": "rdkit", "task_id": "rdkit_qed_max_001"}},
+            "track": "open_generation_rdkit", "task_id": "rdkit_001_qed_max"}},
         grading=GradingSpec(kind="verifier_grounded", reference_answer="Answer"),
     )
 

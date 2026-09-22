@@ -2038,7 +2038,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2136,7 +2136,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2243,7 +2243,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="How much product?",
@@ -2323,7 +2323,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2402,7 +2402,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Return ethanol.",
@@ -2514,7 +2514,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="superchem-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Pick one.",
@@ -2641,7 +2641,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Return ethanol.",
@@ -2742,7 +2742,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2845,7 +2845,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2935,7 +2935,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
                 )
                 record = BenchmarkRecord(
                     record_id="chembench-0001",
-                    track="rdkit",
+                    track="open_generation_rdkit",
                     source_file="/tmp/demo.jsonl",
                     eval_kind="verifier_grounded",
                     prompt="Calculate the value.",
@@ -2965,7 +2965,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
         records = [
             BenchmarkRecord(
                 record_id="r1",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+2?",
@@ -2974,7 +2974,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
             ),
             BenchmarkRecord(
                 record_id="r2",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -3041,7 +3041,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_passes_single_timeout_retry_options_to_runner(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="What is 2+2?",
@@ -3098,7 +3098,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_marks_unscored_recovery_as_execution_error(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -3173,7 +3173,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_failed_result_axes_for_non_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="failed-record",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -3235,7 +3235,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_scores_evaluable_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="recovered-record",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -3334,7 +3334,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_accepts_structural_result_object_for_unscored_recovery(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-recovery-record",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -3418,7 +3418,7 @@ class BenchmarkTestModuleTests(unittest.TestCase):
     def test_run_group_structural_unscored_recovery_without_failure_attr_uses_runner_meta_error(self) -> None:
         record = BenchmarkRecord(
             record_id="structural-omitted-failure-record",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -3629,8 +3629,8 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_main_single_agent_override_applies_via_experiment_spec(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            source = Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/tracks/rdkit.jsonl"
-            dataset_path = root / "rdkit/data/rdkit.jsonl"
+            source = Path(__file__).resolve().parents[1] / "benchmarking/resources/verifier_grounded/tracks/open_generation_rdkit.jsonl"
+            dataset_path = root / "open_generation_rdkit/data/open_generation_rdkit.jsonl"
             dataset_path.parent.mkdir(parents=True)
             dataset_path.write_text(source.read_text().splitlines()[0] + "\n")
 
@@ -3672,7 +3672,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
                 "--groups",
                 "single_llm_skills_off",
                 "--tracks",
-                "rdkit",
+                "open_generation_rdkit",
                 "--single-agent-id-override",
                 "custom-single-agent",
             ]
@@ -3705,7 +3705,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_build_single_llm_prompt_exposes_neutral_catalog_only_for_skills_on(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH of a buffer from the supplied concentrations.",
@@ -3741,7 +3741,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
     def test_build_single_llm_prompt_only_adds_time_budget_not_coverage_sop(self) -> None:
         record = BenchmarkRecord(
             record_id="fs-1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/frontierscience.jsonl",
             eval_kind="verifier_grounded",
             prompt="Calculate the pH of a buffer from the supplied concentrations.",
@@ -3813,7 +3813,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -3884,7 +3884,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -3942,7 +3942,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4008,7 +4008,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="What is 2+3?",
@@ -4916,7 +4916,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="hle-demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",
@@ -4978,7 +4978,7 @@ class ActiveSingleLLMTests(unittest.TestCase):
             )
             record = BenchmarkRecord(
                 record_id="hle-demo",
-                track="rdkit",
+                track="open_generation_rdkit",
                 source_file="/tmp/demo.jsonl",
                 eval_kind="verifier_grounded",
                 prompt="Question?",

@@ -19,8 +19,8 @@ from benchmarking.workflow.errors import BenchmarkError
 from benchmarking.workflow.run_state import slugify
 
 CANONICAL_BENCHMARK_NAMES = {
-    "rdkit": "vgb-rdkit",
-    "xtb": "vgb-xtb",
+    "open_generation_rdkit": "vgb-rdkit",
+    "open_generation_xtb": "vgb-xtb",
     "property_calculation_advanced": "vgb-property-calculation-advanced",
     "property_calculation_basic": "vgb-property-calculation-basic",
 }

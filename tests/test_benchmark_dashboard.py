@@ -19,7 +19,7 @@ def result_payload(
     *,
     group_id: str,
     record_id: str,
-    track: str = "rdkit",
+    track: str = "open_generation_rdkit",
     eval_kind: str = "verifier_grounded",
     passed: bool | None = True,
     score: float = 1.0,
@@ -148,8 +148,8 @@ def test_track_options_are_fixed_and_historical_details_remain_readable(tmp_path
     dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path], annotation_store=store)
     summary = dashboard.list_runs()[0]
     assert dashboard.track_options() == [
-        "rdkit",
-        "xtb",
+        "open_generation_rdkit",
+        "open_generation_xtb",
         "property_calculation_advanced",
         "property_calculation_basic",
     ]
@@ -185,7 +185,7 @@ def test_list_runs_reads_schema_v2_results_and_annotations(tmp_path: Path) -> No
     assert runs[0]["status"] == "completed"
     assert runs[0]["record_count"] == 1
     assert runs[0]["group_count"] == 1
-    assert runs[0]["tracks"] == ["rdkit"]
+    assert runs[0]["tracks"] == ["open_generation_rdkit"]
     assert "average_normalized_score" not in runs[0]
     assert runs[0]["progress"]["completed"] == 1
     assert runs[0]["summary"]["groups"]["single_llm_skills_on"]["avg_normalized_score"] == 1.0
@@ -310,9 +310,9 @@ def test_dashboard_maps_historical_source_identity_to_track(tmp_path: Path) -> N
 
     dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
 
-    assert dashboard.list_runs()[0]["tracks"] == ["rdkit"]
-    assert dashboard.list_records(run_id)[0]["track"] == "rdkit"
-    assert dashboard.get_record(run_id, "r1")["track"] == "rdkit"
+    assert dashboard.list_runs()[0]["tracks"] == ["open_generation_rdkit"]
+    assert dashboard.list_records(run_id)[0]["track"] == "open_generation_rdkit"
+    assert dashboard.get_record(run_id, "r1")["track"] == "open_generation_rdkit"
 
 
 def test_list_runs_discovers_classified_run_without_descending_into_run_artifacts(tmp_path: Path) -> None:
@@ -357,7 +357,7 @@ def test_dashboard_exposes_track_only_record_identity(tmp_path: Path) -> None:
         group_id="single_llm_skills_on",
         record_id=release.tracks[track]["task_ids"][0],
         track=track,
-    ) for track in ("rdkit", "xtb", "property_calculation_advanced")]
+    ) for track in ("open_generation_rdkit", "open_generation_xtb", "property_calculation_advanced")]
     write_json(
         run_root / "results.json",
         {
@@ -373,17 +373,17 @@ def test_dashboard_exposes_track_only_record_identity(tmp_path: Path) -> None:
 
     runs = dashboard.list_runs()
     records = dashboard.list_records("vgb-run")
-    record = dashboard.get_record("vgb-run", release.tracks["rdkit"]["task_ids"][0])
+    record = dashboard.get_record("vgb-run", release.tracks["open_generation_rdkit"]["task_ids"][0])
 
     assert runs[0]["tracks"] == [
+        "open_generation_rdkit",
+        "open_generation_xtb",
         "property_calculation_advanced",
-        "rdkit",
-        "xtb",
     ]
     assert {item["track"] for item in records} == {
-        "property_calculation_advanced", "rdkit", "xtb"
+        "property_calculation_advanced", "open_generation_rdkit", "open_generation_xtb"
     }
-    assert record["track"] == "rdkit"
+    assert record["track"] == "open_generation_rdkit"
     assert "dataset" not in record and "subset" not in record
 
 
@@ -567,7 +567,7 @@ def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Pa
     run_root = tmp_path / "verifier-run"
     payload = result_payload(
         group_id="single_llm_skills_on",
-        record_id="rdkit_qed_max_001",
+        record_id="rdkit_001_qed_max",
         eval_kind="verifier_grounded",
         passed=None,
         score=0.92,
@@ -585,10 +585,10 @@ def test_get_record_preserves_verifier_score_without_marking_failed(tmp_path: Pa
             "summary": {},
         },
     )
-    write_json(run_root / "per-record" / "single_llm_skills_on" / "rdkit-qed-max-001.json", payload)
+    write_json(run_root / "per-record" / "single_llm_skills_on" / "rdkit-001-qed-max.json", payload)
     dashboard = dashboard_service.BenchmarkDashboard(run_roots=[tmp_path])
 
-    record = dashboard.get_record("verifier-run", "rdkit_qed_max_001")
+    record = dashboard.get_record("verifier-run", "rdkit_001_qed_max")
 
     group = record["groups"][0]
     assert group["score_label"] == "Verifier 0.92"

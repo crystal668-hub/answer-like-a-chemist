@@ -1,56 +1,57 @@
 {
   "package": "verifier-grounded-benchmark",
   "schema_version": 1,
-  "source_commit": "fd844ddf790889d14f1f063eff383a9ef49042ce",
-  "source_tag": "v0.9.3",
+  "source_commit": "5e4d345e47ff5e0cac16297972ce7a70e6577075",
+  "source_tag": "v0.10.0",
   "sdist": {
-    "filename": "verifier_grounded_benchmark-0.9.3.tar.gz",
-    "sha256": "b92869ff3fe9769e70db5eb48fe8fd7dcce7b63fe9243d49b776a084954585c6"
+    "filename": "verifier_grounded_benchmark-0.10.0.tar.gz",
+    "sha256": "ed319694f8e545d6d0475984b596f47c952c839aa02c8f40a389556b17bb10f4",
+    "size": 1110159
   },
   "tracks": {
-    "rdkit": {
+    "open_generation_rdkit": {
       "task_count": 14,
       "task_ids": [
-        "rdkit_qed_max_001",
-        "rdkit_sa_min_002",
-        "rdkit_logp_window_003",
-        "rdkit_tpsa_window_004",
-        "rdkit_hba_window_005",
-        "rdkit_hbd_window_006",
-        "rdkit_fsp3_max_007",
-        "rdkit_qed_sa_008",
-        "rdkit_logp_tpsa_009",
-        "rdkit_hba_hbd_010",
-        "rdkit_logp_target_011",
-        "rdkit_sa_logp_target_012",
-        "rdkit_chain_end_to_end_max_013",
-        "rdkit_caffeine_similarity_max_014"
+        "rdkit_001_qed_max",
+        "rdkit_002_sa_min",
+        "rdkit_003_logp_window",
+        "rdkit_004_tpsa_window",
+        "rdkit_005_hba_window",
+        "rdkit_006_hbd_window",
+        "rdkit_007_fsp3_max",
+        "rdkit_008_qed_sa",
+        "rdkit_009_logp_tpsa",
+        "rdkit_010_hba_hbd",
+        "rdkit_011_logp_target",
+        "rdkit_012_sa_logp_target",
+        "rdkit_013_chain_end_to_end_max",
+        "rdkit_014_caffeine_similarity_max"
       ],
       "timeout_seconds": 180.0
     },
-    "xtb": {
+    "open_generation_xtb": {
       "task_count": 20,
       "task_ids": [
-        "xtb_gap_window_001",
-        "xtb_dipole_window_002",
-        "xtb_gap_max_003",
-        "xtb_gap_min_004",
-        "xtb_dipole_max_005",
-        "xtb_low_gap_high_dipole_opt_006",
-        "xtb_gap_dipole_window_007",
-        "xtb_lumo_min_008",
-        "xtb_polarizability_dipole_opt_009",
-        "xtb_solvation_selectivity_alpb_010",
-        "xtb_electrophilicity_max_011",
-        "xtb_fukui_carbon_site_012",
-        "xtb_hessian_thermo_stability_013",
-        "xtb_formula_dipole_min_014",
-        "xtb_two_fluorine_gap_min_015",
-        "xtb_c10_f2_gap_min_016",
-        "xtb_roy_singlepoint_energy_min_017",
-        "xtb_ritonavir_optimized_energy_min_018",
-        "xtb_odd_element_counts_gap_max_019",
-        "xtb_pyrene_substituent_energy_min_020"
+        "xtb_001_gap_window",
+        "xtb_002_dipole_window",
+        "xtb_003_gap_max",
+        "xtb_004_gap_min",
+        "xtb_005_dipole_max",
+        "xtb_006_low_gap_high_dipole_opt",
+        "xtb_007_gap_dipole_window",
+        "xtb_008_lumo_min",
+        "xtb_009_polarizability_dipole_opt",
+        "xtb_010_solvation_selectivity_alpb",
+        "xtb_011_electrophilicity_max",
+        "xtb_012_fukui_carbon_site",
+        "xtb_013_hessian_thermo_stability",
+        "xtb_014_formula_dipole_min",
+        "xtb_015_two_fluorine_gap_min",
+        "xtb_016_c10_f2_gap_min",
+        "xtb_017_roy_singlepoint_energy_min",
+        "xtb_018_ritonavir_optimized_energy_min",
+        "xtb_019_odd_element_counts_gap_max",
+        "xtb_020_pyrene_substituent_energy_min"
       ],
       "timeout_seconds": 1800.0
     },
@@ -138,10 +139,10 @@
       "timeout_seconds": 180.0
     }
   },
-  "version": "0.9.3",
+  "version": "0.10.0",
   "wheel": {
-    "filename": "verifier_grounded_benchmark-0.9.3-py3-none-any.whl",
-    "sha256": "8ed70758b1e7cbb0f20e6fd81a0d96578a2a9a629a000213f5301ddc8455b20a",
-    "size": 186437
+    "filename": "verifier_grounded_benchmark-0.10.0-py3-none-any.whl",
+    "sha256": "019b7c90031355b804d8d6873cdc81b52153496b06681962775f54367c19140a",
+    "size": 192362
   }
 }

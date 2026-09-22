@@ -57,7 +57,7 @@ class OrchestrationTests(unittest.TestCase):
             def run(index):
                 return run_group(
         group=Group(),
-        records=[BenchmarkRecord(record_id=str(index), track="rdkit", source_file="demo", prompt="Q", reference_answer="A", eval_kind="verifier_grounded")],
+        records=[BenchmarkRecord(record_id=str(index), track="open_generation_rdkit", source_file="demo", prompt="Q", reference_answer="A", eval_kind="verifier_grounded")],
         output_root=root,
         judge=None,
         build_runner_fn=build,
@@ -90,7 +90,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_scores_successful_runner_result(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -195,7 +195,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_writes_progress_events(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -284,7 +284,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_marks_progress_failed_when_runner_init_fails(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
@@ -355,7 +355,7 @@ class OrchestrationTests(unittest.TestCase):
     def test_run_group_preserves_runner_diagnostics_when_evaluator_raises(self) -> None:
         record = BenchmarkRecord(
             record_id="r1",
-            track="rdkit",
+            track="open_generation_rdkit",
             source_file="/tmp/demo.jsonl",
             eval_kind="verifier_grounded",
             prompt="Q",
