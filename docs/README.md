@@ -55,6 +55,7 @@ Context and remaining work for a new maintainer.
 - [Benchmark Infra 重构待修复问题交接文档](handoff/infra-fix-handoff.md)
 - [Benchmark Runtime 架构优化问题交接文档](handoff/2026-09-15-benchmark-runtime-optimization-handoff.md)：已关闭；记录 Phase 0–5 实施、量化收益、行为变化、验收证据与延期边界。
 - [Harbor Agent Infra 独立仓库初始化与验收交接设计](handoff/2026-09-23-harbor-agent-infra-bootstrap-handoff.md)：新建独立 Harbor Agent 控制面仓库、OpenClaw adapter、资源 profile、安装环境和最终验收标准。
+- [OpenClaw 9.5 Benchmark Infra Migration Final Checklist](handoff/2026-09-24-openclaw-9-5-benchmark-infra-migration-final-checklist.md)：逐项对照原始计划，区分代码完成、deterministic 验证、Docker/live 阻断和下一会话续作步骤。
 
 ## report (18)
 
