@@ -67,9 +67,12 @@ harbor-agent-infra：调度、资源准入、适配器、镜像策略和跨域�
 
 ## 3. 当前参考实现与边界
 
-参考源码位于 `/Users/xutao/harbor-agent-framework/`。它可以提供结构和
-Harbor 0.4.0 接入样例，但不是新仓库的 Git 历史，也不是旧 benchmark 的
-替代实现。
+参考源码位于 `/Users/xutao/harbor-agent-framework/`。它锁定的是 Harbor
+0.4.0，可以提供结构和接入样例，但不是新仓库的 Git 历史，也不是旧
+benchmark 的替代实现。本文更新时 Harbor Framework 的最新稳定版本是
+`v0.23.0`（2026-09-12 发布，release commit
+`1e5c5c6db929a10a140d05e606882c671ae20729`）；新仓库应以该版本或经过单独
+验证的更新版本为实现基线，不应继续沿用 0.4.0 pin。
 
 重点参考文件：
 
@@ -85,10 +88,17 @@ Harbor 0.4.0 接入样例，但不是新仓库的 Git 历史，也不是旧 benc
 - `src/skillsomething/contracts/metrics.py`、`trial_outcome.py`、`health.py`：
   将执行、任务结果和证据完整性分开记录的方式。
 
-参考实现的资源配置只有 Harbor 原生的 `override_cpus`、
-`override_memory_mb`、`override_storage_mb` 和 `override_gpus`。它没有满足本
-项目需要的 PID、swap、共享内存和按 profile 的总量准入，所以新仓库必须在
-Harbor Environment 外再建立自己的资源契约和验证层。
+参考实现的资源配置只有 Harbor 0.4.0 原生的 `override_cpus`、
+`override_memory_mb`、`override_storage_mb` 和 `override_gpus`。Harbor
+`v0.23.0` 已增加 `cpu_enforcement_policy`、`memory_enforcement_policy`，并
+支持 `extra_docker_compose` overlay；Docker Environment 会生成 CPU/memory
+资源 overlay，且能复用 Docker Compose 的服务字段。它仍没有为 PID、swap、
+`/dev/shm`、`tmpfs`、`ulimits` 和 storage driver options 提供统一的类型化
+EnvironmentConfig 字段或 provider capability 声明，也不会为这些字段生成
+统一的 evidence。因此新仓库应优先使用 v0.23.0 的原生 CPU/memory policy，
+再由 Infra 根据 ResourceProfile 生成 per-Trial Compose overlay，并保留
+post-start `docker inspect`/cgroup 验证和 fail-closed 行为。按 profile 的总量
+准入仍属于 Infra，不属于 Harbor Job 的 `n_concurrent_trials`。
 
 ## 4. 目标架构
 
@@ -238,10 +248,20 @@ VGB bridge 不得重新实现 prompt、Track 选择、评分公式或 release id
 
 ### 4.5 Harbor Environment
 
-实现 `BenchDockerEnvironment`，优先复用 Harbor 0.4.0 的 Docker Environment
-生命周期和 prebuilt image 行为。由于 Harbor 0.4.0 的通用环境配置不能完整
-表达 PID、swap 和 `/dev/shm`，需要在 Infra 侧增加明确的资源映射和 post-start
-验证。
+实现 `BenchDockerEnvironment`，优先复用 Harbor `v0.23.0` 的 Docker
+Environment 生命周期、prebuilt image 行为、CPU/memory enforcement policy
+和 `extra_docker_compose` overlay。v0.23.0 的原生 Docker resource
+capabilities 仍只声明 CPU/memory limit；PID、swap、`/dev/shm`、`tmpfs`、
+`ulimits` 和 storage driver options 必须由 Infra 生成 overlay 后验证。对于
+Docker Compose 支持但 Harbor 没有类型化契约的字段，Infra 必须先做 engine
+capability preflight，再在启动后检查实际 `HostConfig`/Compose 状态和 cgroup
+事件；任一阶段检查不到或底层 engine 不支持时，都应 fail closed，不能把
+“配置已写入 overlay”当作“限制已生效”。
+
+Compose overlay 可以表达 `pids_limit`、`memswap_limit`、`shm_size`、`tmpfs`
+和 `ulimits`。其中 `memswap_limit` 必须与 `memory` 一起设置；将二者设为
+相同值才表示禁止额外 swap。`storage_opt` 依赖 Docker storage driver，不能
+直接等同于可靠的 writable-layer quota，必须作为 capability probe 的结果记录。
 
 Harbor Environment 和 Docker runtime 的 owner 关系必须明确：
 
@@ -576,7 +596,8 @@ Node v24.15.0（宿主机仅作诊断；OpenClaw 9.5 运行在 image 内）
 
 新仓库建议的最低可复现环境：
 
-- Python `3.12.x`；Harbor 0.4.0 的参考 lock 使用 `3.12.13`；
+- Python `3.12.x`；Harbor `v0.23.0` 要求 Python `>=3.12`，建议继续使用
+  `3.12.13` 作为可复现基线；
 - uv `>=0.8.4`，当前 `0.11.7` 可以使用；
 - Git、curl、jq；
 - Docker Desktop 或 Docker Engine，Docker CLI 和 Compose v2 可用；
@@ -601,21 +622,21 @@ uv venv --python 3.12.13 .venv
 ### 7.2 Harbor Framework 项目依赖
 
 Harbor 官方 README 提供 `uv tool install harbor` 和 `pip install harbor`。
-新仓库不能依赖未锁定的 latest CLI；项目依赖必须固定到 Harbor 0.4.0 及
-参考源码使用的 commit：
+新仓库不能依赖未锁定的 latest CLI；项目依赖必须固定到 Harbor `v0.23.0`
+及其 release commit：
 
 ```text
-9e156f1f8f05d5d531a29fd300df21aa53b2226e
+1e5c5c6db929a10a140d05e606882c671ae20729
 ```
 
 `pyproject.toml` 应使用等价的 Git pin（具体 PEP 508 写法由 uv 生成并验证），
-而不是只写一个浮动版本。初始依赖可从 Harbor 0.4.0 `pyproject.toml` 对照：
+而不是只写一个浮动版本。初始依赖可从 Harbor v0.23.0 `pyproject.toml` 对照：
 
 ```toml
 [project]
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "harbor @ git+https://github.com/laude-institute/harbor.git@9e156f1f8f05d5d531a29fd300df21aa53b2226e",
+  "harbor @ git+https://github.com/harbor-framework/harbor.git@1e5c5c6db929a10a140d05e606882c671ae20729",
   "pydantic>=2.11.7",
   "PyYAML>=6.0.2",
   "packaging>=25.0",
@@ -648,7 +669,7 @@ docker compose version
 如果需要独立验证官方 CLI，也可以执行：
 
 ```bash
-uv tool install harbor==0.4.0
+uv tool install harbor==0.23.0
 harbor --version
 ```
 
@@ -770,7 +791,7 @@ mount 写入脱敏 manifest，包含 source hash（必要时）、target、mode 
 - `README.md`、`AGENTS.md`、`.env.example`、`.gitignore`；
 - `hai doctor`，能检查 Python、uv、Docker、Compose、Harbor import 和 image
   platform；
-- Harbor 0.4.0 pinned import smoke。
+- Harbor v0.23.0 pinned import smoke。
 
 验收：
 
@@ -1010,7 +1031,7 @@ docker compose version
 然后：
 
 1. 创建仓库骨架和 `.venv`；
-2. 写入 Harbor 0.4.0 commit pin 与 `uv.lock`；
+2. 写入 Harbor v0.23.0 commit pin 与 `uv.lock`；
 3. 实现 `hai doctor` 和 resource loader；
 4. 创建 fake image、fake adapter 和 unit/contract tests；
 5. 先通过 provider-free Docker acceptance；
