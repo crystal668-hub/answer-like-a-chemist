@@ -8,20 +8,32 @@
 依据；本文所述功能在新仓库完成前均不得视为已实现。
 
 最后修订：2026-09-24。根据补充设计决策，本版优先复用 Harbor Framework
-已有 Job/Trial/Agent/Environment 能力；非原生资源限制留作后续迭代。
+已有 Job/Trial/Agent/Environment 能力；非原生资源限制留作后续迭代。VGB
+数据准备与评分调用迁入新仓库，直接使用官方发布包，替代此前经旧 workspace
+中转的方案；既有结果契约继续保留。本次仅修订设计，尚未实施迁移。
 
 ## 1. 交接结论
 
 新建一个独立 Git 仓库 `harbor-agent-infra`。它负责实验定义物化、Harbor
 Job/Trial 调度入口、镜像引用和分发策略、资源 profile 到 Harbor 原生字段的
-映射、Agent Adapter 加载以及跨仓库证据。Harbor Framework 继续负责成熟的
-Job/Trial 生命周期、Docker 环境、队列、重试和 cleanup。现有
-`/Users/xutao/.openclaw/workspace` 继续负责 verifier-grounded benchmark
-（VGB）的 Track 数据、领域 prompt、评分器、当前结果 schema 和 dashboard。
+映射、Agent Adapter 加载，以及对官方 VGB package 的直接集成。Harbor
+Framework 继续负责成熟的 Job/Trial 生命周期、Docker 环境、队列、重试和
+cleanup。
 
-两边通过版本化的 domain bridge、Harbor trial result 和轻量 infra manifest 通信。Infra Core 不得
-直接 import 现有仓库的 `benchmarking.*` 模块，也不得把 VGB hidden verifier、
-VGB wheel、gold data 或现有运行时复制进 Agent 容器。
+官方 `verifier-grounded-benchmark` package 是 VGB Track 数据、公开 prompt、
+任务定义和评分器的运行时来源。`harbor-agent-infra` 直接锁定并调用该 package
+的公开 API，不通过
+`/Users/xutao/.openclaw/workspace/benchmarking/runtime/vgb_bridge.py` 或其他
+旧 workspace 中间层。
+
+对于新 Harbor 执行链，现有 `/Users/xutao/.openclaw/workspace` 仅作为历史结果和
+dashboard 的兼容读取来源、schema-v5 数据契约及回归基线。新 run 不依赖它提供
+题目、评分、Python 环境或结果写入服务。本次设计修订不删除或停用旧仓库
+仍在使用的执行能力。
+
+新仓库将 Harbor 执行证据、官方 VGB 原始评分与既有 schema-v5 最终结果关联。
+Infra Core 不得 import 现有仓库的 `benchmarking.*` 模块，也不得把
+VGB private scoring resources、gold data 或 VGB runtime 复制进 Agent 容器。
 
 第一版只实现当前四个 VGB Track 的 OpenClaw 适配，但接入方式必须遵循 Harbor
 已有 Agent contract，以后可以通过 Harbor 的 agent adapter 机制加入 Codex、
@@ -32,7 +44,7 @@ adapters/openclaw/
 ```
 
 不要使用 `adapters/openclaw_vgb/`。`openclaw` 表示 CLI 运行时适配器，VGB
-属于外部 domain bridge，不应成为适配器的类型名称。
+属于 `integrations/vgb/`，不应成为适配器的类型名称。
 
 本仓库的首个目标是 Docker 本机执行。Harbor Registry 作为可选的镜像分发层
 接入；本地 smoke 和单机验收不要求先部署 Harbor Registry。Harbor Framework
@@ -52,21 +64,25 @@ harbor-agent-infra：实验物化、适配器、镜像策略和跨域证据适�
    `open_generation_xtb`、`property_calculation_advanced`、
    `property_calculation_basic`。旧 benchmark、ChemQA、非 VGB 数据和历史
    host backend 不属于第一版执行范围。
-2. 现有 benchmark 的 `RunnerResult`、per-record result、`results.json`、
-   schema-v5 observability、workspace archive 和 dashboard read model 仍是
-   结果真源。Harbor 原生 trial result、verifier result 和 metrics 不能替换
-   它们。
+2. 此前确认的 `RunnerResult` 语义、per-record result、`results.json`、
+   schema-v5 observability、归档引用和 dashboard read model 继续作为最终结果
+   契约，必须在新仓库独立生成。Harbor trial result 是执行证据，官方 VGB
+   evaluation 是评分证据，二者原样保留；它们均不替换最终结果 schema。
+   数据契约兼容不要求运行旧仓库的 writer 或 scorer。
 3. Harbor 初期只负责 Job/Trial 编排和容器/镜像生命周期。OpenClaw 的
-   primary、reminder、timeout retry、finalization rescue、session identity、
-   VGB scoring 和结果投影必须保持现有语义。
+   primary、reminder、timeout retry、finalization rescue 和 session identity
+   保持现有语义；VGB prompt/materialization/evaluation 由新仓库的官方 VGB
+   integration 负责。
 4. 本轮资源限制只采用 Harbor Framework v0.23.0 的 Job/Environment 原生
    配置。当前本机 Docker 第一版实际启用 CPU、memory enforcement 和
    `n_concurrent_trials`；`storage_mb`、GPU、TPU 只有在 Harbor provider
    capability 明确支持时才允许启用。PID、swap、`/dev/shm`、tmpfs、ulimits
    和 storage-driver quota 不在本轮实现。资源值仍必须来自外部 profile，代码
    禁止写死生产默认值，也不能在 profile 缺失时静默回退。
-5. 旧仓库不增加 Harbor runtime 目录。新仓库通过 adapter/bridge 访问旧仓库
-   的公开输入和评分能力；两个仓库可以独立发布和测试。
+5. 数据准备和评分调用由新仓库的 `integrations/vgb/` 直接对接官方
+   `verifier-grounded-benchmark` package。新仓库拥有独立的 release lock、
+   VGB 环境及运行产物；不调用旧 workspace 的 CLI、bridge、scorer 或 writer。
+   官方 VGB 源码继续在原项目维护，迁移的是调用职责，不是评分算法。
 6. 一个容器生命周期只能有一个 owner。Harbor Environment 和旧仓库的
    `DockerContainerRuntime` 不得同时创建、停止或删除同一个容器。
 7. Harbor 是 Job/Trial 队列、`n_concurrent_trials`、`n_attempts`、retry 和
@@ -109,17 +125,16 @@ swap、`/dev/shm`、tmpfs、ulimits 或 storage-driver quota 增加第二套资�
 ## 4. 目标架构
 
 ```text
-hai prepare/materialize
-  ├─ VGB task/domain bridge
-  ├─ native ResourceProfile -> Harbor JobConfig projection
-  ├─ image reference/digest manifest
-  └─ Harbor JobConfig
-       └─ Harbor local orchestrator (n_concurrent_trials)
-            └─ Harbor Trial
-                 ├─ adapters/openclaw/ (Harbor Agent adapter)
-                 ├─ Harbor DockerEnvironment
-                 ├─ Harbor trial result/artifacts
-                 └─ VGB bridge -> existing result schema/dashboard
+official VGB wheel（锁定版本和 SHA-256，宿主隔离环境）
+  ├─ integrations/vgb/prompts.py -> Track.prompts()
+  │    └─ Harbor task / JobConfig
+  │         └─ Harbor Job/Trial + DockerEnvironment
+  │              └─ adapters/openclaw/ -> candidate answer + artifacts
+  └─ integrations/vgb/evaluator.py <- candidate answer + task identity
+       └─ Track.evaluate_one() -> vgb-evaluation.json
+            └─ result_projection.py
+                 └─ 既有 schema-v5 per-record / results.json
+                      └─ dashboard 兼容读取（不参与运行）
 ```
 
 ### 4.0 Harbor 复用边界
@@ -134,6 +149,7 @@ hai prepare/materialize
 | `BaseInstalledAgent`、`AgentContext`、structured capabilities | Agent adapter 生命周期、路径和 artifact contract | `adapters/openclaw/` 的 OpenClaw command/session hook |
 | `DockerEnvironment` / prebuilt image | Compose、挂载、CPU/memory policy、日志和环境生命周期 | 只增加 OpenClaw 所需的配置投影与 domain 文件 |
 | Harbor trial result / artifacts / trajectory | 执行状态、日志、artifact 和 evidence | VGB result projection，不覆盖 Harbor result |
+| 官方 VGB package | Track、prompt、task 定义、`evaluate_one`/`Evaluator` | 只做 Harbor 输入与结果 envelope 的薄映射 |
 | Docker image reference / digest | image pull/build/inspect 基础流程 | digest manifest 与跨仓库 image identity |
 
 Infra 不 fork Harbor 的 queue、Docker lifecycle、resource enforcement、result
@@ -145,16 +161,18 @@ writer 或 cleanup 实现。Harbor public API/contract 不足时，优先提交�
 Infra Core 只处理 Harbor 之上的薄适配和实验物化：
 
 - 实验配置加载、schema 校验和配置 hash；
-- VGB task/domain bridge 和 Harbor JobConfig 物化；
+- 调用 `integrations/vgb/` 的公开题目导出、release 验证和评分入口；
+- 将 integration 返回的 task selection 物化为 Harbor JobConfig；
 - Harbor 原生 ResourceProfile 到 Job/Environment 字段的映射；
 - image reference/digest/platform manifest；
 - Harbor trial 目录之外的最小 infra manifest 和结果投影；
-- Agent adapter 版本锁定、能力检查和跨仓库 bridge 调用。
+- Agent adapter 版本锁定、能力检查及结果关联。
 
 Harbor Framework 继续负责 Job/Trial 排队、重试、取消、Docker Environment
 生命周期、日志和 trial result。Infra 不复制这些机制，也不直接管理容器。
 Infra Core 不知道具体模型供应商、VGB 评分公式或 OpenClaw session 数据库表
-结构。
+结构；VGB integration 内部才 import 官方 package，Core 和 OpenClaw adapter
+不依赖其内部模块。
 
 ### 4.2 Agent Adapter
 
@@ -169,7 +187,7 @@ Adapter 的自有代码仅负责：
 - 生成独立 state/session identity；
 - 将 Harbor 提供的环境路径投影到 OpenClaw 9.5 配置；
 - 导出 OpenClaw trajectory/session evidence；
-- 把 Harbor agent result 转换为 domain bridge 可消费的文件。
+- 把 Harbor agent result 转换为 VGB integration 可消费的文件。
 
 不要在 Infra 中复制 Harbor 的 trial queue、container lifecycle、exec、log
 download 或 cleanup contract。
@@ -187,7 +205,7 @@ domain 使用方。它负责：
 - primary、reminder 和 finalization rescue 的 invocation 编排；
 - 调用公开的 session inventory 和 `sessions export-trajectory`；
 - 导出 SQLite/trajectory/session evidence 的 manifest；
-- 将原始 agent 输出写成 bridge 约定的 `agent-output.v1` 文件；
+- 将原始 agent 输出写成 VGB integration contract 约定的 `agent-output.v1` 文件；
 - 将 OpenClaw state lock、session owner mismatch、trajectory export failure、
   provider failure 和非零退出映射成稳定的 typed failure code。
 
@@ -204,59 +222,120 @@ OpenClaw image 的 Node engine 必须满足当前 9.5 运行要求（至少
 `>=24.16.0 <25` 或官方支持的下一个 major），但宿主机不必安装 OpenClaw。
 宿主执行通过 Docker image 固定版本和 digest。
 
-### 4.4 Domain Bridge
+### 4.4 官方 VGB Integration
 
-Domain Bridge 是 Infra 与具体 benchmark 之间的版本化边界。它可以是一个
-Python package、一个受控 subprocess 或一个 HTTP/JSONL bridge，但第一版建议
-先使用显式文件和 subprocess contract，避免两个仓库互相 import。
+VGB integration 是新仓库的第一方 domain module，不是对旧
+`benchmarking.runtime.vgb_bridge` 的兼容调用。建议目录为：
 
-通用输入：
-
-```json
-{
-  "schema_version": "agent-trial-input.v1",
-  "domain": "verifier-grounded",
-  "track": "open_generation_rdkit",
-  "record_id": "rdkit_001_qed_max",
-  "prompt": "<public prompt>",
-  "source_ref": "<opaque source path or dataset identity>",
-  "grading_ref": "<opaque evaluator identity>",
-  "input_artifacts": []
-}
+```text
+integrations/vgb/
+  __init__.py
+  release_lock.py
+  tracks.py
+  prompts.py
+  evaluator.py
+  result_projection.py
+  runtime.py
 ```
 
-通用 agent 输出：
+它直接依赖官方 `verifier-grounded-benchmark` package 的公开接口。第一版只
+允许四个 canonical tracks：
+
+```text
+open_generation_rdkit
+open_generation_xtb
+property_calculation_advanced
+property_calculation_basic
+```
+
+官方 package 是 task pack、公开 prompt、Track 定义和 scorer 的唯一来源。新仓库
+不要复制 `tasks.yaml`、`verifier_specs.yaml`、`scoring.yaml` 或 workspace 中的
+JSONL 快照；只在自己的 `runtime-lock.json`/`configs/domains/vgb.yaml` 保存
+release identity、四个 Track allowlist 和预期 task inventory hash。
+
+官方 API 的最小调用面是：
+
+```python
+import verifier_grounded_benchmark as vgb
+
+track = vgb.load_track("open_generation_rdkit")
+public_prompts = track.prompts()
+public_task = track.task("rdkit_001_qed_max")
+evaluation = track.evaluate_one({
+    "task_id": "rdkit_001_qed_max",
+    "response": candidate_answer_text,
+})
+```
+
+多 Track 选择可以使用 `vgb.load_suite([...])`，但实验 materializer 仍必须
+校验每个 record 的 canonical Track 和 task ID，不能依赖 package 的隐式默认
+全量选择。
+
+VGB integration 分成两个宿主侧阶段：
+
+1. **Prompt materialization**：调用 `load_track(...).prompts()`，为每个 Harbor
+   task 生成公开的 `agent-trial-input.v1`，只包含 Track、task ID、prompt 和
+   answer schema。这个文件可以进入 agent workspace；不要把 package、gold
+   answers、verifier specs 或 scoring config 挂载进 agent container。
+2. **Host-side evaluation**：Harbor Trial 完成后，读取 adapter 产生的
+   candidate answer，按官方 `task(...)["answer_schema"]` 和 Track 类型构造
+   官方 answer record，再调用同一个 `Track.evaluate_one()`；官方返回对象原样
+   保存为 `vgb-evaluation.json`，再由 `result_projection.py` 映射到 Infra result
+   和可选的旧 schema-v5 兼容输出。Open-generation 使用官方支持的
+   `candidates` 或 `response` 形状；property calculation 使用 task schema
+   对应的 typed `answer`/`unit` 形状，不能把所有 Track 强行转成同一个字段。
+
+评分调用不能在 agent container 内执行。VGB package 的私有 verifier resources
+和 scoring data 只存在于新仓库管理的 host-side VGB runtime 中。若 Harbor
+Infra 的主 venv 与 VGB package 依赖冲突，`runtime.py` 可以创建新仓库自己管理
+的隔离 VGB venv，并在该 venv 中 import 官方 package；这仍是直接调用官方 API，
+不是经由旧 workspace 的 bridge。隔离 runtime 的 wheel、Python、package
+version、source tag/commit 和 SHA-256 必须进入 `runtime-lock.json`。
+
+当前可用的 package lock 参考为：
+
+```text
+package: verifier-grounded-benchmark
+version: 0.10.0
+source_tag: v0.10.0
+source_commit: 5e4d345e47ff5e0cac16297972ce7a70e6577075
+wheel: verifier_grounded_benchmark-0.10.0-py3-none-any.whl
+wheel_sha256: 019b7c90031355b804d8d6873cdc81b52153496b06681962775f54367c19140a
+release_manifest_sha256: 7d0b97bec75c30792dd737d89840f29dd5cefbad3604a7b4019aafebb08ef67f
+task_inventory_sha256: 52cc8eadd09cc1e64897841f25fd8f6cbca740484f060ab9654c968609781245
+```
+
+新仓库必须验证当前官方 package release 是否已升级；上面的值是已安装本机
+wheel 的基线示例，不是无条件的永久版本。若 release 变更，必须同时更新
+wheel hash、source identity、task inventory 和四 Track acceptance fixtures。
+
+`provision_vgb_runtime.py` 应从官方 release wheel 安装隔离 runtime，而不是从
+旧 workspace 的 editable checkout 安装。建议流程是：校验 release manifest 和
+wheel SHA-256，创建 Python 3.12 venv，安装 wheel 及其声明依赖，执行四 Track
+`load_track()`/`prompts()` smoke，并把 `pip freeze`、Python 路径和 package
+metadata 写入 runtime manifest。对于 `open_generation_xtb`，宿主侧 VGB runtime
+还必须在评分前验证 package 所需的 xTB executable/version（当前正式 pack
+要求 xTB `6.7.1`）；该 executable 属于 host-side verifier environment，不得
+挂载给 agent container。`property_calculation_*` 不依赖外部 verifier executable。
+
+通用 agent 输出保持独立于 VGB：
 
 ```json
 {
   "schema_version": "agent-output.v1",
   "record_id": "rdkit_001_qed_max",
   "status": "completed",
-  "answer": {
-    "short_text": "...",
-    "full_text": "..."
-  },
+  "answer": {"short_text": "...", "full_text": "..."},
   "artifacts": [],
   "session_evidence": {},
   "failure": null
 }
 ```
 
-VGB bridge 再将 `agent-output.v1` 投影为现有 benchmark 的
-`RunnerResult`/schema-v5 输入，并调用 pinned VGB evaluator。此投影必须保留：
-
-- `run_lifecycle_status`；
-- `protocol_completion_status`；
-- `answer_availability`；
-- `answer_reliability`；
-- `evaluable`、`scored`、`recovery_mode`、`degraded_execution`；
-- `execution_error_kind`；
-- 现有 observability、resource reference、session lifecycle 和 attempt artifact refs。
-
-VGB bridge 不得重新实现 prompt、Track 选择、评分公式或 release identity。
-它应引用现有仓库的公开 bridge entrypoint；如果该 entrypoint 尚未存在，新
-仓库只能提供 contract fixture，并把真实 VGB E2E 标为未完成，不能复制一份
-第二 scorer。
+VGB result projection 至少保存 `status`、`task_id`、`scores`、`failure_type`、
+`message`、`properties`、`constraint_scores`、`versions`、`raw_answer` 和
+`extracted_answer`。如果需要兼容旧 workspace 的 schema-v5，兼容写入只能是
+结果投影步骤，不能反向成为新执行链路的依赖。
 
 ### 4.5 Harbor Environment
 
@@ -299,6 +378,8 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
 │   │   └── local.yaml                # 本地私有文件，不提交真实值
 │   ├── experiments/
 │   │   └── openclaw-vgb-smoke.yaml
+│   ├── domains/
+│   │   └── vgb.yaml
 │   └── images/
 │       └── openclaw.example.yaml
 ├── src/harbor_agent_infra/
@@ -308,7 +389,6 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
 │   │   ├── experiment.py
 │   │   ├── image.py
 │   │   ├── resource_profile.py
-│   │   ├── bridge.py
 │   │   └── manifest.py
 │   ├── preparation/
 │   │   ├── config_materializer.py
@@ -318,9 +398,6 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
 │   │   ├── job_config.py
 │   │   ├── adapter_loading.py
 │   │   └── result_projection.py
-│   └── bridges/
-│       ├── domain.py
-│       └── subprocess.py
 ├── adapters/
 │   └── openclaw/
 │       ├── __init__.py
@@ -329,6 +406,15 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
 │       ├── session.py
 │       ├── command.py
 │       └── evidence.py
+├── integrations/
+│   └── vgb/
+│       ├── __init__.py
+│       ├── release_lock.py
+│       ├── tracks.py
+│       ├── prompts.py
+│       ├── evaluator.py
+│       ├── result_projection.py
+│       └── runtime.py
 ├── tests/
 │   ├── unit/
 │   ├── contract/
@@ -341,6 +427,7 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
 ├── scripts/
 │   ├── doctor.py
 │   ├── build_test_image.sh
+│   ├── provision_vgb_runtime.py
 │   └── verify_acceptance.py
 └── docs/
     ├── architecture.md
@@ -348,9 +435,15 @@ Harbor Environment 和旧 benchmark Docker runtime 的 owner 关系必须明确�
     └── acceptance.md
 ```
 
+`runtime-lock.json` 至少包含 Harbor pin、OpenClaw image/adapter pin，以及
+`verifier-grounded-benchmark` 的 package release manifest：package/version、
+source tag/commit、wheel filename/SHA-256/size、result schema version、scoring
+version 和四 Track task inventory hash。它不保存 provider secret，也不要求
+把 VGB private resources 复制到 Git。
+
 `configs/resources/local.yaml` 只能由本机维护，必须加入 `.gitignore`。提交
-`profiles.example.yaml` 和测试 fixture；不要提交 API key、registry robot
-token、真实镜像私有地址或本机路径中的敏感信息。
+`profiles.example.yaml`、`configs/domains/vgb.yaml` 和测试 fixture；不要提交
+API key、registry robot token、真实镜像私有地址或本机路径中的敏感信息。
 
 ## 6. 运行时契约
 
@@ -378,19 +471,22 @@ image:
 resources:
   profile: ${RESOURCE_PROFILE}
   config_file: ${RESOURCE_PROFILE_FILE}
+vgb:
+  package_lock: runtime-lock.json
+  track: ${VGB_TRACK}
+  task_ids: ${VGB_TASK_IDS}
 retry:
   n_attempts: 1
   max_retries: 0
   # fake smoke 的安全默认；正式实验从 domain/experiment policy 物化，
   # 并直接投影到 Harbor JobConfig，不另建 retry owner
-domain_bridge:
-  type: subprocess
-  command: ["<configured bridge command>"]
 ```
 
 配置 materializer 必须在运行前解析环境变量、校验 digest 和 profile，并将
-脱敏后的 materialized config 写入 run root。未解析的 placeholder、tag-only
-镜像、缺失 profile 或不支持的 Track 必须在分配 Trial 前失败。
+脱敏后的 materialized config 写入 run root。VGB integration 必须先用官方
+package 校验 Track、task ID 和 package lock，再生成公开 prompt。未解析的
+placeholder、tag-only 镜像、缺失 profile、package lock 不一致或不支持的 Track
+必须在分配 Trial 前失败。
 
 ### 6.2 ImageSpec
 
@@ -502,6 +598,16 @@ materialized JobConfig 和 profile hash。不要在 Infra 中再实现按 CPU/me
     "digest": "sha256:...",
     "platform": "linux/arm64"
   },
+  "vgb": {
+    "package": "verifier-grounded-benchmark",
+    "version": "0.10.0",
+    "source_tag": "v0.10.0",
+    "source_commit": "...",
+    "wheel_sha256": "sha256:...",
+    "track": "open_generation_rdkit",
+    "task_id": "rdkit_001_qed_max",
+    "evaluation_path": "vgb-evaluation.json"
+  },
   "resource_profile": {
     "name": "...",
     "config_sha256": "sha256:...",
@@ -531,8 +637,9 @@ materialized JobConfig 和 profile hash。不要在 Infra 中再实现按 CPU/me
 ```
 
 Harbor 的原生 trial result 直接保留；infra manifest 只保存 JobConfig、profile、
-image、adapter 和 domain result 的关联，不能覆盖 Harbor result 或旧仓库的
-schema-v5 per-record result。
+image、adapter、VGB release identity 和 evaluation result 的关联，不能覆盖
+Harbor result。旧 schema-v5 per-record result 只能由显式 compatibility projection
+生成。
 
 ### 6.6 Trial failure 与资源结果投影
 
@@ -540,7 +647,8 @@ Harbor 负责 Docker Environment 的生命周期、日志和资源 policy valida
 Infra 第一版只读取 Harbor trial result、EnvironmentConfig/JobConfig 快照和
 Harbor 公开 artifacts；不读取 cgroup、不调用 Docker CLI 重新采样，也不自定义
 OOM/PID/shm/storage failure code。若 Harbor trial result 标记环境或 agent 失败，
-Infra 原样保留并由 VGB bridge 投影到现有执行错误字段。后续迭代若需要更细粒度
+Infra 原样保留并由 VGB integration 投影到 Infra/domain result。旧 schema-v5
+字段只在显式兼容输出时生成。后续迭代若需要更细粒度
 OOM 证据，再单独增加 capability 和 evidence design；本轮验收只要求 Harbor
 原生 result/artifact 可以被稳定读取。
 
@@ -570,8 +678,11 @@ Node v24.15.0（宿主机仅作诊断；OpenClaw 9.5 运行在 image 内）
 - 如果构建 OpenClaw 9.5 image，image 内 Node 必须满足 OpenClaw 的 engine；
 - provider credentials 只通过本地环境、credential helper 或未跟踪 `.env` 注入。
 
-新仓库不要求宿主机安装 OpenClaw、VGB package 或化学科学依赖。领域 verifier
-仍由旧 benchmark 的隔离运行时负责。Docker daemon 只需满足 Harbor v0.23.0
+新仓库不要求宿主机安装 OpenClaw。VGB package 必须由新仓库通过官方 release
+wheel 安装到它自己管理的 host-side VGB runtime；不使用旧 workspace 的 VGB
+venv、wheel cache 或 Python import path。RDKit 等 package dependencies 和
+Open-generation verifier 的外部可执行依赖由这个 VGB runtime/host preflight
+管理；它们不进入 agent image。Docker daemon 只需满足 Harbor v0.23.0
 声明的 CPU/memory enforcement capability；本轮不要求为未采用的 PID、swap 或
 shared-memory 选项额外配置 daemon。
 
@@ -618,7 +729,8 @@ dev = [
 ```
 
 实际文件可根据 uv resolver 调整下限，但必须在 `runtime-lock.json` 和 `uv.lock`
-中记录最终版本。不要把旧仓库的大型化学依赖复制到 Infra。
+中记录最终版本。不要把旧仓库的大型化学依赖复制到 Infra 主 venv；VGB 官方
+依赖只进入隔离的 VGB runtime。
 
 安装和验证：
 
@@ -630,6 +742,7 @@ uv run harbor --version
 uv run python -c 'import harbor; print(getattr(harbor, "__version__", "import-ok"))'
 docker info
 docker compose version
+uv run python scripts/provision_vgb_runtime.py --lock runtime-lock.json --check
 ```
 
 如果需要独立验证官方 CLI，也可以执行：
@@ -736,7 +849,7 @@ Agent 容器只允许获得当前 Trial 的 workspace、输入和 session/config
 禁止挂载：
 
 - 旧 benchmark 项目根目录；
-- VGB hidden release/runtime；
+- VGB package 的 host-side runtime、scoring resources 或 release wheel；
 - 其他 Trial workspace；
 - Docker socket；
 - Harbor Registry credentials 文件；
@@ -757,7 +870,8 @@ mount 写入脱敏 manifest，包含 source hash（必要时）、target、mode 
 - `README.md`、`AGENTS.md`、`.env.example`、`.gitignore`；
 - `hai doctor`，能检查 Python、uv、Docker、Compose、Harbor import 和 image
   platform；
-- Harbor v0.23.0 pinned import smoke。
+- Harbor v0.23.0 pinned import smoke；
+- 官方 VGB wheel/runtime lock 校验和无模型四 Track `load_track()` smoke。
 
 验收：
 
@@ -772,10 +886,11 @@ docker info
 
 交付：
 
-- `ExperimentSpec`、`ImageSpec`、`ResourceProfile`、infra manifest 和
-  `DomainBridge`；
+- `ExperimentSpec`、`ImageSpec`、`ResourceProfile`、infra manifest 和官方 VGB
+  integration contract；
 - YAML loader、unknown-field/范围校验、配置 hash；
 - Harbor provider capability preflight 和 JobConfig materializer；
+- 官方 VGB release loader、Track/task allowlist 和 prompt materializer；
 - test fixture，不提供代码默认资源值，也不实现第二套 admission scheduler。
 
 验收：
@@ -820,22 +935,26 @@ docker info
 - retry 使用新的 Trial/attempt identity；
 - agent image 不包含 VGB hidden material。
 
-### Phase 4：VGB Domain Bridge
+### Phase 4：官方 VGB Integration
 
 交付：
 
-- 四个 Track 的 allowlist 和 canonical identity；
-- `agent-trial-input.v1` 到现有 VGB bridge 的映射；
-- VGB evaluator 调用、release identity 和 schema-v5 result projection；
-- 不复制第二套 scorer。
+- 锁定官方 VGB package wheel、source identity、manifest 和 task inventory；
+- `integrations/vgb/` 的四个 Track discovery、公开 prompt materialization 和
+  host-side evaluator 调用；
+- Harbor task 到 `Track.evaluate_one()` 的输入映射；
+- VGB evaluation result、infra manifest 和 schema-v5 compatibility projection；
+- 不复制第二套 scorer，不调用旧 workspace 的 VGB bridge。
 
 验收：
 
-- 四个 Track 各选一条固定 fixture，输入 prompt 与旧仓库一致；
-- Harbor backend 输出可被旧仓库 `ResultSink` 和 dashboard 读取；
-- 固定 agent-output fixture 下，新旧 backend 的 scoring、status axes 和
-  observability projection 等价；
-- Harbor 原生 result 不进入 `results.json` 的 score 字段。
+- 四个 Track 各选一条固定 task，prompt 和 task schema 来自官方 package；
+- 离线无模型流程能够生成四 Track 的 `agent-trial-input.v1`；
+- 固定 candidate answer fixture 能通过官方 `Track.evaluate_one()` 评分；
+- 官方 package lock、wheel hash、task inventory 和 evaluation result 可追溯；
+- Harbor 原生 result 与 VGB evaluation result 均保留，schema-v5 只作为显式兼容投影；
+- 在没有 `/Users/xutao/.openclaw/workspace` Python import 的环境中，VGB
+  prompt/score smoke 仍能通过。
 
 ### Phase 5：Registry 和真实 provider 对照
 
@@ -871,12 +990,16 @@ acceptance。
 - ImageSpec tag-only、digest mismatch、platform mismatch 和 pull policy；
 - Harbor Job config 的 `n_attempts`、retry 和 profile concurrency 投影；
 - Harbor Agent adapter discovery、Harbor capability 声明和 source hash；
+- VGB package lock、Track prompt fixture 和 evaluator result fixture；
 - OpenClaw `agentId/sessionKey/sessionId` 生成；
 - `agents.entries` 配置投影；
 - result/evidence precedence；
 - secrets redaction 和 path containment；
 - Harbor cancellation、cleanup 和 artifact collection contract；
-- Harbor result 与 domain result 的隔离。
+- Harbor result 与 domain result 的隔离；
+- VGB package lock、wheel hash、Track allowlist 和 task inventory hash；
+- VGB `Track.prompts()` 输出的公开字段和 `Track.evaluate_one()` 结果保存；
+- VGB runtime 与旧 workspace 完全断开时，prompt/score fixture 仍可运行。
 
 ### 10.3 Harbor integration 测试
 
@@ -894,18 +1017,22 @@ runtime：
 
 测试必须使用临时目录和专用 labels，不能删除用户已有的 benchmark container。
 
-### 10.4 VGB 对照验收
+### 10.4 VGB Integration 验收
 
-必须在旧仓库和新仓库之间做固定输入对照：
+必须在新仓库内独立完成以下检查：
 
-- 四个 Track 各一条固定 record；
-- 相同 prompt、model、image digest 和 resource profile；
-- 相同 OpenClaw session identity 规则；
-- 只比较现有结果契约和证据，不比较 Harbor 原生显示文本；
-- 记录旧 backend/new backend 的 result JSON、score、status axes、resource
-  summary 和 image digest。
+- 四个 Track 各一条固定 task，prompt、answer schema 和 task ID 来自官方 package；
+- 四个 Track 的固定 candidate answer fixture 由官方 package 评分；
+- package version、source tag/commit、wheel SHA-256、task inventory 和 scoring
+  result 都写入 run artifacts；
+- 使用临时干净 venv 执行，不把 `/Users/xutao/.openclaw/workspace` 放进
+  `PYTHONPATH`，不 import `benchmarking.*`；
+- 结果投影后可以生成当前 schema-v5 兼容 payload，但不依赖旧 workspace
+  的 `ResultSink`、VGB bridge 或 dashboard。
 
-对照失败时，不得为了“对齐”修改旧仓库 scorer 或放宽新仓库 evidence gate。
+旧 workspace 对照只作为附加回归测试：相同官方 package release 和 candidate
+answer 下，比较 score、status axes 和结果投影；对照失败时不得复制旧 scorer，
+应先检查 release lock、task inventory 和官方 API 输入是否一致。
 
 ### 10.5 Registry 验收（可选但必须可重复）
 
@@ -936,7 +1063,7 @@ uv run hai image inspect --reference <registry-host>/bench/openclaw@sha256:<dige
 
 - 新仓库不 import 旧仓库的 `benchmarking.*`；
 - `adapters/openclaw/` 存在且没有 `adapters/openclaw_vgb/`；
-- Agent Adapter、Domain Bridge、Image Manager、JobConfig materialization 和 Harbor
+- Agent Adapter、官方 VGB Integration、Image Manager、JobConfig materialization 和 Harbor
   Environment 具有独立 contract；
 - Harbor 原生 result 没有替换旧仓库结果 schema；
 - VGB hidden runtime 不进入 agent image 或 container mount；
@@ -961,13 +1088,13 @@ uv run hai image inspect --reference <registry-host>/bench/openclaw@sha256:<dige
   result 路径完整；
 - Harbor 原生 cancellation/cleanup contract 和 trial artifact finalization 通过。
 
-### E. VGB 兼容性
+### E. VGB 官方集成和兼容投影
 
-- 四个 Track 的固定对照 fixture 全部通过；
-- 新 backend 的 VGB result 可被旧仓库 `ResultSink` 和 dashboard 读取；
-- score、status axes、schema-v5 observability 和 historical read contract
-  不变；
-- 旧仓库不需要为了 Harbor backend 修改评分公式、Track identity 或 gold answer。
+- 四个 Track 的官方 package prompt/score fixture 全部通过；
+- 新执行链不 import 旧 workspace，不依赖旧 VGB bridge/scorer/writer；
+- package release identity、wheel hash、task inventory 和 evaluation result 可追溯；
+- score、status axes 和 schema-v5 compatibility projection 保持既有语义；
+- 旧 workspace dashboard/reader 可以读取显式兼容输出，但不是新 run 的执行依赖。
 
 ### F. 文档和交接
 
@@ -1000,8 +1127,8 @@ docker compose version
 3. 实现 `hai doctor`、resource profile loader 和 Harbor JobConfig materializer；
 4. 创建 fake image、Harbor Agent adapter 和 unit/contract tests；
 5. 先通过 provider-free Harbor Docker acceptance；
-6. 再实现 `adapters/openclaw/`；
-7. 最后接入 VGB domain bridge 和四 Track 对照。
+6. 实现 `integrations/vgb/`，锁定官方 wheel 并通过四 Track prompt/score fixtures；
+7. 再实现 `adapters/openclaw/` 并连接 VGB integration 的 task/result 文件。
 
 任何真实 provider run、Harbor Registry 部署、删除旧容器或修改现有 benchmark
 仓库，都必须在对应工作说明中单独记录，不得为了通过 fake smoke 擅自改变旧
