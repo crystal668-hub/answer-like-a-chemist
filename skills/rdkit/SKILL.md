@@ -16,15 +16,19 @@ The skill is fully local:
 - no ChemQA or DebateClaw runtime dependency
 - structured JSON errors when RDKit is unavailable
 
-## Command Pattern
+## Harbor Trial execution
+
+`harbor-agent-infra` injects allowlisted skills into the disposable Harbor Trial
+container. OpenClaw discovers this skill at
+`$HOME/.openclaw/skills/rdkit`, and the agent working directory is `/workspace`.
+The old benchmark runner, host workspace paths, and legacy benchmark imports
+are not available in a Trial. Install missing provider
+packages inside the Trial (prefer a venv) and invoke the entrypoint directly.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/rdkit/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/rdkit/scripts/<capability>.py" \
+  --request-json /workspace/requests/rdkit.json \
+  --output-dir /workspace/outputs/rdkit \
   --json
 ```
 

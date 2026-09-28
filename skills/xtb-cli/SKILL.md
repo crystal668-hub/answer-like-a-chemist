@@ -28,19 +28,24 @@ xtb --help
 
 Treat a missing executable or unusable installation as an environment problem, not as evidence that a molecule or parser is bad.
 
-## Workspace Execution
+## Harbor Trial execution
 
-Use the benchmark-managed runner pattern:
+The Harbor Trial image supplies Python 3.11 and venv support, while the xTB
+executable and any Python dependencies remain Trial-local. Harbor copies this
+skill to `$HOME/.openclaw/skills/xtb-cli`; run it directly from a fresh
+calculation directory under `/workspace` or `/tmp`.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root <workspace-root> \
-  --execution-cwd "$BENCHMARK_SKILL_SCRATCH_DIR" \
-  --script skills/xtb-cli/scripts/xtb_runner.py -- \
-  --request-json <request-json> \
-  --output-dir <output-dir> \
+mkdir -p /workspace/xtb-run
+cd /workspace/xtb-run
+python "$HOME/.openclaw/skills/xtb-cli/scripts/xtb_runner.py" \
+  --request-json /workspace/requests/xtb-cli.json \
+  --output-dir /workspace/outputs/xtb-cli \
   --json
 ```
+
+Do not use the retired benchmark runner, benchmark scratch variables, host
+paths, or legacy benchmark imports in a Harbor Trial.
 
 Every call reads one request JSON object, writes `result.json`, and prints the same payload when `--json` is passed. See [contracts.md](references/contracts.md) for the supported request and result shape.
 

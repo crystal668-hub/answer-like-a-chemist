@@ -22,15 +22,16 @@ Use this skill when:
 Do not use this skill for structural validation. After PubChem returns a
 structure, hand it to the `rdkit` skill for canonicalization or validation.
 
-## Execution
+## Harbor Trial execution
+
+Harbor copies this allowlisted skill to `$HOME/.openclaw/skills/pubchem` inside
+the disposable Trial container. Run from `/workspace` with the direct script
+path; the retired benchmark runner and host workspace are not available.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/pubchem/scripts/name_to_cid.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/pubchem-out \
+python "$HOME/.openclaw/skills/pubchem/scripts/name_to_cid.py" \
+  --request-json /workspace/requests/pubchem.json \
+  --output-dir /workspace/outputs/pubchem \
   --json
 ```
 

@@ -1,18 +1,19 @@
 # RDKit Skill Contracts
 
-## Shared CLI Contract
+## Harbor Trial CLI Contract
 
 Every script supports:
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
-  --execution-cwd "$PWD" \
-  --script skills/rdkit/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/rdkit/scripts/<capability>.py" \
+  --request-json /workspace/requests/rdkit.json \
+  --output-dir /workspace/outputs/rdkit \
   --json
 ```
+
+Run this command inside the Harbor Trial container from `/workspace`. The
+allowlisted directory is copied to `$HOME/.openclaw/skills/rdkit`; the host
+workspace and the former benchmark runner are not part of the runtime.
 
 Behavior:
 

@@ -19,17 +19,21 @@ Use this skill when:
 
 Do not use this skill for structure lookup, nomenclature resolution, or literature search.
 
-## Execution
+## Harbor Trial execution
+
+The Harbor Trial image provides Python 3.11 and venv support, but does not
+preinstall skill-specific packages. After installing the required packages in
+the Trial, run the copied skill directly from `/workspace`:
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/chem-calculator/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/chem-calculator/scripts/<capability>.py" \
+  --request-json /workspace/requests/chem-calculator.json \
+  --output-dir /workspace/outputs/chem-calculator \
   --json
 ```
+
+Do not use the retired benchmark runner, host workspace paths, or legacy
+benchmark imports in a Harbor Trial.
 
 - `--output-dir` is required and will be created if missing.
 - Every script writes `result.json` in the output directory.

@@ -102,7 +102,7 @@ class XtbCliSkillTests(unittest.TestCase):
             self.assertTrue(path.is_file(), f"missing required file: {path}")
 
     def test_skill_docs_are_self_contained_without_host_absolute_paths(self) -> None:
-        forbidden_fragments = ("/Users/", ".openclaw", "/opt/homebrew/")
+        forbidden_fragments = ("/Users/", "/opt/homebrew/")
         docs = [
             SKILL_ROOT / "SKILL.md",
             SKILL_ROOT / "references" / "contracts.md",

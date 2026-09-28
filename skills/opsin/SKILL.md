@@ -26,15 +26,17 @@ Prefer `pubchem` instead for trivial names, trade names, abbreviations, or broad
 - `parse_diagnostics.py`
 - `validate_with_rdkit.py`
 
-## Standard Command
+## Harbor Trial execution
+
+In a `harbor-agent-infra` Trial, the allowlisted directory is available at
+`$HOME/.openclaw/skills/opsin` and commands start in `/workspace`. Invoke the
+skill script directly; do not use the retired benchmark runner or host
+workspace paths.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/opsin/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/opsin/scripts/<capability>.py" \
+  --request-json /workspace/requests/opsin.json \
+  --output-dir /workspace/outputs/opsin \
   --json
 ```
 

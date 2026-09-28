@@ -18,15 +18,16 @@ Use this skill when:
 
 Do not use this skill for downloading or parsing documents.
 
-## Execution
+## Harbor Trial execution
+
+Harbor copies this allowlisted skill to `$HOME/.openclaw/skills/paper-retrieval`
+inside the Trial container. Run the script directly from `/workspace`; the
+retired benchmark runner and host workspace paths are not available.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/paper-retrieval/scripts/paper_retrieval.py -- \
+python "$HOME/.openclaw/skills/paper-retrieval/scripts/paper_retrieval.py" \
   --query "Pt/C HER alkaline electrolyte" \
-  --output-dir /tmp/paper-retrieval-out
+  --output-dir /workspace/outputs/paper-retrieval
 ```
 
 Read `references/contracts.md` for request fields and environment variables.

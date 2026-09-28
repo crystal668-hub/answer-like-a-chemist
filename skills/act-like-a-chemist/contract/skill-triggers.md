@@ -6,7 +6,13 @@ This optional reference describes provider capabilities for concrete Atomic Cove
 
 Provider output is scoped evidence, not a verdict. An unexecuted skill is not evidence. When a provider skill contributes, cite its output path, structured tool trace, or retrieved source in the answer or artifact trace.
 
-Concrete provider skill names must come from the single-agent-exposed provider inventory in `workspace/skills/chemistry-routing-matrix.json`. The inventory is a machine-readable skill catalog, not a deterministic router; runtime/orchestration skills are not provider routes and must not be selected for checklist atoms.
+Concrete provider skill names must come from the Harbor `skill-allowlist.v1`
+inventory in `harbor-agent-infra/configs/skills/benchmark-allowlist.v1.json`.
+Within a Trial, the authoritative available set is the directories Harbor
+injected under `$HOME/.openclaw/skills/`; do not search the host or legacy
+workspace for additional skills. The inventory is a machine-readable skill
+catalog, not a deterministic router; runtime/orchestration skills are not
+provider routes and must not be selected for checklist atoms.
 
 ## Capability Areas
 

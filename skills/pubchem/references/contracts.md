@@ -1,18 +1,19 @@
 # PubChem Script Contracts
 
-## Shared CLI
+## Harbor Trial CLI
 
 All scripts support:
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
-  --execution-cwd "$PWD" \
-  --script skills/pubchem/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/pubchem/scripts/<capability>.py" \
+  --request-json /workspace/requests/pubchem.json \
+  --output-dir /workspace/outputs/pubchem \
   --json
 ```
+
+Run inside the Harbor Trial container from `/workspace`. The allowlisted skill
+is copied to `$HOME/.openclaw/skills/pubchem`; the former benchmark runner and host
+workspace paths are unavailable.
 
 - `--request-json`: required request payload path
 - `--output-dir`: required directory for artifacts and result JSON

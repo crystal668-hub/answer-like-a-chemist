@@ -1,18 +1,19 @@
 # Chem Calculator Contracts
 
-## Shared CLI Contract
+## Harbor Trial CLI Contract
 
 Every script supports:
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
-  --execution-cwd "$PWD" \
-  --script skills/chem-calculator/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/chem-calculator/scripts/<capability>.py" \
+  --request-json /workspace/requests/chem-calculator.json \
+  --output-dir /workspace/outputs/chem-calculator \
   --json
 ```
+
+Run inside the disposable Harbor Trial container from `/workspace`. Harbor
+copies the allowlisted skill to `$HOME/.openclaw/skills/chem-calculator`; the
+old runner and host workspace are unavailable.
 
 Rules:
 - `--request-json` is the canonical input file.

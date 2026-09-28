@@ -19,15 +19,16 @@ Use this skill when:
 
 Do not use this skill for parsing.
 
-## Execution
+## Harbor Trial execution
+
+Harbor copies this allowlisted skill to `$HOME/.openclaw/skills/paper-access`
+inside the Trial container. Run the script directly from `/workspace`; the
+retired benchmark runner and host workspace paths are not available.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root . \
-  --execution-cwd "$PWD" \
-  --script skills/paper-access/scripts/paper_access.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/paper-access-out
+python "$HOME/.openclaw/skills/paper-access/scripts/paper_access.py" \
+  --request-json /workspace/requests/paper-access.json \
+  --output-dir /workspace/outputs/paper-access
 ```
 
 Read `references/contracts.md` for request examples and environment variables.

@@ -1,16 +1,17 @@
 # OPSIN Contract
 
-## Standard CLI
+## Harbor Trial CLI
 
 ```bash
-python /Users/xutao/.openclaw/workspace/scripts/run_skill.py \
-  --workspace-root /Users/xutao/.openclaw/workspace \
-  --execution-cwd "$PWD" \
-  --script skills/opsin/scripts/<capability>.py -- \
-  --request-json /path/to/request.json \
-  --output-dir /tmp/<skill-out> \
+python "$HOME/.openclaw/skills/opsin/scripts/<capability>.py" \
+  --request-json /workspace/requests/opsin.json \
+  --output-dir /workspace/outputs/opsin \
   --json
 ```
+
+Run inside the disposable Harbor Trial container from `/workspace`. Harbor
+copies the allowlisted skill to `$HOME/.openclaw/skills/opsin`; the old runner
+and host workspace are unavailable.
 
 - `--request-json` is required.
 - `--output-dir` is required and created if missing.

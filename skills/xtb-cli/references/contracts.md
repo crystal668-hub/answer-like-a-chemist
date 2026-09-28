@@ -1,18 +1,20 @@
 # xtb-cli Contracts
 
-## Shared CLI Contract
+## Harbor Trial CLI Contract
 
-Run through the workspace skill runner:
+Run inside the disposable Harbor Trial container from a fresh calculation
+directory. Harbor copies the skill to `$HOME/.openclaw/skills/xtb-cli` and the
+agent starts in `/workspace`.
 
 ```bash
-python scripts/run_skill.py \
-  --workspace-root <workspace-root> \
-  --execution-cwd "$PWD" \
-  --script skills/xtb-cli/scripts/xtb_runner.py -- \
-  --request-json <request-json> \
-  --output-dir <output-dir> \
+python "$HOME/.openclaw/skills/xtb-cli/scripts/xtb_runner.py" \
+  --request-json /workspace/requests/xtb-cli.json \
+  --output-dir /workspace/outputs/xtb-cli \
   --json
 ```
+
+The former benchmark runner, benchmark scratch variables, and host workspace
+paths are not available in a Harbor Trial.
 
 Rules:
 
